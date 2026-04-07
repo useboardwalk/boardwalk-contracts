@@ -3,6 +3,7 @@ pragma solidity =0.8.28;
 
 interface ILPLocker {
     error NotAuthorized();
+    error OnlyPositionManager();
     error PositionNotLocked();
     error AlreadyLocked();
     error NoPositions();
@@ -17,10 +18,13 @@ interface ILPLocker {
     ) external;
 
     function claimFees(
-        uint256 tokenId
+        uint256 tokenId,
+        uint256 deadline
     ) external;
 
-    function claimAllFees() external;
+    function claimAllFees(
+        uint256 deadline
+    ) external;
 
     function lockedPositions(
         uint256 tokenId

@@ -110,7 +110,8 @@ contract MockFeeCollector is IBoardwalkFeeCollector {
     // Stubs for interface compliance
     function swapToRaiseToken(
         address[] calldata,
-        uint256[] calldata
+        uint256[] calldata,
+        uint256
     ) external pure override {
         revert("Not implemented");
     }

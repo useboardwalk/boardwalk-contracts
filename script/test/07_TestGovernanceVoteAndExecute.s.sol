@@ -215,7 +215,7 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
             )
         );
 
-        voter.execute(epochToExecute, 0, 0);
+        voter.execute(epochToExecute, 0, 0, block.timestamp);
         _recordTx(string.concat("GovernanceVoter.execute(", vm.toString(epochToExecute), ")"));
         console.log("  Executed successfully");
     }

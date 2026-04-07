@@ -23,6 +23,7 @@ contract LPLocker {
     // ============ Errors ============
 
     error NotAuthorized();
+    error OnlyPositionManager();
     error PositionNotLocked();
     error AlreadyLocked();
     error NoPositions();
@@ -47,7 +48,9 @@ contract LPLocker {
     }
 
     /// @dev Accept native ETH from PositionManager during fee claiming
-    receive() external payable {}
+    receive() external payable {
+        if (msg.sender != POSITION_MANAGER) revert OnlyPositionManager();
+    }
 
     // ============ Position Registration ============
 
@@ -80,20 +83,25 @@ contract LPLocker {
 
     /// @notice Harvest accrued trading fees from a locked v4 LP position and send to treasury.
     /// @param tokenId The v4 position NFT token ID
+    /// @param deadline Transaction deadline timestamp
     function claimFees(
-        uint256 tokenId
+        uint256 tokenId,
+        uint256 deadline
     ) external {
         if (!lockedPositions[tokenId]) revert PositionNotLocked();
-        _claimFees(tokenId);
+        _claimFees(tokenId, deadline);
     }
 
     /// @notice Harvest accrued trading fees from all locked positions in a single transaction.
-    function claimAllFees() external {
+    /// @param deadline Transaction deadline timestamp
+    function claimAllFees(
+        uint256 deadline
+    ) external {
         uint256 len = lockedTokenIds.length;
         if (len == 0) revert NoPositions();
 
         for (uint256 i; i < len; ++i) {
-            _claimFees(lockedTokenIds[i]);
+            _claimFees(lockedTokenIds[i], deadline);
         }
     }
 
@@ -116,7 +124,8 @@ contract LPLocker {
     }
 
     function _claimFees(
-        uint256 tokenId
+        uint256 tokenId,
+        uint256 deadline
     ) internal {
         address currentTreasury = IGovernanceVoter(GOVERNANCE_VOTER).treasury();
 
@@ -126,7 +135,7 @@ contract LPLocker {
         params[0] = abi.encode(tokenId, uint256(0), uint128(0), uint128(0), "");
         params[1] = abi.encode(CURRENCY0, CURRENCY1, currentTreasury);
 
-        IV4PositionManager(POSITION_MANAGER).modifyLiquidities(abi.encode(actions, params), block.timestamp);
+        IV4PositionManager(POSITION_MANAGER).modifyLiquidities(abi.encode(actions, params), deadline);
 
         emit FeesClaimed(tokenId);
     }

@@ -66,7 +66,8 @@ interface IGovernanceVoter {
     function execute(
         uint256 epoch,
         uint256 amountOutMin,
-        uint256 liquidity
+        uint256 liquidity,
+        uint256 deadline
     ) external;
     function forceMarkExecuted(
         uint256 epoch

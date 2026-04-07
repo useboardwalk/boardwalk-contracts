@@ -324,7 +324,7 @@ contract BoardwalkFeeCollectorTest is Test {
         vm.prank(keeper);
         vm.expectEmit(true, false, false, true);
         emit FeesSwapped(address(token1), tokenAmount, expectedWeth);
-        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0), block.timestamp);
 
         assertEq(feeCollector.accumulatedFees(address(token1)), 0, "accumulatedFees should reset");
         assertEq(weth.balanceOf(treasury), expectedWeth, "Treasury should receive raise token");
@@ -348,7 +348,7 @@ contract BoardwalkFeeCollectorTest is Test {
         uint256 totalWeth = weth1 + weth2;
 
         vm.prank(keeper);
-        feeCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0), block.timestamp);
 
         assertEq(weth.balanceOf(treasury), totalWeth, "Treasury should receive total raise token");
         assertEq(feeCollector.accumulatedFees(address(token1)), 0, "token1 fees reset");
@@ -364,7 +364,7 @@ contract BoardwalkFeeCollectorTest is Test {
         uint256 expectedWeth = (amount1 * 0.5e18) / 1e18;
 
         vm.prank(keeper);
-        feeCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0), block.timestamp);
 
         assertEq(weth.balanceOf(treasury), expectedWeth, "Only token1 should be swapped");
     }
@@ -374,7 +374,7 @@ contract BoardwalkFeeCollectorTest is Test {
         deal(address(token1), address(feeCollector), amount);
 
         vm.prank(keeper);
-        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0), block.timestamp);
 
         assertEq(
             IERC20(token1).allowance(address(feeCollector), address(router)),
@@ -398,7 +398,7 @@ contract BoardwalkFeeCollectorTest is Test {
         // No try/catch: router revert propagates directly to caller
         vm.prank(keeper);
         vm.expectRevert();
-        newCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0));
+        newCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0), block.timestamp);
 
         // Entire tx reverted, so state is unchanged
         assertEq(token1.balanceOf(address(newCollector)), amount, "Tokens should remain in collector after revert");
@@ -421,7 +421,7 @@ contract BoardwalkFeeCollectorTest is Test {
         // No try/catch: one failing swap reverts the entire batch
         vm.prank(keeper);
         vm.expectRevert();
-        newCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0));
+        newCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0), block.timestamp);
 
         // Entire tx reverted — no state changes
         assertEq(weth.balanceOf(treasury), 0, "No raise token should be sent on revert");
@@ -438,7 +438,7 @@ contract BoardwalkFeeCollectorTest is Test {
         // No try/catch: router slippage revert propagates directly
         vm.prank(keeper);
         vm.expectRevert();
-        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(minAmountOut));
+        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(minAmountOut), block.timestamp);
     }
 
     function test_RevertWhen_SwapToRaiseToken_NotKeeper() public {
@@ -447,13 +447,13 @@ contract BoardwalkFeeCollectorTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(IBoardwalkFeeCollector.NotKeeper.selector);
-        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0), block.timestamp);
     }
 
     function test_RevertWhen_SwapToRaiseToken_EmptyArray() public {
         vm.prank(keeper);
         vm.expectRevert(IBoardwalkFeeCollector.NoTokensToSwap.selector);
-        feeCollector.swapToRaiseToken(new address[](0), new uint256[](0));
+        feeCollector.swapToRaiseToken(new address[](0), new uint256[](0), block.timestamp);
     }
 
     function test_RevertWhen_SwapToRaiseToken_ArrayLengthMismatch() public {
@@ -462,7 +462,7 @@ contract BoardwalkFeeCollectorTest is Test {
 
         vm.prank(keeper);
         vm.expectRevert(IBoardwalkFeeCollector.ArrayLengthMismatch.selector);
-        feeCollector.swapToRaiseToken(_toArray(address(token1)), new uint256[](0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1)), new uint256[](0), block.timestamp);
     }
 
     function testFuzz_SwapToRaiseToken_AnyAmount(
@@ -475,7 +475,7 @@ contract BoardwalkFeeCollectorTest is Test {
         uint256 expectedWeth = (amount * 0.5e18) / 1e18;
 
         vm.prank(keeper);
-        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0), block.timestamp);
 
         assertEq(weth.balanceOf(treasury), expectedWeth, "Should swap any amount");
     }
@@ -639,7 +639,7 @@ contract BoardwalkFeeCollectorTest is Test {
         deal(address(token1), address(feeCollector), amount);
 
         vm.prank(newKeeper);
-        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1)), _toArray(0), block.timestamp);
 
         // Should succeed with new keeper
         assertGt(weth.balanceOf(treasury), 0, "New keeper should be able to swap");
@@ -683,7 +683,7 @@ contract BoardwalkFeeCollectorTest is Test {
 
         // Keeper swaps to WETH
         vm.prank(keeper);
-        feeCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0));
+        feeCollector.swapToRaiseToken(_toArray(address(token1), address(token2)), _toArray(0, 0), block.timestamp);
 
         assertEq(feeCollector.accumulatedFees(address(token1)), 0, "token1 reset");
         assertEq(feeCollector.accumulatedFees(address(token2)), 0, "token2 reset");
@@ -977,7 +977,7 @@ contract BoardwalkFeeCollectorTest is Test {
         mins[0] = 0;
 
         vm.prank(keeper);
-        feeCollector.swapToRaiseToken(tokens, mins);
+        feeCollector.swapToRaiseToken(tokens, mins, block.timestamp);
 
         uint256 total = amount;
         uint256 governanceExpected = total * 7000 / 10000;
@@ -998,7 +998,7 @@ contract BoardwalkFeeCollectorTest is Test {
         mins[0] = 0;
 
         vm.prank(keeper);
-        feeCollector.swapToRaiseToken(tokens, mins);
+        feeCollector.swapToRaiseToken(tokens, mins, block.timestamp);
 
         assertEq(weth.balanceOf(treasury), amount);
     }

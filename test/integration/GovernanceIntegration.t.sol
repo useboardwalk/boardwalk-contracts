@@ -202,7 +202,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
     }
 
     function _voteOption(address user, uint8 option) internal {
@@ -240,7 +240,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
         assertEq(raiseToken.balanceOf(treasury), 30 ether, "Epoch 1: no quorum from epoch 0 -> treasury");
 
         // Epoch 2: vote option 1 (Treasury) — these votes direct epoch 3
@@ -266,7 +266,7 @@ contract GovernanceIntegrationTest is Test {
         assertEq(info2.budget, 15 ether, "Epoch 2 budget");
 
         vm.prank(keeper);
-        voter.execute(2, 0, 0);
+        voter.execute(2, 0, 0, block.timestamp);
 
         // Finalize+execute epoch 3 (uses epoch 2's votes -> option 1/treasury wins)
         _fundVoter(5 ether);
@@ -310,7 +310,7 @@ contract GovernanceIntegrationTest is Test {
         assertEq(e1.winningOption, OPTION_TREASURY, "Dormant epoch 1: treasury (no epoch 0 votes)");
 
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Epoch 2: ACTIVE (epoch 1 had real votes -> option 1 treasury)
         // No new votes in epoch 2 (so epoch 3 will be dormant)
@@ -324,7 +324,7 @@ contract GovernanceIntegrationTest is Test {
         assertTrue(e2.finalized);
 
         vm.prank(keeper);
-        voter.execute(2, 0, 0);
+        voter.execute(2, 0, 0, block.timestamp);
 
         // Epoch 3: DORMANT (no votes in epoch 2 -> treasury)
         _fundVoter(3 ether);
@@ -336,7 +336,7 @@ contract GovernanceIntegrationTest is Test {
         assertEq(e3.winningOption, OPTION_TREASURY, "Dormant epoch 3: treasury (no epoch 2 votes)");
 
         vm.prank(keeper);
-        voter.execute(3, 0, 0);
+        voter.execute(3, 0, 0, block.timestamp);
 
         // All epochs sequential, all budgets independent
         assertTrue(e1.finalized && e2.finalized && e3.finalized);
@@ -404,7 +404,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Fund epoch 2 budget
         _fundVoter(50 ether);
@@ -420,7 +420,7 @@ contract GovernanceIntegrationTest is Test {
 
         // Execute: should call participationDistributor.createStream()
         vm.prank(keeper);
-        voter.execute(2, 0, 0);
+        voter.execute(2, 0, 0, block.timestamp);
 
         assertTrue(participationDistributor.streamCount() > 0, "PD createStream called");
         assertEq(participationDistributor.lastEpoch(), 2, "PD stream for epoch 2");
@@ -460,7 +460,7 @@ contract GovernanceIntegrationTest is Test {
 
         // Now execute epoch 1
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Now epoch 2 should finalize
         _fundVoter(3 ether);
@@ -494,7 +494,7 @@ contract GovernanceIntegrationTest is Test {
         assertEq(voter.accountedBudget(), 50 ether, "accountedBudget = 50 ether while pending");
 
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
         assertEq(voter.accountedBudget(), 0, "accountedBudget back to 0 after execute");
     }
 
@@ -512,7 +512,7 @@ contract GovernanceIntegrationTest is Test {
 
         // Execute epoch 1, fund 20 more
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
         _fundVoter(20 ether);
 
         // Finalize epoch 2 — budget should be exactly 20 ether (new revenue only)
@@ -592,7 +592,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Now finalize epoch 2 with batch=1 (3 epoch-1 voters to validate, need 3 calls)
         _fundVoter(5 ether);
@@ -633,7 +633,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Vote in epoch 2 with 2 voters
         _setupVoter(alice, 1000e18);
@@ -647,7 +647,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(2, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(2, 0, 0);
+        voter.execute(2, 0, 0, block.timestamp);
 
         // Now finalize epoch 3 with batch=1 (validates epoch 2's 2 voters)
         _fundVoter(5 ether);
@@ -701,7 +701,7 @@ contract GovernanceIntegrationTest is Test {
 
         // Owner executes
         vm.prank(owner);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         assertTrue(voter.getEpochInfo(0).executed, "Owner can finalize+execute");
 
@@ -711,7 +711,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         assertTrue(voter.getEpochInfo(1).executed, "Keeper can finalize+execute");
     }
@@ -733,7 +733,7 @@ contract GovernanceIntegrationTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(GovernanceVoter.NotKeeper.selector);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
     }
 
     // ============ Test 12: Epoch 0 Always Treasury ============
@@ -749,7 +749,7 @@ contract GovernanceIntegrationTest is Test {
         assertEq(e0.budget, 1000 ether);
 
         vm.prank(keeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
         assertEq(raiseToken.balanceOf(treasury), 1000 ether, "All to treasury");
     }
 
@@ -771,7 +771,7 @@ contract GovernanceIntegrationTest is Test {
             vm.prank(keeper);
             voter.finalize(i, type(uint256).max);
             vm.prank(keeper);
-            voter.execute(i, 0, 0);
+            voter.execute(i, 0, 0, block.timestamp);
         }
 
         // Epoch 0 got all the budget (100 ether), epochs 1-4 got 0
@@ -808,7 +808,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         bmx.mint(address(universalRouter), 500 ether);
 
@@ -816,19 +816,19 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(2, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(2, 0, 0);
+        voter.execute(2, 0, 0, block.timestamp);
 
         vm.warp(epochZero + 4 * EPOCH_DURATION);
         vm.prank(keeper);
         voter.finalize(3, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(3, 0, 0);
+        voter.execute(3, 0, 0, block.timestamp);
 
         vm.warp(epochZero + 5 * EPOCH_DURATION);
         vm.prank(keeper);
         voter.finalize(4, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(4, 0, 0);
+        voter.execute(4, 0, 0, block.timestamp);
 
         // Epoch 5: option 2 should be ineligible (lastIneligibleEpoch[1] == 5)
         assertFalse(voter.isOptionEligible(OPTION_BUY_BURN_BMX), "Option 2 ineligible in epoch 5");
@@ -846,7 +846,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(5, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(5, 0, 0);
+        voter.execute(5, 0, 0, block.timestamp);
 
         assertTrue(voter.isOptionEligible(OPTION_BUY_BURN_BMX), "Option 2 eligible again in epoch 6");
 
@@ -881,7 +881,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Fund epoch 2 budget
         _fundVoter(100 ether);
@@ -954,6 +954,6 @@ contract GovernanceIntegrationTest is Test {
 
         vm.prank(keeper);
         vm.expectRevert(GovernanceVoter.PeersNotInitialized.selector);
-        voter2.execute(0, 0, 0);
+        voter2.execute(0, 0, 0, block.timestamp);
     }
 }

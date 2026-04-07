@@ -126,12 +126,12 @@ contract LPLockerTest is Test {
 
         vm.expectEmit(true, true, true, true);
         emit FeesClaimed(1);
-        locker.claimFees(1);
+        locker.claimFees(1, block.timestamp);
     }
 
     function test_RevertWhen_ClaimFees_NotLocked() public {
         vm.expectRevert(LPLocker.PositionNotLocked.selector);
-        locker.claimFees(999);
+        locker.claimFees(999, block.timestamp);
     }
 
     // ============ Dynamic Treasury ============
@@ -145,7 +145,7 @@ contract LPLockerTest is Test {
         mockGovernanceVoter.setTreasury(newTreasury);
 
         // Should not revert — reads dynamic treasury from GovernanceVoter
-        locker.claimFees(1);
+        locker.claimFees(1, block.timestamp);
     }
 
     // ============ getLockedPositions ============
@@ -214,7 +214,7 @@ contract LPLockerTest is Test {
         vm.expectEmit(true, true, true, true);
         emit FeesClaimed(3);
 
-        locker.claimAllFees();
+        locker.claimAllFees(block.timestamp);
     }
 
     function test_ClaimAllFees_SinglePosition() public {
@@ -224,12 +224,12 @@ contract LPLockerTest is Test {
         vm.expectEmit(true, true, true, true);
         emit FeesClaimed(42);
 
-        locker.claimAllFees();
+        locker.claimAllFees(block.timestamp);
     }
 
     function test_RevertWhen_ClaimAllFees_NoPositions() public {
         vm.expectRevert(LPLocker.NoPositions.selector);
-        locker.claimAllFees();
+        locker.claimAllFees(block.timestamp);
     }
 
     function test_RevertWhen_OnERC721Received_AlreadyLocked() public {

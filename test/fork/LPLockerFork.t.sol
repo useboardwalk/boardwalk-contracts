@@ -96,7 +96,7 @@ contract LPLockerForkTest is Test {
         // If our Actions import or encoding were wrong, we'd get a different error
         // (e.g., InvalidAction, or a low-level revert without data).
         vm.expectRevert();
-        locker.claimFees(fakeTokenId);
+        locker.claimFees(fakeTokenId, block.timestamp);
     }
 
     /// @notice Verify that the Action IDs we import match what the real PM expects.
@@ -149,6 +149,6 @@ contract LPLockerForkTest is Test {
         // Should revert inside PM (caller is not the position owner),
         // not at the encoding level
         vm.expectRevert();
-        locker.claimFees(realTokenId);
+        locker.claimFees(realTokenId, block.timestamp);
     }
 }

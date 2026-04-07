@@ -350,10 +350,12 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     /// @param epoch The epoch to execute
     /// @param amountOutMin Minimum BMX output for swap-based options (slippage protection)
     /// @param liquidity Liquidity amount for Option 3 (BuyBurnLP) mint. Ignored for other options.
+    /// @param deadline Transaction deadline timestamp
     function execute(
         uint256 epoch,
         uint256 amountOutMin,
-        uint256 liquidity
+        uint256 liquidity,
+        uint256 deadline
     ) external onlyKeeperOrOwner {
         if (!peersInitialized) revert PeersNotInitialized();
         EpochInfo storage e = epochInfoStorage[epoch];
@@ -376,13 +378,13 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
             IERC20(WETH).safeTransfer(_treasury, amount);
             emit EpochExecuted(epoch, option, amount, false, _treasury);
         } else if (option == OPTION_BUY_BURN_BMX) {
-            _executeBuyBurnBmx(amount, amountOutMin);
+            _executeBuyBurnBmx(amount, amountOutMin, deadline);
             emit EpochExecuted(epoch, option, amount, false, DEAD_ADDRESS);
         } else if (option == OPTION_BUY_BURN_LP) {
-            _executeBuyBurnLp(amount, amountOutMin, liquidity);
+            _executeBuyBurnLp(amount, amountOutMin, liquidity, deadline);
             emit EpochExecuted(epoch, option, amount, false, lpLocker);
         } else if (option == OPTION_PARTICIPATION) {
-            _executeParticipation(epoch, amount, amountOutMin);
+            _executeParticipation(epoch, amount, amountOutMin, deadline);
             emit EpochExecuted(epoch, option, amount, false, epoch == 0 ? treasury : participationDistributor);
         }
     }
@@ -639,7 +641,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     function _swapRaiseTokenForBmx(
         uint256 amountIn,
         uint256 amountOutMin,
-        address recipient
+        address recipient,
+        uint256 deadline
     ) internal returns (uint256) {
         uint256 bmxBefore = IERC20(BMX).balanceOf(recipient);
 
@@ -667,16 +670,17 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         bytes[] memory inputs = new bytes[](1);
         inputs[0] = abi.encode(swapActions, swapParams);
 
-        IUniversalRouter(UNIVERSAL_ROUTER).execute{value: amountIn}(commands, inputs, block.timestamp);
+        IUniversalRouter(UNIVERSAL_ROUTER).execute{value: amountIn}(commands, inputs, deadline);
 
         return IERC20(BMX).balanceOf(recipient) - bmxBefore;
     }
 
     function _executeBuyBurnBmx(
         uint256 raiseAmount,
-        uint256 amountOutMin
+        uint256 amountOutMin,
+        uint256 deadline
     ) internal {
-        uint256 bmxReceived = _swapRaiseTokenForBmx(raiseAmount, amountOutMin, address(this));
+        uint256 bmxReceived = _swapRaiseTokenForBmx(raiseAmount, amountOutMin, address(this), deadline);
         IERC20(BMX).safeTransfer(DEAD_ADDRESS, bmxReceived);
     }
 
@@ -685,11 +689,12 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     function _executeBuyBurnLp(
         uint256 raiseAmount,
         uint256 amountOutMin,
-        uint256 liquidity
+        uint256 liquidity,
+        uint256 deadline
     ) internal {
         uint256 halfForBmx = raiseAmount / 2;
         uint256 halfForEth = raiseAmount - halfForBmx;
-        uint256 bmxReceived = _swapRaiseTokenForBmx(halfForBmx, amountOutMin, address(this));
+        uint256 bmxReceived = _swapRaiseTokenForBmx(halfForBmx, amountOutMin, address(this), deadline);
         uint256 tokenId = IV4PositionManager(V4_POSITION_MANAGER).nextTokenId();
 
         IERC20(BMX).safeTransfer(UNIVERSAL_ROUTER, bmxReceived);
@@ -718,14 +723,14 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         mintParams[2] = abi.encode(address(0), address(this));
 
         bytes memory pmCalldata = abi.encodeCall(
-            IV4PositionManager.modifyLiquidities, (abi.encode(mintActions, mintParams), block.timestamp)
+            IV4PositionManager.modifyLiquidities, (abi.encode(mintActions, mintParams), deadline)
         );
 
         bytes memory commands = abi.encodePacked(UR_V4_POSITION_MANAGER_CALL);
         bytes[] memory inputs = new bytes[](1);
         inputs[0] = abi.encode(pmCalldata);
 
-        IUniversalRouter(UNIVERSAL_ROUTER).execute{value: halfForEth}(commands, inputs, block.timestamp);
+        IUniversalRouter(UNIVERSAL_ROUTER).execute{value: halfForEth}(commands, inputs, deadline);
 
         ILPLocker(lpLocker).lockPosition(tokenId);
 
@@ -743,13 +748,14 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     function _executeParticipation(
         uint256 epoch,
         uint256 raiseAmount,
-        uint256 amountOutMin
+        uint256 amountOutMin,
+        uint256 deadline
     ) internal {
         if (epoch == 0) {
             IERC20(WETH).safeTransfer(treasury, raiseAmount);
             return;
         }
-        uint256 bmxReceived = _swapRaiseTokenForBmx(raiseAmount, amountOutMin, address(this));
+        uint256 bmxReceived = _swapRaiseTokenForBmx(raiseAmount, amountOutMin, address(this), deadline);
         IERC20(BMX).forceApprove(participationDistributor, bmxReceived);
         IParticipationDistributor(participationDistributor).createStream(epoch, bmxReceived);
     }

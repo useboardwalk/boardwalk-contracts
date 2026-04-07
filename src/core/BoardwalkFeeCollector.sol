@@ -91,9 +91,11 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     /// @notice Keeper calls to batch-swap accumulated tokens to raise token and forward to treasury
     /// @param tokens Array of token addresses to swap
     /// @param minAmountsOut Minimum raise token output per token (slippage protection)
+    /// @param deadline Transaction deadline timestamp
     function swapToRaiseToken(
         address[] calldata tokens,
-        uint256[] calldata minAmountsOut
+        uint256[] calldata minAmountsOut,
+        uint256 deadline
     ) external {
         if (msg.sender != keeper) revert NotKeeper();
         if (tokens.length == 0) revert NoTokensToSwap();
@@ -123,7 +125,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
 
             // FeeCollector is exempt from tax
             try IDEXRouter(ROUTER)
-                .swapExactTokensForTokens(balance, minAmountsOut[i], path, address(this), block.timestamp) returns (
+                .swapExactTokensForTokens(balance, minAmountsOut[i], path, address(this), deadline) returns (
                 uint256[] memory amounts
             ) {
                 uint256 tokenReceived = amounts[1];

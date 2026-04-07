@@ -293,7 +293,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
     }
 
     /// @dev Helper: complete a full vote→finalize→execute cycle for an epoch using advance voting.
@@ -310,7 +310,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(voteEpoch + 1, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(voteEpoch + 1, 0, 0);
+        voter.execute(voteEpoch + 1, 0, 0, block.timestamp);
     }
 
     // ============ Peer Initialization ============
@@ -360,7 +360,7 @@ contract GovernanceVoterTest is Test {
         // Don't initialize peers, try to execute
         vm.prank(protocolKeeper);
         vm.expectRevert(GovernanceVoter.PeersNotInitialized.selector);
-        freshVoter.execute(0, 0, 0);
+        freshVoter.execute(0, 0, 0, block.timestamp);
     }
 
     // ============ Voting ============
@@ -563,7 +563,7 @@ contract GovernanceVoterTest is Test {
         assertEq(voter.accountedBudget(), 100e18);
 
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         assertEq(voter.accountedBudget(), 0);
     }
@@ -590,7 +590,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         assertEq(raiseToken.balanceOf(treasury), 100e18);
     }
@@ -603,7 +603,7 @@ contract GovernanceVoterTest is Test {
 
         // Owner as backup
         vm.prank(owner);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         assertEq(raiseToken.balanceOf(treasury), 100e18);
     }
@@ -616,13 +616,13 @@ contract GovernanceVoterTest is Test {
 
         vm.expectRevert(GovernanceVoter.NotKeeper.selector);
         vm.prank(alice);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
     }
 
     function test_RevertWhen_Execute_NotFinalized() public {
         vm.prank(protocolKeeper);
         vm.expectRevert(GovernanceVoter.EpochNotFinalized.selector);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
     }
 
     function test_RevertWhen_Execute_AlreadyExecuted() public {
@@ -631,11 +631,11 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         vm.prank(protocolKeeper);
         vm.expectRevert(GovernanceVoter.EpochAlreadyExecuted.selector);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
     }
 
     function test_Execute_BudgetSnapshot_NotLiveBalance() public {
@@ -646,7 +646,7 @@ contract GovernanceVoterTest is Test {
 
         raiseToken.mint(address(voter), 50e18);
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         assertEq(raiseToken.balanceOf(treasury), 100e18);
         assertEq(raiseToken.balanceOf(address(voter)), 50e18);
@@ -669,7 +669,7 @@ contract GovernanceVoterTest is Test {
 
         // Execute epoch 0, then epoch 1 can finalize
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
         vm.prank(protocolKeeper);
         voter.finalize(1, type(uint256).max);
     }
@@ -695,7 +695,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Now epoch 2 can finalize
         vm.prank(protocolKeeper);
@@ -750,7 +750,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Epoch 2: vote option 2
         _setupVoter(alice, 1000e18);
@@ -765,7 +765,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(2, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(2, 0, 0);
+        voter.execute(2, 0, 0, block.timestamp);
 
         // Epoch 3: vote option 2
         _setupVoter(alice, 1000e18);
@@ -780,7 +780,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(3, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(3, 0, 0);
+        voter.execute(3, 0, 0, block.timestamp);
 
         // Epoch 4: vote option 2
         _setupVoter(alice, 1000e18);
@@ -795,7 +795,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(4, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(4, 0, 0);
+        voter.execute(4, 0, 0, block.timestamp);
 
         // Epoch 5: option 2 is ineligible
         assertFalse(voter.isOptionEligible(2));
@@ -837,7 +837,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(1, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         // Vote in epoch 2 for option 2
         _setupVoter(alice, 1000e18);
@@ -852,7 +852,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(2, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(2, 0, 0);
+        voter.execute(2, 0, 0, block.timestamp);
 
         // Vote in epoch 3 for option 2
         _setupVoter(alice, 1000e18);
@@ -867,7 +867,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(3, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(3, 0, 0);
+        voter.execute(3, 0, 0, block.timestamp);
 
         // Vote in epoch 4 for option 2
         _setupVoter(alice, 1000e18);
@@ -882,7 +882,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(4, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(4, 0, 0);
+        voter.execute(4, 0, 0, block.timestamp);
 
         // Epoch 5: option 2 should be ineligible
         assertFalse(voter.isOptionEligible(2));
@@ -986,7 +986,7 @@ contract GovernanceVoterTest is Test {
         bmx.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         assertEq(universalRouter.executeCallCount(), 1);
         assertEq(uint8(universalRouter.lastCommands()[0]), 0x10);
@@ -998,7 +998,7 @@ contract GovernanceVoterTest is Test {
         bmx.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         assertGe(universalRouter.executeCallCount(), 1);
     }
@@ -1008,7 +1008,7 @@ contract GovernanceVoterTest is Test {
         bmx.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
 
         assertEq(mockLPLocker.lockCalls(), 1);
         assertEq(mockLPLocker.lastLockedTokenId(), 1);
@@ -1021,7 +1021,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         assertEq(raiseToken.balanceOf(treasury), 100e18);
         assertEq(raiseToken.balanceOf(address(voter)), 0);
@@ -1035,7 +1035,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         vm.expectEmit(true, true, true, true);
         emit EpochExecuted(0, 1, 0, false, address(0));
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
     }
 
     // ============ Additional Coverage Tests ============
@@ -1050,7 +1050,7 @@ contract GovernanceVoterTest is Test {
         _setupAndFinalizeWithOption(4, 100e18);
         bmx.mint(address(universalRouter), 200e18);
         vm.prank(protocolKeeper);
-        voter.execute(1, 0, 0);
+        voter.execute(1, 0, 0, block.timestamp);
     }
 
     function test_Vote_MPGate_ExactBoundary_Passes() public {
@@ -1169,7 +1169,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         vm.warp(epochZero + EPOCH_DURATION + 14 days);
         vm.expectRevert(GovernanceVoter.EpochAlreadyExecuted.selector);
@@ -1474,7 +1474,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         vm.expectEmit(true, true, true, true);
         emit EpochExecuted(0, 1, 75e18, false, treasury);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
     }
 
     function test_SignalSetFallbackTreasury_Success() public {
@@ -1532,7 +1532,7 @@ contract GovernanceVoterTest is Test {
         voter.finalize(0, type(uint256).max);
 
         vm.prank(protocolKeeper);
-        voter.execute(0, 0, 0);
+        voter.execute(0, 0, 0, block.timestamp);
 
         assertEq(raiseToken.balanceOf(treasury), 60e18);
         assertEq(raiseToken.balanceOf(fallbackTreasury), 0);
@@ -1612,7 +1612,7 @@ contract GovernanceVoterTest is Test {
             vm.prank(protocolKeeper);
             voter.finalize(i, type(uint256).max);
             vm.prank(protocolKeeper);
-            voter.execute(i, 0, 0);
+            voter.execute(i, 0, 0, block.timestamp);
         }
 
         assertEq(voter.accountedBudget(), 0, "all finalized epochs were executed");

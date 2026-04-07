@@ -153,7 +153,7 @@ contract GovernanceHandler is Test {
         uint256 expectedDelta = info.budget;
 
         vm.prank(keeper);
-        voter.execute(epoch, 0, 0);
+        voter.execute(epoch, 0, 0, block.timestamp);
         executeCalls++;
 
         uint256 afterBudget = voter.accountedBudget();

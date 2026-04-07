@@ -21,7 +21,8 @@ interface IBoardwalkFeeCollector {
     ) external;
     function swapToRaiseToken(
         address[] calldata tokens,
-        uint256[] calldata minAmountsOut
+        uint256[] calldata minAmountsOut,
+        uint256 deadline
     ) external;
     function executeMigrateCollector(
         address newCollector,
