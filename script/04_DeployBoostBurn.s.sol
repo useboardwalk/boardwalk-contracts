@@ -7,14 +7,15 @@ import {BoostBurn} from "src/core/BoostBurn.sol";
 /// @title DeployBoostBurn - Deploy the community-driven token ranking contract
 /// @notice Deploys BoostBurn with configurable epoch parameters.
 ///         BoostBurn allows wallets to boost/deboost token rankings by burning BMX.
+/// @dev Required env: DEPLOYER_PRIVATE_KEY, OWNER, BMX_ADDRESS. Optional: EPOCH_ZERO, EPOCH_DURATION, NFT_COLLECTION, MEMBER_BOOST_DISCOUNT_BPS.
 contract DeployBoostBurn is Script {
     function run() public {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address owner = vm.envAddress("OWNER");
+        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address owner = vm.envOr("OWNER", vm.addr(deployerPrivateKey));
         address bmx = vm.envAddress("BMX_ADDRESS");
 
         uint256 epochZero = vm.envOr("EPOCH_ZERO", block.timestamp);
-        uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(1 days));
+        uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(30 days));
 
         require(owner != address(0), "OWNER required");
         require(bmx != address(0), "BMX_ADDRESS required");

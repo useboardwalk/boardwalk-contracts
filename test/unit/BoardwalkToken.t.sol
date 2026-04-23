@@ -42,7 +42,7 @@ contract MockFeeDistributor {
 }
 
 /// @title BoardwalkTokenTest
-/// @notice Comprehensive unit + fuzz tests for BoardwalkToken (EIP-1167 clone pattern)
+/// @notice Unit and fuzz tests for BoardwalkToken (EIP-1167 clone).
 contract BoardwalkTokenTest is Test {
     // ============ Constants ============
 

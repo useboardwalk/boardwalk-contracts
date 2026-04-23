@@ -7,13 +7,11 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {Timelocked} from "../base/Timelocked.sol";
 import {MembershipDiscount} from "../base/MembershipDiscount.sol";
 
-/// @title BoostBurn - Community-driven token discovery ranking via BMX burn
-/// @notice Any wallet can boost or deboost any token's ranking by burning BMX.
-///         One interaction per (wallet, token) per 30-day epoch.
+/// @title BoostBurn
+/// @notice Community ranking. Any wallet boosts or deboosts any token's score by burning BMX,
+///         once per (wallet, token, epoch). Scores can go negative.
 contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
     using SafeERC20 for IERC20;
-
-    // ============ Constants ============
 
     address public constant DEAD_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
 
@@ -22,13 +20,9 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
 
     uint256 private constant MAX_BMX_COST = 1e18;
 
-    // ============ Immutables ============
-
     address public immutable BMX;
     uint256 public immutable EPOCH_ZERO;
     uint256 public immutable EPOCH_DURATION;
-
-    // ============ State ============
 
     uint256 public bmxCost = 0.1e18;
     uint256 public memberBoostDiscountBps;
@@ -36,20 +30,14 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
     mapping(address => int256) public scores;
     mapping(bytes32 => bool) public interactions;
 
-    // ============ Errors ============
-
     error AlreadyInteracted();
     error BmxCostOutOfRange(uint256 cost);
     error MemberDiscountOutOfRange(uint256 bps);
-
-    // ============ Events ============
 
     event Boosted(address indexed token, address indexed wallet, uint256 epoch, int256 newScore);
     event Deboosted(address indexed token, address indexed wallet, uint256 epoch, int256 newScore);
     event BmxCostChanged(uint256 oldCost, uint256 newCost);
     event MemberBoostDiscountChanged(uint256 oldDiscount, uint256 newDiscount);
-
-    // ============ Constructor ============
 
     constructor(
         address _owner,
@@ -67,10 +55,6 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         _setNftCollection(_nftCollection);
     }
 
-    // ============ Core Functions ============
-
-    /// @notice Boost a token's ranking by burning BMX
-    /// @param token The token address to boost
     function boost(
         address token
     ) external {
@@ -79,8 +63,6 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         emit Boosted(token, msg.sender, currentEpoch(), newScore);
     }
 
-    /// @notice Deboost a token's ranking by burning BMX
-    /// @param token The token address to deboost
     function deboost(
         address token
     ) external {
@@ -88,8 +70,6 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         int256 newScore = --scores[token];
         emit Deboosted(token, msg.sender, currentEpoch(), newScore);
     }
-
-    // ============ View Functions ============
 
     function currentEpoch() public view returns (uint256) {
         return (block.timestamp - EPOCH_ZERO) / EPOCH_DURATION;
@@ -109,13 +89,10 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         return interactions[keccak256(abi.encode(wallet, token, epoch))];
     }
 
-    // ============ Admin Functions ============
-
     function _authAdmin(
         bytes32
     ) internal override onlyOwner {}
 
-    /// @notice Execute a BMX cost change after timelock delay
     function executeSetBmxCost(
         uint256 _cost
     ) external {
@@ -125,7 +102,6 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         bmxCost = _cost;
     }
 
-    /// @notice Execute NFT collection address change
     function executeSetNftCollection(
         address _nft
     ) external {
@@ -133,7 +109,6 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         _setNftCollection(_nft);
     }
 
-    /// @notice Execute member boost discount BPS change
     function executeSetMemberBoostDiscount(
         uint256 _bps
     ) external {
@@ -142,8 +117,6 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         emit MemberBoostDiscountChanged(memberBoostDiscountBps, _bps);
         memberBoostDiscountBps = _bps;
     }
-
-    // ============ Internal ============
 
     function _interact(
         address token

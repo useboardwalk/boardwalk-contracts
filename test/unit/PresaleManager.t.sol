@@ -366,7 +366,7 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
     // ============ Test Contract ============
 
     /// @title PresaleManagerTest
-    /// @notice Comprehensive unit + fuzz tests for PresaleManager
+    /// @notice Unit and fuzz tests for PresaleManager.
     contract PresaleManagerTest is Test {
         // ============ Constants ============
 

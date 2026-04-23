@@ -218,7 +218,7 @@ contract MockUniswapV2Router {
 // ============ Test Contract ============
 
 /// @title BoardwalkLPManagerTest
-/// @notice Comprehensive unit + fuzz tests for BoardwalkLPManager
+/// @notice Unit and fuzz tests for BoardwalkLPManager.
 contract BoardwalkLPManagerTest is Test {
     // ============ Constants ============
 

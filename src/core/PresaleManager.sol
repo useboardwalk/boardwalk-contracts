@@ -12,24 +12,19 @@ import {IDEXFactory} from "../interfaces/IDEXFactory.sol";
 import {IUniswapV2Pair} from "../dex/core/interfaces/IUniswapV2Pair.sol";
 import {AllocationLib} from "../base/AllocationLib.sol";
 
-/// @title PresaleManager - Handles raise token contributions, liquidity seeding, token claims, and refunds
-/// @notice Per-launch clone. Collects raise token during presale, seeds permanent liquidity on graduation,
-///         and allows presale participants to claim tokens after 7-day cliff.
+/// @title PresaleManager
+/// @notice Per-launch clone. Collects raise token, seeds permanent liquidity on graduation, and pays
+///         out presale claims after a 7-day cliff. Refunds if the threshold isn't met.
 contract PresaleManager is Initializable {
     using SafeERC20 for IERC20;
 
-    // ============ Constants ============
-
-    uint256 public constant TOTAL_SUPPLY = 10_000_000_000e18; // 10 billion tokens
+    uint256 public constant TOTAL_SUPPLY = 10_000_000_000e18;
     uint256 public constant SEED_DELAY = 1 hours;
     uint256 public constant CLIFF_DURATION = 7 days;
     uint256 public constant ADVANCED_START_DELAY = 24 hours;
     address public constant DEAD_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
     uint256 private constant MAX_BONUS_BPS = 1_000;
 
-    // ============ State ============
-
-    // Core addresses
     address public token;
     address public feeDistributor;
     address public vestingStream;
@@ -37,26 +32,22 @@ contract PresaleManager is Initializable {
     address public router;
     IERC20 public raiseToken;
     address public dexFactory;
-    address public factory; // LaunchFactory address (for access control on setVestingConfig)
+    address public factory;
 
-    // Presale config
     uint256 public presaleStart;
     uint256 public presaleEnd;
     uint256 public presaleDuration;
-    uint256 public presalePercent; // BPS (2500-5000)
+    uint256 public presalePercent;
     uint256 public graduationThreshold;
 
-    // Presale state
     uint256 public totalRaised;
     uint256 public totalWeightedRaise;
     uint256 public liquiditySeedTime;
     bool public seeded;
 
-    // Vesting config (stored for use during seedLiquidity)
     address[] private _vestingRecipients;
     uint256[] private _vestingAmounts;
 
-    // Per-user tracking
     struct UserContribution {
         uint256 totalContributed;
         uint256 weightedContributed;
@@ -65,8 +56,6 @@ contract PresaleManager is Initializable {
     mapping(address => UserContribution) public contributions;
     mapping(address => bool) public claimed;
     mapping(address => bool) public refunded;
-
-    // ============ Errors ============
 
     error PresaleNotStarted();
     error PresaleEnded();
@@ -87,8 +76,6 @@ contract PresaleManager is Initializable {
     error PairCreationFailed();
     error RouterFactoryMismatch();
 
-    // ============ Events ============
-
     event Contributed(address indexed user, uint256 amount, uint256 bonusMultiplier);
     event TokensClaimed(address indexed user, uint256 amount);
     event LiquiditySeeded(uint256 raiseAmount, uint256 tokenAmount, uint256 lpTokens);
@@ -96,27 +83,10 @@ contract PresaleManager is Initializable {
     event PresaleInitialized(address token, uint256 presaleStart, uint256 presaleEnd, uint256 graduationThreshold);
     event VestingConfigSet(uint256 recipientCount);
 
-    // ============ Constructor ============
-
-    /// @dev Disable initialization on the implementation template
     constructor() {
         _disableInitializers();
     }
 
-    // ============ Initialization ============
-
-    /// @notice Initialize the PresaleManager clone
-    /// @param _token BoardwalkToken clone address
-    /// @param _feeDistributor FeeDistributor clone address
-    /// @param _vestingStreamAddr VestingStream clone address (address(0) for Express path)
-    /// @param _lpStaking LPStaking clone address
-    /// @param _router BoardwalkRouter address
-    /// @param _raiseToken Raise token address
-    /// @param _dexFactory BoardwalkDEXFactory address
-    /// @param _duration Presale duration in seconds
-    /// @param _presalePercent Presale percentage in BPS (2500-5000)
-    /// @param _graduationThreshold Minimum raise token for graduation
-    /// @param _hasDelay Whether presale starts with 24hr delay (Advanced path)
     function initialize(
         address _token,
         address _feeDistributor,
@@ -138,10 +108,9 @@ contract PresaleManager is Initializable {
         if (_dexFactory == address(0)) revert ZeroAddress();
         if (_duration == 0) revert InvalidDuration();
 
-        // Verify router and factory are paired
         if (IDEXRouter(_router).factory() != _dexFactory) revert RouterFactoryMismatch();
 
-        factory = msg.sender; // Store factory address for setVestingConfig access control
+        factory = msg.sender;
         token = _token;
         feeDistributor = _feeDistributor;
         vestingStream = _vestingStreamAddr;
@@ -154,21 +123,13 @@ contract PresaleManager is Initializable {
         presalePercent = _presalePercent;
         graduationThreshold = _graduationThreshold;
 
-        // Express: starts immediately. Advanced: 24hr delay.
-        if (_hasDelay) {
-            presaleStart = block.timestamp + ADVANCED_START_DELAY;
-        } else {
-            presaleStart = block.timestamp;
-        }
+        presaleStart = _hasDelay ? block.timestamp + ADVANCED_START_DELAY : block.timestamp;
         presaleEnd = presaleStart + _duration;
 
         emit PresaleInitialized(_token, presaleStart, presaleEnd, _graduationThreshold);
     }
 
-    /// @notice Store vesting config (called by factory after initialize, before presale starts)
-    /// @dev Separate from initialize to avoid stack-too-deep. Only factory can call.
-    /// @param recipients Array of vesting recipient addresses
-    /// @param amounts Array of token amounts for each recipient
+    /// @notice Store vesting recipients and amounts. Factory-only, one-shot.
     function setVestingConfig(
         address[] calldata recipients,
         uint256[] calldata amounts
@@ -189,10 +150,7 @@ contract PresaleManager is Initializable {
         emit VestingConfigSet(recipients.length);
     }
 
-    // ============ Contribution ============
-
-    /// @notice Contribute raise token to the presale
-    /// @param amount Amount of raise token to contribute
+    /// @notice Contribute raise token to the presale. Time-decay bonus: +10% at start → 0% at end.
     function contribute(
         uint256 amount
     ) external {
@@ -219,10 +177,9 @@ contract PresaleManager is Initializable {
         emit Contributed(msg.sender, amount, bonusMultiplier);
     }
 
-    // ============ Liquidity Seeding ============
-
-    /// @notice Seed liquidity after presale ends + 1 hour. Public function, anyone can call.
-    /// @dev Mints tokens, creates LP, burns LP tokens, initializes LPStaking and VestingStream.
+    /// @notice Permissionless after `presaleEnd + SEED_DELAY` if the graduation threshold is met.
+    ///         Mints all token buckets, seeds the pair, burns LP to dead, initialises LPStaking and
+    ///         VestingStream, and arms the anti-whale tax decay.
     function seedLiquidity() external {
         if (block.timestamp < presaleEnd + SEED_DELAY) {
             revert SeedTooEarly(presaleEnd + SEED_DELAY, block.timestamp);
@@ -246,14 +203,13 @@ contract PresaleManager is Initializable {
             IBoardwalkToken(token).mint(vestingStream, issuerVestingTokens);
         }
 
-        // Get or create pair
         address pair = IDEXFactory(dexFactory).getPair(token, address(raiseToken));
         if (pair == address(0)) {
             pair = IDEXFactory(dexFactory).createPair(token, address(raiseToken));
             if (pair == address(0)) revert PairCreationFailed();
         }
 
-        // Seed initial liquidity by minting directly on the pair.
+        // Seed liquidity by transferring directly to the pair and calling mint — no router needed.
         IERC20(token).safeTransfer(pair, liquidityTokens);
         raiseToken.safeTransfer(pair, totalRaised);
         uint256 lpTokens = IUniswapV2Pair(pair).mint(address(this));
@@ -271,9 +227,7 @@ contract PresaleManager is Initializable {
         emit LiquiditySeeded(totalRaised, liquidityTokens, lpTokens);
     }
 
-    // ============ Token Claims ============
-
-    /// @notice Claim presale tokens after 7-day cliff
+    /// @notice Claim presale tokens after the 7-day cliff.
     function claimTokens() external {
         if (!seeded) revert PresaleNotStarted();
         if (block.timestamp < liquiditySeedTime + CLIFF_DURATION) {
@@ -286,23 +240,17 @@ contract PresaleManager is Initializable {
 
         claimed[msg.sender] = true;
 
-        // Transfer tokens (PresaleManager is exempt from tax)
         IERC20(token).safeTransfer(msg.sender, tokenAmount);
 
         emit TokensClaimed(msg.sender, tokenAmount);
     }
 
-    // ============ Refunds ============
-
-    /// @notice Refund raise token if presale failed to graduate
+    /// @notice Refund raise token contributions when the presale failed to meet `graduationThreshold`.
     function refund() external {
-        // Must be after presale + seed delay
         if (block.timestamp < presaleEnd + SEED_DELAY) {
             revert PresaleStillActive();
         }
-        // Must not have been seeded (i.e., presale failed)
         if (seeded) revert AlreadySeeded();
-        // Below graduation threshold = failed
         if (totalRaised >= graduationThreshold) revert PresaleNotFailed();
         if (refunded[msg.sender]) revert AlreadyRefunded();
 
@@ -316,11 +264,6 @@ contract PresaleManager is Initializable {
         emit Refunded(msg.sender, user.totalContributed);
     }
 
-    // ============ View Functions ============
-
-    /// @notice Calculate token amount for a contributor
-    /// @param account Contributor address
-    /// @return Token amount claimable
     function calculateTokens(
         address account
     ) public view returns (uint256) {
@@ -331,14 +274,12 @@ contract PresaleManager is Initializable {
         return user.weightedContributed * presaleTokens / totalWeightedRaise;
     }
 
-    /// @notice Check if presale has failed (below threshold after deadline)
     function hasFailed() external view returns (bool) {
         if (seeded) return false;
         if (block.timestamp < presaleEnd + SEED_DELAY) return false;
         return totalRaised < graduationThreshold;
     }
 
-    /// @notice Get the cliff end time (0 if not yet seeded)
     function cliffEnd() external view returns (uint256) {
         if (liquiditySeedTime == 0) return 0;
         return liquiditySeedTime + CLIFF_DURATION;

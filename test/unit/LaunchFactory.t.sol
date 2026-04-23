@@ -172,7 +172,7 @@ contract MockRouterMinimal {
 // ============ Test Contract ============
 
 /// @title LaunchFactoryTest
-/// @notice Comprehensive unit + fuzz tests for LaunchFactory
+/// @notice Unit and fuzz tests for LaunchFactory.
 contract LaunchFactoryTest is Test {
     // ============ Constants ============
 

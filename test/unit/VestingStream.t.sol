@@ -25,7 +25,7 @@ contract MockERC20 is ERC20 {
 }
 
 /// @title VestingStreamTest
-/// @notice Comprehensive unit + fuzz tests for VestingStream (EIP-1167 clone pattern)
+/// @notice Unit and fuzz tests for VestingStream (EIP-1167 clone).
 contract VestingStreamTest is Test {
     // ============ Constants ============
 

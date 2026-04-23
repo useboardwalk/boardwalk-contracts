@@ -14,29 +14,14 @@ import {IV4PositionManager} from "../interfaces/IV4PositionManager.sol";
 import {ILPLocker} from "../interfaces/ILPLocker.sol";
 import {IWETH} from "../interfaces/IWETH.sol";
 
-/// @title GovernanceVoter - Weekly governance voting with protocol revenue execution
-/// @notice Merged voter + executor + vault. Receives 70% of protocol revenue from BoardwalkFeeCollector.
-///         sbfBMX holders vote weekly on where the governance-directed share goes.
-///         Four options: Treasury, Buy&Burn BMX, Buy&Burn LP, Participation Allocation.
-///
-/// @dev Advance voting model: votes cast in epoch N determine the winner of epoch N+1.
-///      finalize(N) snapshots NEW revenue as budget and reads epoch N-1's votes to pick the winner.
-///      Epoch 0 always defaults to treasury (no prior votes exist).
-///
-///      Sequential finalization is strictly enforced: epoch N cannot finalize until epoch N-1
-///      is both finalized AND executed. This prevents budget duplication and win streak corruption.
-///
-///      Per-epoch budget accounting via `accountedBudget` prevents the same WETH balance from
-///      being assigned to multiple epochs.
-///
-///      When the keeper catches up on multiple epochs in one block, each finalize(N) primes
-///      epoch N+1 with the current supply. Since supply doesn't change between calls in the
-///      same block, the snapshot values are semantically correct.
+/// @title GovernanceVoter
+/// @notice Merged voter + executor + vault for the 70% governance share of protocol revenue.
+/// @dev Advance voting: votes in epoch N decide the winner of epoch N+1 (epoch 0 defaults to treasury).
+///      Sequential finalization: N-1 must be finalized AND executed before N. `accountedBudget` prevents
+///      the same WETH balance from being assigned twice when the keeper catches up on multiple epochs.
 contract GovernanceVoter is Ownable2Step, Timelocked {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
-
-    // ============ Constants ============
 
     uint256 private constant BPS_DENOMINATOR = 10_000;
     uint256 private constant QUORUM_BPS = 5_100;
@@ -59,28 +44,22 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     uint8 public constant OPTION_PARTICIPATION = 4;
     uint8 private constant NUM_OPTIONS = 4;
 
-    // Universal Router command IDs
     bytes1 private constant UR_V4_SWAP = 0x10;
     bytes1 private constant UR_V4_POSITION_MANAGER_CALL = 0x14;
-
-    // ============ Immutables ============
 
     IRewardTracker public immutable SBF_BMX;
     IRewardTracker public immutable STAKED_BMX_TRACKER;
     address public immutable BN_BMX;
     address public immutable BMX;
-    address public immutable WETH; // also the raise token
+    address public immutable WETH;
     address public immutable UNIVERSAL_ROUTER;
     address public immutable V4_POSITION_MANAGER;
     uint256 public immutable EPOCH_ZERO;
     uint256 public immutable EPOCH_DURATION;
 
-    // v4 BMX/WETH pool configuration
     uint24 public immutable POOL_FEE;
     int24 public immutable POOL_TICK_SPACING;
     address public immutable POOL_HOOKS;
-
-    // ============ Types ============
 
     struct EpochInfo {
         uint256 snapshotTotalWeight;
@@ -99,13 +78,10 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         uint8 option;
     }
 
-    // ============ State ============
-
     address public treasury;
     address public keeper;
     address public fallbackTreasury;
 
-    /// @notice Peer contracts — set once via initializePeers() after deployment
     address public lpLocker;
     address public participationDistributor;
     bool public peersInitialized;
@@ -124,8 +100,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     mapping(uint256 => uint256) internal validationCursor;
     bool public finalizationInProgress;
     uint256 private finalizingEpoch;
-
-    // ============ Errors ============
 
     error EpochNotActive();
     error AlreadyVoted();
@@ -150,8 +124,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     error PeerWiringMismatch();
     error PeersNotInitialized();
 
-    // ============ Events ============
-
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
     event EpochExecuted(
@@ -162,8 +134,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     event KeeperChanged(address oldKeeper, address newKeeper);
     event FallbackTreasuryChanged(address oldAddress, address newAddress);
     event PeersInitialized(address lpLocker, address participationDistributor);
-
-    // ============ Constructor ============
 
     struct DeployParams {
         address sbfBmx;
@@ -207,28 +177,24 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         if (p.keeper == address(0)) revert ZeroAddress();
         keeper = p.keeper;
 
-        // type(uint256).max = "never ineligible"; no real epoch will match
+        // Sentinel: no real epoch number will match, so every option starts eligible.
         lastIneligibleEpoch[0] = type(uint256).max;
         lastIneligibleEpoch[1] = type(uint256).max;
         lastIneligibleEpoch[2] = type(uint256).max;
         lastIneligibleEpoch[3] = type(uint256).max;
     }
 
-    /// @dev Accept native ETH from WETH.withdraw() and PositionManager SWEEP.
+    /// @dev Accepts native ETH from WETH.withdraw() and PositionManager SWEEP only.
     receive() external payable {
         if (msg.sender != WETH && msg.sender != V4_POSITION_MANAGER) revert OnlyWETH();
     }
-
-    // ============ Modifiers ============
 
     modifier onlyKeeperOrOwner() {
         if (msg.sender != keeper && msg.sender != owner()) revert NotKeeper();
         _;
     }
 
-    // ============ Peer Initialization ============
-
-    /// @notice Wire peer contracts after deployment. Can only be called once.
+    /// @notice Wire peer contracts. One-shot after deployment; both peers must point back at this contract.
     function initializePeers(
         address _lpLocker,
         address _participationDistributor
@@ -245,10 +211,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         emit PeersInitialized(_lpLocker, _participationDistributor);
     }
 
-    // ============ Voting ============
-
     /// @notice Cast a vote for the current epoch. Advance voting: vote in epoch N directs fees for epoch N+1.
-    /// @param option Vote option (1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation)
+    ///         Options: 1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation.
     function vote(
         uint8 option
     ) external {
@@ -293,11 +257,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         emit Voted(epoch, msg.sender, option, weight);
     }
 
-    // ============ Finalization ============
-
-    /// @notice Finalize an epoch after it ends. Call repeatedly with maxBatch until complete.
-    /// @param epoch The epoch to finalize
-    /// @param maxBatch Maximum number of voters to re-validate in this call
+    /// @notice Finalize an epoch after it ends. Re-validates prior-epoch voters in batches; call
+    ///         repeatedly until `validationCursor[epoch-1]` reaches the end.
     function finalize(
         uint256 epoch,
         uint256 maxBatch
@@ -309,7 +270,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         if (epoch >= currentEpoch()) revert EpochNotExecutable();
 
         if (!finalizationInProgress) {
-            // Strictly sequential: previous epoch must be finalized AND executed
             if (epoch > 0) {
                 EpochInfo storage prev = epochInfoStorage[epoch - 1];
                 if (!prev.finalized || !prev.executed) revert PreviousEpochNotExecuted();
@@ -317,7 +277,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
             finalizationInProgress = true;
             finalizingEpoch = epoch;
 
-            // Per-epoch budget: only new revenue since last finalization
+            // Budget = only new revenue since the last finalize consumed it.
             uint256 currentBalance = IERC20(WETH).balanceOf(address(this));
             e.budget = currentBalance - accountedBudget;
             accountedBudget = currentBalance;
@@ -325,7 +285,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
             if (finalizingEpoch != epoch) revert WrongFinalizeEpoch();
         }
 
-        // Validate prior epoch's voters (advance voting: epoch N uses epoch N-1's votes)
         if (epoch > 0) {
             _validateVoters(epoch - 1, maxBatch);
             if (validationCursor[epoch - 1] < epochVoters[epoch - 1].length) return;
@@ -344,13 +303,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         emit EpochFinalized(epoch, winner, quorumMet, e.budget);
     }
 
-    // ============ Execution ============
-
-    /// @notice Execute the winning option for a finalized epoch. Keeper or owner only.
-    /// @param epoch The epoch to execute
-    /// @param amountOutMin Minimum BMX output for swap-based options (slippage protection)
-    /// @param liquidity Liquidity amount for Option 3 (BuyBurnLP) mint. Ignored for other options.
-    /// @param deadline Transaction deadline timestamp
+    /// @notice Execute the winning option for a finalized epoch.
+    /// @param liquidity Liquidity parameter for Option 3 (BuyBurnLP); ignored otherwise.
     function execute(
         uint256 epoch,
         uint256 amountOutMin,
@@ -389,8 +343,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
     }
 
-    /// @notice Permissionless deadlock resolver. After FORCE_EXECUTE_DELAY past epoch end,
-    ///         anyone can mark a stuck epoch as executed and route its budget to the fallback treasury.
+    /// @notice Deadlock resolver. After FORCE_EXECUTE_DELAY past epoch end, anyone can mark a stuck
+    ///         epoch as executed and route its budget to `fallbackTreasury`.
     function forceMarkExecuted(
         uint256 epoch
     ) external {
@@ -414,21 +368,16 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
     }
 
-    // ============ View Functions ============
-
-    /// @notice Get the current epoch number
     function currentEpoch() public view returns (uint256) {
         return (block.timestamp - EPOCH_ZERO) / EPOCH_DURATION;
     }
 
-    /// @notice Get info for an epoch
     function getEpochInfo(
         uint256 epoch
     ) external view returns (EpochInfo memory) {
         return epochInfoStorage[epoch];
     }
 
-    /// @notice Get a user's vote for an epoch
     function getUserVote(
         uint256 epoch,
         address user
@@ -436,28 +385,24 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         return userVotes[epoch][user];
     }
 
-    /// @notice Check if an option is eligible for voting in the current epoch
     function isOptionEligible(
         uint8 option
     ) external view returns (bool) {
         return _isOptionEligible(option, currentEpoch());
     }
 
-    /// @notice Get the list of voter addresses for an epoch
     function getEpochVoters(
         uint256 epoch
     ) external view returns (address[] memory) {
         return epochVoters[epoch];
     }
 
-    // ============ Admin Functions ============
-
     function _authAdmin(
         bytes32
     ) internal override onlyOwner {}
 
-    /// @dev _burnDelay is intentionally NOT overridden. It delegates to _actionDelay(),
-    ///      giving governance actions a 21-day burn delay and standard actions a 7-day burn delay.
+    /// @dev `_burnDelay` is deliberately not overridden; delegating to `_actionDelay` gives governance
+    ///      actions a 21-day burn delay and all other actions a 7-day burn delay.
     function _actionDelay(
         bytes32 action
     ) internal view override returns (uint256) {
@@ -467,7 +412,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         return TIMELOCK_DELAY;
     }
 
-    /// @notice Execute governance burn amount change
     function executeSetGovernanceBurn(
         uint256 _amount
     ) external {
@@ -477,7 +421,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         governanceBurnAmount = _amount;
     }
 
-    /// @notice Execute treasury address change
     function executeSetTreasury(
         address _treasury
     ) external {
@@ -486,7 +429,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         treasury = _treasury;
     }
 
-    /// @notice Execute keeper address change
     function executeSetKeeper(
         address _keeper
     ) external {
@@ -495,7 +437,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         keeper = _keeper;
     }
 
-    /// @notice Execute fallback treasury address change
     function executeSetFallbackTreasury(
         address _fallbackTreasury
     ) external {
@@ -504,9 +445,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         fallbackTreasury = _fallbackTreasury;
     }
 
-    // ============ Internal ============
-
-    /// @dev Shared timelock execute + non-zero address validation for admin setters
     function _executeNonZeroAddress(
         bytes32 action,
         address addr
@@ -515,8 +453,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         if (addr == address(0)) revert ZeroAddress();
     }
 
-    /// @dev Determine winning option from prior epoch's votes (advance voting model).
-    ///      Epoch 0 defaults to treasury. Handles quorum, eligibility, and consecutive-win tracking.
     function _determineWinner(
         uint256 epoch
     ) internal returns (uint8 winner, bool quorumMet) {
@@ -526,9 +462,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
         EpochInfo storage votingEpoch = epochInfoStorage[epoch - 1];
 
-        // Quorum: use min(snapshot, liveSupply) to handle supply changes during epoch.
-        // If supply increases after priming, quorum is easier to reach against the primed snapshot.
-        // This is an accepted design tradeoff -- the min() prevents manipulation via supply deflation.
+        // Quorum base = min(snapshot, liveSupply). Prevents inflating quorum by deflating supply
+        //               between snapshot and finalize; supply increases only make quorum easier.
         uint256 liveSupply = SBF_BMX.totalSupply();
         uint256 quorumBase = votingEpoch.snapshotTotalWeight < liveSupply ? votingEpoch.snapshotTotalWeight : liveSupply;
 
@@ -573,8 +508,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
     }
 
-    /// @dev Validate voters from a specific epoch. If finalization is
-    ///      delayed, voters' balances may have changed since they voted.
+    /// @dev If finalization is delayed, a voter's sbfBMX balance may have dropped since they voted.
+    ///      Reduce their weight (and the option's weight) to the live balance; never inflate.
     function _validateVoters(
         uint256 epoch,
         uint256 maxBatch
@@ -636,8 +571,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
     }
 
-    // V4_SWAP: SWAP_EXACT_IN_SINGLE + SETTLE(payerIsUser=false) + TAKE_ALL
-    // WETH is unwrapped before the swap and ETH is sent.
+    /// @dev v4 pools use native ETH, so WETH is unwrapped before the swap and ETH is forwarded via msg.value.
+    ///      Action path: SWAP_EXACT_IN_SINGLE + SETTLE(payerIsUser=false) + TAKE_ALL.
     function _swapRaiseTokenForBmx(
         uint256 amountIn,
         uint256 amountOutMin,
@@ -648,7 +583,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
         IWETH(WETH).withdraw(amountIn);
 
-        // zeroForOne = true: selling ETH (currency0) for BMX (currency1)
+        // zeroForOne=true: ETH is currency0 (address(0) sorts below BMX).
         bytes memory swapActions =
             abi.encodePacked(uint8(Actions.SWAP_EXACT_IN_SINGLE), uint8(Actions.SETTLE), uint8(Actions.TAKE_ALL));
         bytes[] memory swapParams = new bytes[](3);
@@ -684,8 +619,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         IERC20(BMX).safeTransfer(DEAD_ADDRESS, bmxReceived);
     }
 
-    // V4_POSITION_MANAGER_CALL: MINT_POSITION + SETTLE_PAIR + SWEEP
-    // Uses native ETH for the WETH half of the LP position.
+    /// @dev Action path: MINT_POSITION + SETTLE_PAIR + SWEEP. The WETH half is unwrapped and the
+    ///      LP position is minted with native ETH; SWEEP recovers residual ETH.
     function _executeBuyBurnLp(
         uint256 raiseAmount,
         uint256 amountOutMin,
@@ -700,11 +635,9 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         IERC20(BMX).safeTransfer(UNIVERSAL_ROUTER, bmxReceived);
         IWETH(WETH).withdraw(halfForEth);
 
-        // MINT_POSITION + SETTLE_PAIR + SWEEP
         bytes memory mintActions =
             abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP));
         bytes[] memory mintParams = new bytes[](3);
-        // Pool key: address(0) = ETH (currency0), BMX (currency1)
         mintParams[0] = abi.encode(
             address(0),
             BMX,
@@ -734,7 +667,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
         ILPLocker(lpLocker).lockPosition(tokenId);
 
-        // Dust cleanup
         uint256 bmxDust = IERC20(BMX).balanceOf(address(this));
         if (bmxDust > 0) IERC20(BMX).safeTransfer(DEAD_ADDRESS, bmxDust);
         uint256 ethDust = address(this).balance;
@@ -744,7 +676,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
     }
 
-    // Epoch 0 falls back to treasury (no prior-epoch voters exist)
+    /// @dev Epoch 0 falls back to treasury — no prior-epoch voters exist to stream to.
     function _executeParticipation(
         uint256 epoch,
         uint256 raiseAmount,

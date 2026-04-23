@@ -24,7 +24,7 @@ contract MockERC20 is ERC20 {
 }
 
 /// @title LPStakingTest
-/// @notice Comprehensive unit + fuzz tests for LPStaking
+/// @notice Unit and fuzz tests for LPStaking.
 contract LPStakingTest is Test {
     // ============ Constants ============
 

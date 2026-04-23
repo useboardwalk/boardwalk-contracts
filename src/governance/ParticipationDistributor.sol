@@ -5,23 +5,16 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 
-/// @title ParticipationDistributor - 7-day linear BMX streaming to eligible governance voters
-/// @notice When Option 4 wins, GovernanceVoter swaps raise token to BMX and calls createStream().
-///         Eligible voters (those who voted in the PRIOR epoch) can claim their proportional share
-///         linearly over 7 days. Eligibility is locked at vote time (wallet address, not staking position).
+/// @title ParticipationDistributor
+/// @notice 7-day linear BMX stream per epoch when governance Option 4 wins. Eligibility is locked
+///         at vote time: voters from epoch N-1 share epoch N's BMX in proportion to their vote weight.
 contract ParticipationDistributor {
     using SafeERC20 for IERC20;
 
-    // ============ Constants ============
-
     uint256 public constant STREAM_DURATION = 7 days;
-
-    // ============ Immutables ============
 
     address public immutable BMX;
     address public immutable GOVERNANCE_VOTER;
-
-    // ============ Types ============
 
     struct StreamInfo {
         uint256 totalBmx;
@@ -29,23 +22,15 @@ contract ParticipationDistributor {
         uint256 startTime;
     }
 
-    // ============ State ============
-
     mapping(uint256 => StreamInfo) public streams;
     mapping(uint256 => mapping(address => uint256)) public claimed;
-
-    // ============ Errors ============
 
     error NotGovernanceVoter();
     error StreamAlreadyExists();
     error NothingToClaim();
 
-    // ============ Events ============
-
     event StreamCreated(uint256 indexed epoch, uint256 totalBmx, uint256 totalWeight);
     event Claimed(uint256 indexed epoch, address indexed user, uint256 amount);
-
-    // ============ Constructor ============
 
     constructor(
         address _bmx,
@@ -55,11 +40,8 @@ contract ParticipationDistributor {
         GOVERNANCE_VOTER = _governanceVoter;
     }
 
-    // ============ Stream Management ============
-
-    /// @notice Create a participation stream for an epoch. Only callable by GovernanceVoter.
-    /// @param epoch The epoch this stream rewards (voters from epoch-1 are eligible)
-    /// @param bmxAmount Total BMX to distribute
+    /// @notice Called by GovernanceVoter to start a new epoch's stream. Reads `totalVoteWeight` from
+    ///         the prior epoch (`epoch - 1`) — that's the eligibility set for this stream.
     function createStream(
         uint256 epoch,
         uint256 bmxAmount
@@ -77,10 +59,6 @@ contract ParticipationDistributor {
         emit StreamCreated(epoch, bmxAmount, priorEpoch.totalVoteWeight);
     }
 
-    // ============ Claiming ============
-
-    /// @notice Claim vested BMX from a participation stream
-    /// @param epoch The epoch to claim from
     function claim(
         uint256 epoch
     ) external {
@@ -89,8 +67,7 @@ contract ParticipationDistributor {
         IERC20(BMX).safeTransfer(msg.sender, amount);
     }
 
-    /// @notice Claim vested BMX from multiple epoch streams in a single transaction
-    /// @param epochs Array of epochs to claim from
+    /// @notice Reverts if nothing is claimable across the supplied epochs (skips zero-claimable ones).
     function claimAll(
         uint256[] calldata epochs
     ) external {
@@ -102,9 +79,6 @@ contract ParticipationDistributor {
         IERC20(BMX).safeTransfer(msg.sender, total);
     }
 
-    // ============ Internal ============
-
-    /// @dev Process a single epoch claim: check claimable, update state, emit event
     function _processClaim(
         uint256 epoch
     ) internal returns (uint256 amount) {
@@ -115,13 +89,8 @@ contract ParticipationDistributor {
         }
     }
 
-    // ============ View Functions ============
-
-    /// @notice Get a user's total BMX allocation and currently claimable amount for an epoch
-    /// @param epoch The epoch to check
-    /// @param user The user address
-    /// @return totalAllocation The total BMX the user is entitled to over the full stream
-    /// @return claimableAmount The amount currently available to claim
+    /// @notice Returns `(totalAllocation, claimableNow)` for `user` in `epoch`. Returns zero when the
+    ///         user did not vote in epoch-1 or has no allocation.
     function claimable(
         uint256 epoch,
         address user

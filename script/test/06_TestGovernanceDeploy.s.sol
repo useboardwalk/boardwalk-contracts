@@ -44,7 +44,7 @@ contract TestGovernanceDeployScript is BaseTestScript {
         address weth = vm.envOr("WETH_ADDRESS", BASE_WETH);
         address universalRouter = vm.envOr("UNIVERSAL_ROUTER", BASE_UNIVERSAL_ROUTER);
         address v4PositionManager = vm.envOr("V4_POSITION_MANAGER", BASE_V4_POSITION_MANAGER);
-        uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(10 minutes));
+        uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(7 days));
         address treasury = vm.envOr("TREASURY", deployer);
         address fallbackTreasury = vm.envOr("FALLBACK_TREASURY", deployer);
         address keeper = vm.envAddress("KEEPER_ADDRESS");

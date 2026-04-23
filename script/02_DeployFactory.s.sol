@@ -19,15 +19,15 @@ import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 ///      3. BoardwalkFeeCollector (singleton - needs raise token, router, treasury, keeper)
 ///      4. LaunchFactory (singleton - needs all of the above)
 contract DeployFactory is Script {
-    function run() public {
-        // Load environment
-        address deployer = vm.envAddress("DEPLOYER");
-        address owner = vm.envAddress("OWNER");
-        address bmx = vm.envAddress("BMX_ADDRESS");
-        address raiseToken = vm.envAddress("RAISE_TOKEN_ADDRESS");
+    function run() external {
+        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
         address dexFactory = vm.envAddress("DEX_FACTORY");
         address dexRouter = vm.envAddress("DEX_ROUTER");
-        address treasury = vm.envAddress("TREASURY");
+        address owner = vm.envOr("OWNER", deployer);
+        address bmx = vm.envAddress("BMX_ADDRESS");
+        address raiseToken = vm.envAddress("RAISE_TOKEN_ADDRESS");
+        address treasury = vm.envOr("TREASURY", owner);
         address keeper = vm.envAddress("KEEPER");
         uint256 bmxBurnAmount = vm.envOr("BMX_BURN_AMOUNT", uint256(100e18));
         uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(10 ether));
@@ -45,7 +45,7 @@ contract DeployFactory is Script {
         require(treasury != address(0), "TREASURY required");
         require(keeper != address(0), "KEEPER required");
 
-        vm.startBroadcast(deployer);
+        vm.startBroadcast(deployerPrivateKey);
 
         console.log("=== Boardwalk Factory Deployment ===");
         console.log("Deployer:", deployer);

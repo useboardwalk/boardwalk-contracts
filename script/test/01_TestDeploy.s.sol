@@ -33,8 +33,8 @@ contract TestDeployScript is BaseTestScript {
 
         uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(0.0001 ether));
         uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(0.0001 ether));
-        uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(300)); // 5 minutes
-        uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(10 minutes));
+        uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(24 hours));
+        uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(7 days));
         uint256 bmxBurnTarget = vm.envOr("BMX_BURN_AMOUNT", uint256(1e18));
 
         require(owner != address(0), "OWNER required");

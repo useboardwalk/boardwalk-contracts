@@ -15,19 +15,15 @@ import {IPresaleManager} from "../interfaces/IPresaleManager.sol";
 import {IVestingStream} from "../interfaces/IVestingStream.sol";
 import {ILPStaking} from "../interfaces/ILPStaking.sol";
 
-/// @title LaunchFactory - Singleton factory deploying token launches via EIP-1167 clones
-/// @notice Handles BMX burn, config validation, clone deployment, and initialization of all per-launch contracts.
+/// @title LaunchFactory
+/// @notice Singleton that deploys per-launch clones, burns BMX from issuers, and owns global config.
 contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     using SafeERC20 for IERC20;
-
-    // ============ Enums ============
 
     enum LaunchPath {
         EXPRESS,
         ADVANCED
     }
-
-    // ============ Structs ============
 
     struct LaunchConfig {
         string name;
@@ -66,20 +62,16 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         uint256 total;
     }
 
-    // ============ Constants ============
-
     uint256 private constant MAX_BMX_BURN = 200e18;
     uint256 private constant MAX_FEE_RECIPIENTS = 4;
     uint256 private constant MAX_VESTING_RECIPIENTS = 5;
     uint256 private constant MIN_ADVANCED_DURATION = 2 days;
     uint256 private constant MAX_ADVANCED_DURATION = 14 days;
 
-    // Presale range hard limits
     uint256 private constant PRESALE_RANGE_FLOOR = 500;
     uint256 private constant PRESALE_RANGE_CEILING = 5000;
     uint256 private constant PRESALE_STEP = 500;
 
-    // Fee component bounds
     uint256 private constant MIN_ISSUER_BPS = 10;
     uint256 private constant MAX_ISSUER_BPS = 80;
     uint256 private constant MIN_BOARDWALK_BPS = 10;
@@ -89,8 +81,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     uint256 private constant MAX_INTEGRATOR_BPS = 50;
 
     address public constant DEAD_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
-
-    // ============ Timelock Action Keys ============
 
     bytes32 public constant ACTION_SET_BMX_BURN = keccak256("SET_BMX_BURN");
     bytes32 public constant ACTION_SET_GRADUATION_EXPRESS = keccak256("SET_GRADUATION_EXPRESS");
@@ -103,8 +93,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     bytes32 public constant ACTION_SET_INTEGRATOR = keccak256("SET_INTEGRATOR");
     bytes32 public constant ACTION_SET_MEMBER_LAUNCH_DISCOUNT = keccak256("SET_MEMBER_LAUNCH_DISCOUNT");
 
-    // ============ Immutables ============
-
     address public immutable TOKEN_IMPL;
     address public immutable FEE_DISTRIBUTOR_IMPL;
     address public immutable PRESALE_IMPL;
@@ -115,8 +103,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     address public immutable BOARDWALK_ROUTER;
     address public immutable BOARDWALK_DEX_FACTORY;
     address public immutable BOARDWALK_LP_MANAGER;
-
-    // ============ State ============
 
     address public boardwalkFeeCollector;
     address public integrator;
@@ -129,19 +115,15 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     uint256 public minPresalePercent = 2500;
     uint256 public maxPresalePercent = 5000;
 
-    uint256 public graduationExpress; // Graduation threshold for Express path
-    uint256 public graduationAdvanced; // Graduation threshold for Advanced path
+    uint256 public graduationExpress;
+    uint256 public graduationAdvanced;
 
     uint256 public memberLaunchDiscountBps;
 
     FeeBpsDefaults private _feeBpsDefaults;
 
-    // ============ Launch Registry ============
-
     mapping(address => LaunchInfo) public launches;
     address[] public allLaunches;
-
-    // ============ Errors ============
 
     error ReferrerNotAllowedOnExpressPath();
     error VestingNotAllowedOnExpressPath();
@@ -161,8 +143,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     error IntegratorNotAllowedWithReferrer();
     error IssuerVestingRecipientsRequired();
     error MemberDiscountOutOfRange(uint256 bps);
-
-    // ============ Events ============
 
     event LaunchCreated(
         address indexed token,
@@ -185,8 +165,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     event FeeCollectorChanged(address oldCollector, address newCollector);
     event IntegratorChanged(address oldIntegrator, address newIntegrator);
     event MemberLaunchDiscountChanged(uint256 oldDiscount, uint256 newDiscount);
-
-    // ============ Constructor ============
 
     struct DeployParams {
         address tokenImpl;
@@ -245,9 +223,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         _setNftCollection(p.nftCollection);
     }
 
-    // ============ View Functions ============
-
-    /// @notice Get the current fee BPS defaults
+    /// @notice Returns the current fee BPS defaults applied to future launches.
     function currentFeeBps()
         external
         view
@@ -264,55 +240,43 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         return (d.issuer, d.boardwalk, d.incentive, d.referrer, d.integrator, d.total);
     }
 
-    /// @notice Get the total number of launches
     function launchCount() external view returns (uint256) {
         return allLaunches.length;
     }
 
-    /// @notice Check if a token address is a Boardwalk launch token from this factory
     function isLaunchToken(
         address token
     ) external view returns (bool) {
         return launches[token].token != address(0);
     }
 
-    // ============ Launch Creation ============
-
-    /// @notice Create a new token launch
-    /// @param config Launch configuration
-    /// @return tokenAddr Address of the deployed token clone
+    /// @notice Deploys and initializes a new launch. Burns BMX from the caller (minus any NFT discount).
     function createLaunch(
         LaunchConfig calldata config
     ) external returns (address tokenAddr) {
-        // Validate config
         _validateConfig(config);
 
-        // BMX Burn (discounted for NFT members)
         uint256 effectiveBurn = _effectiveCost(bmxBurnAmount, memberLaunchDiscountBps, msg.sender);
         if (effectiveBurn > 0) {
             IERC20(BMX).safeTransferFrom(msg.sender, DEAD_ADDRESS, effectiveBurn);
         }
 
-        // Deploy Clones
         tokenAddr = Clones.clone(TOKEN_IMPL);
         address feeDistributorAddr = Clones.clone(FEE_DISTRIBUTOR_IMPL);
         address presaleAddr = Clones.clone(PRESALE_IMPL);
         address lpStakingAddr = Clones.clone(LP_STAKING_IMPL);
 
-        // Deploy VestingStream clone only if there are vesting recipients
         address vestingAddr;
         if (config.vestingRecipients.length > 0) {
             vestingAddr = Clones.clone(VESTING_IMPL);
         }
 
-        // Lock Initializers
-        // LPStaking and VestingStream are initialized by PresaleManager during seedLiquidity()
+        // LPStaking and VestingStream are initialized later by PresaleManager during seedLiquidity().
         ILPStaking(lpStakingAddr).setInitializer(presaleAddr);
         if (vestingAddr != address(0)) {
             IVestingStream(vestingAddr).setInitializer(presaleAddr, msg.sender);
         }
 
-        // Build Exempt List
         uint256 exemptCount = vestingAddr != address(0) ? 5 : 4;
         address[] memory exemptAddresses = new address[](exemptCount);
         exemptAddresses[0] = presaleAddr;
@@ -321,13 +285,12 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         exemptAddresses[3] = boardwalkFeeCollector;
         if (exemptCount == 5) exemptAddresses[4] = vestingAddr;
 
-        // Initialize Token
         FeeBpsDefaults memory feeBps = _feeBpsDefaults;
 
         IBoardwalkToken(tokenAddr)
             .initialize(config.name, config.ticker, feeBps.total, feeDistributorAddr, presaleAddr, exemptAddresses);
 
-        // Initialize FeeDistributor (referrer fees carved from boardwalk)
+        // Referrer share is carved out of boardwalk; only applied when a referrer is set.
         uint256 effectiveReferrerBps = config.referrer != address(0) ? feeBps.referrer : 0;
         uint256 effectiveBoardwalkBps = feeBps.boardwalk - effectiveReferrerBps;
 
@@ -351,7 +314,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
                 })
             );
 
-        // Determine Presale Parameters
         uint256 presaleDuration;
         uint256 presalePercent;
         uint256 graduationThreshold;
@@ -359,7 +321,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
 
         if (config.path == LaunchPath.EXPRESS) {
             presaleDuration = expressDuration;
-            presalePercent = 5000; // Express always 50%
+            presalePercent = 5000;
             graduationThreshold = graduationExpress;
             hasDelay = false;
         } else {
@@ -369,7 +331,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
             hasDelay = true;
         }
 
-        // Initialize PresaleManager
         IPresaleManager(presaleAddr)
             .initialize(
                 tokenAddr,
@@ -385,12 +346,10 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
                 hasDelay
             );
 
-        // Set Vesting Config on PresaleManager (if applicable)
         if (config.vestingRecipients.length > 0) {
             _setVestingConfig(config, presaleAddr, presalePercent);
         }
 
-        // Register Launch
         LaunchInfo memory info = LaunchInfo({
             token: tokenAddr,
             feeDistributor: feeDistributorAddr,
@@ -418,10 +377,8 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         );
     }
 
-    // ============ Vesting Amount Computation ============
-
-    /// @dev Compute actual token amounts from user-supplied vesting percents and call setVestingConfig.
-    ///      Uses the same allocation math as PresaleManager.seedLiquidity(). Total supply is 10 billion.
+    /// @dev Splits issuer vesting tokens across recipients using AllocationLib's BPS math. Must match
+    ///      the allocation computed by PresaleManager.seedLiquidity() for the same presalePercent.
     function _setVestingConfig(
         LaunchConfig calldata config,
         address presaleAddr,
@@ -432,12 +389,9 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         IPresaleManager(presaleAddr).setVestingConfig(config.vestingRecipients, vestingAmounts);
     }
 
-    // ============ Config Validation ============
-
     function _validateConfig(
         LaunchConfig calldata config
     ) internal view {
-        // Array length checks
         if (
             config.issuerFeeRecipients.length != config.issuerFeeSplits.length
                 || config.issuerFeeRecipients.length != config.issuerFeeLabels.length
@@ -447,13 +401,11 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
                 || config.vestingRecipients.length != config.vestingLabels.length
         ) revert ArrayLengthMismatch();
 
-        // Fee recipient count
         uint256 feeRecipientCount = config.issuerFeeRecipients.length;
         if (feeRecipientCount == 0 || feeRecipientCount > MAX_FEE_RECIPIENTS) {
             revert TooManyRecipients(feeRecipientCount);
         }
 
-        // Fee splits must sum to 10000
         uint256 feeSplitSum;
         for (uint256 i = 0; i < feeRecipientCount;) {
             if (config.issuerFeeRecipients[i] == address(0)) revert ZeroAddress();
@@ -464,25 +416,22 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         }
         if (feeSplitSum != AllocationLib.BPS_DENOMINATOR) revert InvalidSplitsSum();
 
-        // Path-specific validation
         if (config.path == LaunchPath.EXPRESS) {
             if (config.referrer != address(0)) revert ReferrerNotAllowedOnExpressPath();
             if (config.vestingRecipients.length > 0) revert VestingNotAllowedOnExpressPath();
             if (feeRecipientCount != 1) revert ExpressRequiresOneFeeRecipient();
         } else {
-            // ADVANCED path
             uint256 pp = config.presalePercent;
             if (pp < minPresalePercent || pp > maxPresalePercent) {
                 revert InvalidPresalePercent(pp);
             }
             if (pp % PRESALE_STEP != 0) revert PresalePercentNotDivisibleBy5();
 
-            // Advanced launches with presalePercent < 5000 MUST have vesting recipients
+            // Advanced with <50% presale must define vesting — otherwise the issuer bucket isn't minted.
             if (pp < 5000 && config.vestingRecipients.length == 0) {
                 revert IssuerVestingRecipientsRequired();
             }
 
-            // Vesting validation
             if (config.vestingRecipients.length > MAX_VESTING_RECIPIENTS) {
                 revert TooManyRecipients(config.vestingRecipients.length);
             }
@@ -498,7 +447,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
             }
         }
 
-        // Integrator validation
         if (integrator != address(0)) {
             if (config.integrator != integrator) revert IntegratorMismatch();
             if (config.referrer != address(0)) revert IntegratorNotAllowedWithReferrer();
@@ -507,13 +455,10 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         }
     }
 
-    // ============ Timelocked Admin Functions ============
-
     function _authAdmin(
         bytes32
     ) internal override onlyOwner {}
 
-    /// @notice Execute a BMX burn amount change
     function executeSetBmxBurn(
         uint256 _amount
     ) external {
@@ -523,7 +468,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         bmxBurnAmount = _amount;
     }
 
-    /// @notice Execute graduation threshold change for either path
     function executeSetGraduation(
         LaunchPath path,
         uint256 _threshold
@@ -540,7 +484,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         }
     }
 
-    /// @notice Execute presale duration change for either path
     function executeSetDuration(
         LaunchPath path,
         uint256 _duration
@@ -558,7 +501,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         }
     }
 
-    /// @notice Execute fee defaults change
     function executeSetFeeDefaults(
         FeeBpsDefaults calldata _feeBps
     ) external {
@@ -570,7 +512,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         );
     }
 
-    /// @notice Execute presale percent range change
     function executeSetPresaleRange(
         uint256 _min,
         uint256 _max
@@ -582,7 +523,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         maxPresalePercent = _max;
     }
 
-    /// @notice Execute fee collector address change
     function executeSetFeeCollector(
         address _collector
     ) external {
@@ -592,7 +532,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         boardwalkFeeCollector = _collector;
     }
 
-    /// @notice Execute integrator address change
     function executeSetIntegrator(
         address _integrator
     ) external {
@@ -601,7 +540,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         integrator = _integrator;
     }
 
-    /// @notice Execute NFT collection address change
     function executeSetNftCollection(
         address _nft
     ) external {
@@ -609,7 +547,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         _setNftCollection(_nft);
     }
 
-    /// @notice Execute member launch discount BPS change
     function executeSetMemberLaunchDiscount(
         uint256 _bps
     ) external {
@@ -619,29 +556,21 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         memberLaunchDiscountBps = _bps;
     }
 
-    // ============ Internal Validation ============
-
-    /// @dev Validate fee BPS defaults. Reverts with InvalidFeeDefaults on violation.
+    /// @dev total must equal issuer + boardwalk + incentive + integrator. Referrer is carved from
+    ///      boardwalk, not added on top, and is mutually exclusive with integrator.
     function _validateFeeDefaults(
         FeeBpsDefaults memory d
     ) internal pure {
-        // Total must equal issuer + boardwalk + incentive + integrator (referrer excluded; carved from boardwalk)
         if (d.total != d.issuer + d.boardwalk + d.incentive + d.integrator) revert InvalidFeeDefaults();
-
         if (d.issuer < MIN_ISSUER_BPS || d.issuer > MAX_ISSUER_BPS) revert InvalidFeeDefaults();
         if (d.boardwalk < MIN_BOARDWALK_BPS || d.boardwalk > MAX_BOARDWALK_BPS) revert InvalidFeeDefaults();
         if (d.incentive > MAX_INCENTIVE_BPS) revert InvalidFeeDefaults();
         if (d.referrer > MAX_REFERRER_BPS) revert InvalidFeeDefaults();
         if (d.integrator > MAX_INTEGRATOR_BPS) revert InvalidFeeDefaults();
-
-        // Referrer carved from boardwalk share
         if (d.referrer > d.boardwalk) revert InvalidFeeDefaults();
-
-        // Referrer and integrator are mutually exclusive
         if (d.referrer > 0 && d.integrator > 0) revert InvalidFeeDefaults();
     }
 
-    /// @dev Validate presale range parameters
     function _validatePresaleRange(
         uint256 _min,
         uint256 _max

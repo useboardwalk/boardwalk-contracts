@@ -215,7 +215,7 @@ contract MockERC20 is ERC20 {
 }
 
 /// @title FeeDistributorTest
-/// @notice Comprehensive unit + fuzz tests for FeeDistributor
+/// @notice Unit and fuzz tests for FeeDistributor.
 contract FeeDistributorTest is Test {
     // ============ Constants ============
 

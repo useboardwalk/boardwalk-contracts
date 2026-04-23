@@ -8,18 +8,15 @@ import {Timelocked} from "../base/Timelocked.sol";
 import {IFeeDistributor} from "../interfaces/IFeeDistributor.sol";
 import {IDEXRouter} from "../interfaces/IDEXRouter.sol";
 
-/// @title BoardwalkFeeCollector - Protocol fee aggregation and conversion
-/// @notice Singleton contract that collects Boardwalk's fee share from all FeeDistributors.
-///         Keeper batch-swaps accumulated tokens to the raise token and auto-forwards to treasury.
+/// @title BoardwalkFeeCollector
+/// @notice Singleton aggregator for the boardwalk share of every launch's tax. Keeper batch-swaps
+///         to raise token and forwards to treasury. When `governanceVault` is set, raise-token
+///         output is split 30% treasury / 70% governanceVault (Base only).
 contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     using SafeERC20 for IERC20;
 
-    // ============ Immutables ============
-
     address public immutable RAISE_TOKEN;
     address public immutable ROUTER;
-
-    // ============ Timelock Action Keys ============
 
     bytes32 public constant ACTION_SET_TREASURY = keccak256("SET_TREASURY");
     bytes32 public constant ACTION_SET_KEEPER = keccak256("SET_KEEPER");
@@ -29,15 +26,11 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     uint256 public constant GOVERNANCE_BPS = 7_000;
     uint256 private constant BPS_DENOMINATOR = 10_000;
 
-    // ============ State ============
-
     address public treasury;
     address public keeper;
     address public governanceVault;
 
     mapping(address => uint256) public accumulatedFees;
-
-    // ============ Errors ============
 
     error SwapFailed(address token);
     error NoTokensToSwap();
@@ -45,16 +38,12 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     error ArrayLengthMismatch();
     error ZeroAddress();
 
-    // ============ Events ============
-
     event FeesReceived(address indexed token, uint256 amount);
     event FeesSwapped(address indexed token, uint256 tokenAmount, uint256 raiseTokenAmount);
     event TreasuryUpdated(address indexed newTreasury);
     event KeeperUpdated(address indexed newKeeper);
     event CollectorMigrated(address newCollector, uint256 distributorCount);
     event GovernanceVaultUpdated(address indexed newVault);
-
-    // ============ Constructor ============
 
     constructor(
         address _owner,
@@ -74,11 +63,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         keeper = _keeper;
     }
 
-    // ============ Fee Collection Logic ============
-
-    /// @notice Called by FeeDistributors to deposit Boardwalk's fee share
-    /// @param token The token address being deposited
-    /// @param amount Amount of tokens to deposit
+    /// @notice Called by any FeeDistributor to deposit boardwalk's share of a tax distribution.
     function receiveFees(
         address token,
         uint256 amount
@@ -88,10 +73,8 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         emit FeesReceived(token, amount);
     }
 
-    /// @notice Keeper calls to batch-swap accumulated tokens to raise token and forward to treasury
-    /// @param tokens Array of token addresses to swap
-    /// @param minAmountsOut Minimum raise token output per token (slippage protection)
-    /// @param deadline Transaction deadline timestamp
+    /// @notice Keeper-only. Batch-swaps accumulated balances to raise token and forwards (split
+    ///         treasury/governance if the vault is set).
     function swapToRaiseToken(
         address[] calldata tokens,
         uint256[] calldata minAmountsOut,
@@ -123,7 +106,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
 
             path[0] = token;
 
-            // FeeCollector is exempt from tax
+            // FeeCollector is in every token's exempt list, so the standard swap variant suffices.
             try IDEXRouter(ROUTER)
                 .swapExactTokensForTokens(balance, minAmountsOut[i], path, address(this), deadline) returns (
                 uint256[] memory amounts
@@ -153,13 +136,10 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         }
     }
 
-    // ============ Timelocked Admin Functions ============
-
     function _authAdmin(
         bytes32
     ) internal override onlyOwner {}
 
-    /// @notice Execute treasury address change
     function executeSetTreasury(
         address _treasury
     ) external {
@@ -169,7 +149,6 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         treasury = _treasury;
     }
 
-    /// @notice Execute keeper address change
     function executeSetKeeper(
         address _keeper
     ) external {
@@ -179,7 +158,6 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         keeper = _keeper;
     }
 
-    /// @notice Execute governance vault address change
     function executeSetGovernanceVault(
         address _vault
     ) external {
@@ -188,9 +166,8 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         governanceVault = _vault;
     }
 
-    /// @notice Execute collector migration. Updates all FeeDistributor clones.
-    /// @param _newCollector Must match the signaled newCollector
-    /// @param _distributors Must match the signaled distributors array
+    /// @notice Both `_newCollector` and `_distributors` are committed in the signal hash, so the
+    ///         migration cannot be partially applied with a different distributor set.
     function executeMigrateCollector(
         address _newCollector,
         address[] calldata _distributors

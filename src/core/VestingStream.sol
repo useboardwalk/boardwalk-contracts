@@ -6,22 +6,17 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Timelocked} from "../base/Timelocked.sol";
 
-/// @title VestingStream - Linear vesting with cliff for issuer-directed allocations
-/// @notice Per-launch clone. Supports up to 5 recipients with labeled allocations.
-///         7-day cliff from liquidity seed time, then 3-year linear vesting.
-///         Vesting amounts/schedule are immutable; recipient addresses are issuer-updateable
-///         via 7-day timelock. Only deployed for Advanced path with vesting.
+/// @title VestingStream
+/// @notice Per-launch clone (Advanced path only). Up to 5 recipients vest linearly over 3 years
+///         after a 7-day cliff. Amounts and schedule are immutable; only recipient addresses can
+///         change, and only the issuer can signal a change via the 7-day timelock.
 contract VestingStream is Timelocked, Initializable {
     using SafeERC20 for IERC20;
-
-    // ============ Constants ============
 
     uint256 public constant CLIFF_DURATION = 7 days;
     uint256 public constant VESTING_DURATION = 3 * 365 days;
 
     bytes32 public constant ACTION_CHANGE_RECIPIENT = keccak256("CHANGE_RECIPIENT");
-
-    // ============ Types ============
 
     struct VestingAllocation {
         address recipient;
@@ -29,20 +24,16 @@ contract VestingStream is Timelocked, Initializable {
         uint256 claimed;
     }
 
-    // ============ State ============
-
     IERC20 public token;
 
-    mapping(uint256 => VestingAllocation) public allocations; // vesting allocations by index (0-4)
+    mapping(uint256 => VestingAllocation) public allocations;
 
     uint256 public allocationCount;
-    uint256 public cliffEnd; // seedTime + 7 days
-    uint256 public vestingEnd; // cliffEnd + 3 years
+    uint256 public cliffEnd;
+    uint256 public vestingEnd;
 
-    address public initAuthorizer; // authorized initializer address
-    address public issuer; // launch issuer, authorized for recipient changes
-
-    // ============ Errors ============
+    address public initAuthorizer;
+    address public issuer;
 
     error NotRecipient();
     error NothingToClaim();
@@ -54,24 +45,15 @@ contract VestingStream is Timelocked, Initializable {
     error InitializerAlreadySet();
     error NotIssuer();
 
-    // ============ Events ============
-
     event Claimed(uint256 indexed allocationId, address indexed recipient, uint256 amount);
     event VestingInitialized(uint256 cliffEnd_, uint256 vestingEnd_, uint256 allocationCount_);
     event RecipientAddressChanged(uint256 indexed allocationId, address oldAddress, address newAddress);
 
-    // ============ Constructor ============
-
-    /// @dev Disable initialization on the implementation template
     constructor() {
         _disableInitializers();
     }
 
-    // ============ Initialization ============
-
-    /// @notice Set the authorized initializer and issuer (called once by factory at clone deployment)
-    /// @param _initAuthorizer Address authorized to call initialize()
-    /// @param _issuer Launch issuer address, authorized for timelocked recipient changes
+    /// @notice Two-step initializer lock. Called once by the factory; sets the issuer at the same time.
     function setInitializer(
         address _initAuthorizer,
         address _issuer
@@ -83,11 +65,6 @@ contract VestingStream is Timelocked, Initializable {
         issuer = _issuer;
     }
 
-    /// @notice Initialize the VestingStream clone (called by authorized initializer during seedLiquidity)
-    /// @param _token The BoardwalkToken address
-    /// @param _liquiditySeedTime Timestamp when liquidity was seeded
-    /// @param _recipients Array of vesting recipient addresses (up to 5)
-    /// @param _amounts Array of token amounts for each recipient
     function initialize(
         address _token,
         uint256 _liquiditySeedTime,
@@ -115,11 +92,7 @@ contract VestingStream is Timelocked, Initializable {
         emit VestingInitialized(cliffEnd, vestingEnd, _recipients.length);
     }
 
-    // ============ Core Functions ============
-
-    /// @notice Claim vested tokens for a specific allocation
-    /// @dev Only the designated recipient can claim. Reverts if cliff hasn't ended.
-    /// @param allocationId Index of the vesting allocation (0-4)
+    /// @notice Claim vested tokens for an allocation. Only the current recipient can claim.
     function claim(
         uint256 allocationId
     ) external {
@@ -142,12 +115,8 @@ contract VestingStream is Timelocked, Initializable {
         emit Claimed(allocationId, alloc.recipient, amount);
     }
 
-    // ============ Timelocked Recipient Changes ============
-
-    /// @notice Execute a pending vesting recipient address change. Claims any
-    ///         vested tokens for the outgoing recipient before switching.
-    /// @param allocationId Index of the vesting allocation (0-4)
-    /// @param newAddress New recipient address
+    /// @notice Execute a pending recipient address change. Auto-claims any vested-but-unclaimed
+    ///         tokens for the outgoing recipient before switching.
     function executeChangeRecipientAddress(
         uint256 allocationId,
         address newAddress
@@ -176,11 +145,6 @@ contract VestingStream is Timelocked, Initializable {
         if (msg.sender != issuer) revert NotIssuer();
     }
 
-    // ============ View Functions ============
-
-    /// @notice Get the claimable amount for a vesting allocation
-    /// @param allocationId Index of the vesting allocation
-    /// @return Claimable token amount
     function claimable(
         uint256 allocationId
     ) public view returns (uint256) {
@@ -189,9 +153,6 @@ contract VestingStream is Timelocked, Initializable {
         return _vestedAmount(alloc) - alloc.claimed;
     }
 
-    /// @notice Get total vested amount for an allocation
-    /// @param allocationId Index of the vesting allocation
-    /// @return Total vested amount
     function totalVested(
         uint256 allocationId
     ) external view returns (uint256) {

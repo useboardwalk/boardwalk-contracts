@@ -5,22 +5,17 @@ import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 import {IV4PositionManager} from "../interfaces/IV4PositionManager.sol";
 import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 
-/// @title LPLocker - Permanent lock for Uniswap v4 LP position NFTs
-/// @notice Holds LP position NFTs permanently. Can harvest accrued trading fees to treasury.
+/// @title LPLocker
+/// @notice Permanent vault for Uniswap v4 LP position NFTs minted by governance Option 3. Locked
+///         positions can never be unlocked; only their accrued trading fees can be harvested.
 contract LPLocker {
-    // ============ Immutables ============
-
     address public immutable POSITION_MANAGER;
     address public immutable GOVERNANCE_VOTER;
     address public immutable CURRENCY0;
     address public immutable CURRENCY1;
 
-    // ============ State ============
-
     mapping(uint256 => bool) public lockedPositions;
     uint256[] public lockedTokenIds;
-
-    // ============ Errors ============
 
     error NotAuthorized();
     error OnlyPositionManager();
@@ -28,12 +23,8 @@ contract LPLocker {
     error AlreadyLocked();
     error NoPositions();
 
-    // ============ Events ============
-
     event LPLocked(uint256 indexed tokenId);
     event FeesClaimed(uint256 indexed tokenId);
-
-    // ============ Constructor ============
 
     constructor(
         address _positionManager,
@@ -47,16 +38,12 @@ contract LPLocker {
         CURRENCY1 = _currency1;
     }
 
-    /// @dev Accept native ETH from PositionManager during fee claiming
+    /// @dev Accepts native ETH from PositionManager during `claimFees`.
     receive() external payable {
         if (msg.sender != POSITION_MANAGER) revert OnlyPositionManager();
     }
 
-    // ============ Position Registration ============
-
-    /// @notice Register a minted v4 LP position as permanently locked.
-    ///         Called by GovernanceVoter after minting a position with LP_LOCKER as recipient.
-    /// @param tokenId The v4 position NFT token ID
+    /// @notice Called by GovernanceVoter after minting a v4 position with this contract as recipient.
     function lockPosition(
         uint256 tokenId
     ) external {
@@ -64,10 +51,6 @@ contract LPLocker {
         _registerLock(tokenId);
     }
 
-    // ============ ERC721 Receiver ============
-
-    /// @notice Accept incoming position NFTs and mark them as locked.
-    /// @dev Only the configured v4 position manager is allowed to trigger auto-locking.
     function onERC721Received(
         address,
         address,
@@ -79,11 +62,7 @@ contract LPLocker {
         return this.onERC721Received.selector;
     }
 
-    // ============ Fee Collection ============
-
-    /// @notice Harvest accrued trading fees from a locked v4 LP position and send to treasury.
-    /// @param tokenId The v4 position NFT token ID
-    /// @param deadline Transaction deadline timestamp
+    /// @notice Harvest accrued v4 trading fees for a single locked position to the current treasury.
     function claimFees(
         uint256 tokenId,
         uint256 deadline
@@ -92,8 +71,6 @@ contract LPLocker {
         _claimFees(tokenId, deadline);
     }
 
-    /// @notice Harvest accrued trading fees from all locked positions in a single transaction.
-    /// @param deadline Transaction deadline timestamp
     function claimAllFees(
         uint256 deadline
     ) external {
@@ -105,14 +82,9 @@ contract LPLocker {
         }
     }
 
-    // ============ View Functions ============
-
-    /// @notice Get all locked position token IDs
     function getLockedPositions() external view returns (uint256[] memory) {
         return lockedTokenIds;
     }
-
-    // ============ Internal ============
 
     function _registerLock(
         uint256 tokenId
@@ -123,6 +95,8 @@ contract LPLocker {
         emit LPLocked(tokenId);
     }
 
+    /// @dev `DECREASE_LIQUIDITY(0) + TAKE_PAIR` harvests accrued fees without removing principal.
+    ///      Treasury is read live from GovernanceVoter so it tracks setter changes automatically.
     function _claimFees(
         uint256 tokenId,
         uint256 deadline

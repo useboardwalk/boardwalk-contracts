@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.8.28;
 
-/// @title AllocationLib - Token allocation math for launch creation and liquidity seeding
+/// @title AllocationLib
+/// @notice Shared token-allocation math used by LaunchFactory and PresaleManager. Liquidity always
+///         equals presale; LP incentive is 20% of the remainder; issuer vesting is the rest.
 library AllocationLib {
     uint256 internal constant BPS_DENOMINATOR = 10_000;
     uint256 internal constant LP_INCENTIVE_PERCENT = 20;
 
-    /// @notice Compute token allocation buckets from total supply and presale percentage
-    /// @param totalSupply The fixed token total supply
-    /// @param presalePercent Presale percentage in BPS (e.g. 3000 = 30%)
-    /// @return presaleTokens Tokens for presale participants
-    /// @return liquidityTokens Tokens paired with raise token for LP (always equals presaleTokens)
-    /// @return lpIncentiveTokens Tokens for LP staking rewards (20% of vesting bucket)
-    /// @return issuerVestingTokens Tokens for issuer vesting (remainder of vesting bucket)
     function compute(
         uint256 totalSupply,
         uint256 presalePercent
@@ -28,7 +23,7 @@ library AllocationLib {
         issuerVestingTokens = vestingTotal - lpIncentiveTokens;
     }
 
-    /// @notice Split a total amount by BPS shares with remainder to last recipient
+    /// @dev Last entry receives the remainder so BPS rounding never loses dust.
     function splitByBps(
         uint256 total,
         uint256[] memory bps

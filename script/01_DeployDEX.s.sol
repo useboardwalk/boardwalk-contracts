@@ -8,15 +8,16 @@ import {IDEXRouter} from "src/interfaces/IDEXRouter.sol";
 /// @notice Deploys the Boardwalk DEX singleton contracts (Factory + Router)
 /// @dev The DEX contracts use older Solidity versions, so we deploy from artifacts via vm.deployCode.
 contract DeployDEX is Script {
-    function run() public {
-        address deployer = vm.envAddress("DEPLOYER");
-        address weth = vm.envAddress("WETH_ADDRESS");
-        address feeToSetter = vm.envAddress("FEE_TO_SETTER");
+    function run() external {
+        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
+        address weth = vm.envOr("WETH_ADDRESS", address(0x4200000000000000000000000000000000000006));
+        address feeToSetter = vm.envOr("FEE_TO_SETTER", deployer);
 
         require(weth != address(0), "WETH_ADDRESS required");
         require(feeToSetter != address(0), "FEE_TO_SETTER required");
 
-        vm.startBroadcast(deployer);
+        vm.startBroadcast(deployerPrivateKey);
 
         // Deploy DEX Factory
         // Note: UniswapV2Factory constructor takes feeToSetter

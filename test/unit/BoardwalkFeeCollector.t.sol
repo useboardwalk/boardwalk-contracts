@@ -150,7 +150,7 @@ contract MockFeeDistributor {
 }
 
 /// @title BoardwalkFeeCollectorTest
-/// @notice Comprehensive unit + fuzz tests for BoardwalkFeeCollector
+/// @notice Unit and fuzz tests for BoardwalkFeeCollector.
 contract BoardwalkFeeCollectorTest is Test {
     // ============ Constants ============
 

@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.8.28;
 
-/// @title Timelocked - Base contract for inline signal/execute timelock pattern
-/// @notice Supports per-action delay (7-day default, 21-day for governance) with 7-day expiry window
+/// @title Timelocked
+/// @notice Generic signal/execute/burn pattern with per-action delays. Default 7-day delay and
+///         7-day expiry window. Inheritors implement `_authAdmin` and may override `_actionDelay`.
 abstract contract Timelocked {
-    // ============ Constants ============
-
     uint256 public constant TIMELOCK_DELAY = 7 days;
     uint256 public constant TIMELOCK_EXPIRY = 7 days;
-
-    // ============ Types ============
 
     struct PendingChange {
         bytes32 dataHash;
@@ -17,13 +14,9 @@ abstract contract Timelocked {
         uint256 delay;
     }
 
-    // ============ State ============
-
     mapping(bytes32 => PendingChange) public pendingChanges;
     mapping(bytes32 => PendingChange) public pendingBurns;
     mapping(bytes32 => bool) public burnedActions;
-
-    // ============ Errors ============
 
     error TimelockDataMismatch();
     error TimelockTooEarly(uint256 executeTime);
@@ -32,8 +25,6 @@ abstract contract Timelocked {
     error ActionIsBurned(bytes32 action);
     error ActionAlreadyBurned();
 
-    // ============ Events ============
-
     event ChangeSignaled(bytes32 indexed action, bytes32 dataHash, uint256 executeTime, uint256 expiresAt);
     event ChangeExecuted(bytes32 indexed action);
     event ChangeCanceled(bytes32 indexed action);
@@ -41,9 +32,6 @@ abstract contract Timelocked {
     event ActionBurnExecuted(bytes32 indexed action);
     event ActionBurnCanceled(bytes32 indexed action);
 
-    // ============ Internal Functions ============
-
-    /// @dev Signal a pending change with the default 7-day delay.
     function _signal(
         bytes32 action,
         bytes32 dataHash
@@ -51,10 +39,7 @@ abstract contract Timelocked {
         _signal(action, dataHash, TIMELOCK_DELAY);
     }
 
-    /// @dev Signal a pending change with a custom delay. Overwrites any existing pending change.
-    /// @param action Unique identifier for the change (e.g., keccak256("SET_TREASURY"))
-    /// @param dataHash keccak256 of the new value(s) to be set on execution
-    /// @param delay Timelock delay in seconds (committed at signal time)
+    /// @dev `delay` is committed at signal time and read back on execute. Overwrites any pending change.
     function _signal(
         bytes32 action,
         bytes32 dataHash,
@@ -65,9 +50,6 @@ abstract contract Timelocked {
         emit ChangeSignaled(action, dataHash, block.timestamp + delay, block.timestamp + delay + TIMELOCK_EXPIRY);
     }
 
-    /// @dev Execute a pending change. Reads delay from storage (committed at signal time).
-    /// @param action Unique identifier matching the signal call
-    /// @param dataHash Must match the dataHash from the signal call
     function _execute(
         bytes32 action,
         bytes32 dataHash
@@ -78,8 +60,6 @@ abstract contract Timelocked {
         emit ChangeExecuted(action);
     }
 
-    /// @dev Cancel a pending change.
-    /// @param action Unique identifier matching the signal call
     function _cancel(
         bytes32 action
     ) internal {
@@ -87,10 +67,8 @@ abstract contract Timelocked {
         emit ChangeCanceled(action);
     }
 
-    // ============ Burn Functions ============
-
-    /// @dev Signal a permanent burn of a timelocked action with a custom delay.
-    ///      Uses dedicated pendingBurns storage (isolated from pendingChanges).
+    /// @dev Burn storage is isolated from pendingChanges so a pending change can coexist with a
+    ///      pending burn until the burn lands.
     function _signalBurn(
         bytes32 action,
         uint256 delay
@@ -101,7 +79,7 @@ abstract contract Timelocked {
         emit ActionBurnSignaled(action, block.timestamp + delay, block.timestamp + delay + TIMELOCK_EXPIRY);
     }
 
-    /// @dev Execute a previously signaled burn. Irreversible. Also clears any pending change for the action.
+    /// @dev Irreversible. Clears any in-flight change for the action so it cannot land post-burn.
     function _executeBurn(
         bytes32 action
     ) internal {
@@ -117,7 +95,6 @@ abstract contract Timelocked {
         emit ActionBurnExecuted(action);
     }
 
-    /// @dev Cancel a previously signaled burn.
     function _cancelBurn(
         bytes32 action
     ) internal {
@@ -125,9 +102,6 @@ abstract contract Timelocked {
         emit ActionBurnCanceled(action);
     }
 
-    // ============ Public Admin Functions ============
-
-    /// @notice Signal a pending change for any timelocked action. Auth via _authAdmin hook.
     function signalAction(
         bytes32 action,
         bytes32 dataHash
@@ -136,7 +110,6 @@ abstract contract Timelocked {
         _signal(action, dataHash, _actionDelay(action));
     }
 
-    /// @notice Cancel a pending change for any timelocked action. Auth via _authAdmin hook.
     function cancelAction(
         bytes32 action
     ) external {
@@ -144,7 +117,6 @@ abstract contract Timelocked {
         _cancel(action);
     }
 
-    /// @notice Signal permanent burn of a timelocked action. Auth via _authAdmin hook.
     function signalBurnAction(
         bytes32 action
     ) external {
@@ -152,14 +124,13 @@ abstract contract Timelocked {
         _signalBurn(action, _burnDelay(action));
     }
 
-    /// @notice Execute a previously signaled action burn. Permissionless after delay.
+    /// @notice Permissionless after the burn delay; the auth gate is at signal time.
     function executeBurnAction(
         bytes32 action
     ) external {
         _executeBurn(action);
     }
 
-    /// @notice Cancel a previously signaled action burn. Auth via _authAdmin hook.
     function cancelBurnAction(
         bytes32 action
     ) external {
@@ -167,9 +138,6 @@ abstract contract Timelocked {
         _cancelBurn(action);
     }
 
-    // ============ Internal Helpers ============
-
-    /// @dev Shared window validation for both _execute and _executeBurn
     function _validateWindow(
         PendingChange memory pending,
         bytes32 expectedHash
@@ -181,7 +149,6 @@ abstract contract Timelocked {
         if (block.timestamp > executeTime + TIMELOCK_EXPIRY) revert TimelockExpired(executeTime + TIMELOCK_EXPIRY);
     }
 
-    /// @dev Shared view helper for pending change/burn info
     function _pendingInfo(
         PendingChange memory pending
     ) internal pure returns (bool isPending, uint256 executeTime, uint256 expiresAt) {
@@ -192,44 +159,35 @@ abstract contract Timelocked {
         }
     }
 
-    // ============ Hooks (override in derived contracts) ============
-
-    /// @dev Authorization gate for signal, cancel, and burn operations. Must be overridden.
+    /// @dev Authorization gate for signal/cancel/burn. Inheritors implement (e.g. `onlyOwner`).
     function _authAdmin(
         bytes32 action
     ) internal virtual;
 
-    /// @dev Delay for action signals. Default 7 days. Override for custom delays.
     function _actionDelay(
         bytes32
     ) internal view virtual returns (uint256) {
         return TIMELOCK_DELAY;
     }
 
-    /// @dev Delay for burn signals. Defaults to the action's own delay.
     function _burnDelay(
         bytes32 action
     ) internal view virtual returns (uint256) {
         return _actionDelay(action);
     }
 
-    // ============ View Functions ============
-
-    /// @notice Check if an action has been permanently burned
     function isActionBurned(
         bytes32 action
     ) external view returns (bool) {
         return burnedActions[action];
     }
 
-    /// @notice Check if a change is pending and when it can be executed
     function getPendingChange(
         bytes32 action
     ) external view returns (bool isPending, uint256 executeTime, uint256 expiresAt) {
         return _pendingInfo(pendingChanges[action]);
     }
 
-    /// @notice Check if a burn is pending and when it can be executed
     function getPendingBurn(
         bytes32 action
     ) external view returns (bool isPending, uint256 executeTime, uint256 expiresAt) {
