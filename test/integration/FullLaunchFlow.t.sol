@@ -248,7 +248,6 @@ contract FullLaunchFlowTest is IntegrationBase {
             vestingPercents: new uint256[](0),
             vestingLabels: new string[](0),
             referrer: referrer, // NOT allowed on EXPRESS
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels
@@ -313,7 +312,6 @@ contract FullLaunchFlowTest is IntegrationBase {
             vestingPercents: new uint256[](0),
             vestingLabels: new string[](0),
             referrer: address(0),
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels
@@ -344,7 +342,7 @@ contract FullLaunchFlowTest is IntegrationBase {
 
     function test_TemplateInitialization_Blocked() public {
         vm.expectRevert();
-        tokenTemplate.initialize("X", "X", 80, address(1), address(2), new address[](0));
+        tokenTemplate.initialize("X", "X", 80, 4000, 90 minutes, address(1), address(2), new address[](0));
 
         vm.expectRevert();
         lpStakingTemplate.initialize(address(1), address(2), address(3), block.timestamp, 1000e18);

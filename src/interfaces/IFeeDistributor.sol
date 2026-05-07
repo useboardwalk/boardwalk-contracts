@@ -11,7 +11,9 @@ interface IFeeDistributor {
     error ArrayLengthMismatch();
     error OnlyFeeCollector();
     error NotIntegrator();
+    error NotAncillary();
     error NotAuthorized();
+    error DuplicateRoleAddress();
 
     event TaxReceived(
         uint256 amount,
@@ -19,15 +21,17 @@ interface IFeeDistributor {
         uint256 boardwalkShare,
         uint256 issuerShare,
         uint256 referrerShare,
-        uint256 integratorShare
+        uint256 integratorShare,
+        uint256 ancillaryShare
     );
     event IssuerClaimed(
         uint256 indexed recipientIdx, address indexed recipient, uint256 tokenAmount, uint256 raiseTokenAmount
     );
     event ReferrerClaimed(address indexed referrer, uint256 amount);
-    event IntegratorClaimed(address indexed integrator, uint256 amount);
     event IssuerAddressChanged(uint256 indexed recipientIdx, address oldAddress, address newAddress);
     event ReferrerAddressChanged(address oldAddress, address newAddress);
+    event IntegratorAddressChanged(address oldAddress, address newAddress);
+    event AncillaryAddressChanged(address oldAddress, address newAddress);
     event FeeCollectorChanged(address oldCollector, address newCollector);
     event FeeForwardFailed(string target, uint256 amount);
 
@@ -41,11 +45,13 @@ interface IFeeDistributor {
         uint256[] issuerSplits;
         address referrer;
         address integrator;
+        address ancillary;
         uint256 issuerBps;
         uint256 boardwalkBps;
         uint256 lpIncentiveBps;
         uint256 referrerBps;
         uint256 integratorBps;
+        uint256 ancillaryBps;
     }
 
     function initialize(
@@ -60,17 +66,16 @@ interface IFeeDistributor {
         uint256 deadline
     ) external;
     function claimReferrerFees() external;
-    function claimIntegratorFees() external;
     function claimableAmount(
         uint256 recipientIdx
     ) external view returns (uint256);
     function referrerAccrued() external view returns (uint256);
-    function integratorAccrued() external view returns (uint256);
     function issuerRecipients(
         uint256 idx
     ) external view returns (address);
     function token() external view returns (address);
     function integrator() external view returns (address);
+    function ancillary() external view returns (address);
     function retryPendingFees() external;
     function pendingLpFees() external view returns (uint256);
     function pendingBoardwalkFees() external view returns (uint256);
@@ -78,4 +83,20 @@ interface IFeeDistributor {
     function setFeeCollector(
         address newFeeCollector
     ) external;
+
+    function signalChangeIntegratorAddress(
+        address newAddress
+    ) external;
+    function executeChangeIntegratorAddress(
+        address newAddress
+    ) external;
+    function cancelChangeIntegratorAddress() external;
+
+    function signalChangeAncillaryAddress(
+        address newAddress
+    ) external;
+    function executeChangeAncillaryAddress(
+        address newAddress
+    ) external;
+    function cancelChangeAncillaryAddress() external;
 }

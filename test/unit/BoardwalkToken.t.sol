@@ -68,7 +68,13 @@ contract BoardwalkTokenTest is Test {
     // ============ Events (re-declared for vm.expectEmit) ============
 
     event TokenInitialized(
-        string name, string symbol, uint256 baseTaxBps, address feeDistributor, address presaleManager
+        string name,
+        string symbol,
+        uint256 baseTaxBps,
+        uint256 antiWhaleTaxBps,
+        uint256 antiWhaleDuration,
+        address feeDistributor,
+        address presaleManager
     );
     event LiquiditySeedTimeSet(uint256 seedTime);
     event Transfer(address indexed from, address indexed to, uint256 value);
@@ -115,7 +121,16 @@ contract BoardwalkTokenTest is Test {
         exempts[1] = address(0);
         exempts[2] = exempt2;
 
-        t.initialize("Test", "T", BASE_TAX_BPS, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "Test",
+            "T",
+            BASE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
 
         assertTrue(t.isExempt(exempt1), "exempt1 should be exempt");
         assertTrue(t.isExempt(exempt2), "exempt2 should be exempt");
@@ -126,7 +141,16 @@ contract BoardwalkTokenTest is Test {
     function test_Initialize_EmptyExemptList() public {
         BoardwalkToken t = _deployUninitializedToken();
         address[] memory exempts = new address[](0);
-        t.initialize("Test", "T", BASE_TAX_BPS, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "Test",
+            "T",
+            BASE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
 
         assertEq(t.baseTaxBps(), BASE_TAX_BPS, "should init with empty exempt list");
     }
@@ -134,7 +158,16 @@ contract BoardwalkTokenTest is Test {
     function test_Initialize_ZeroBaseTaxBps() public {
         BoardwalkToken t = _deployUninitializedToken();
         address[] memory exempts = new address[](0);
-        t.initialize("Test", "T", 0, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "Test",
+            "T",
+            0,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
 
         assertEq(t.baseTaxBps(), 0, "baseTaxBps should be 0");
     }
@@ -142,7 +175,16 @@ contract BoardwalkTokenTest is Test {
     function test_Initialize_MaxBaseTaxBps() public {
         BoardwalkToken t = _deployUninitializedToken();
         address[] memory exempts = new address[](0);
-        t.initialize("Test", "T", ANTI_WHALE_TAX_BPS, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "Test",
+            "T",
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
 
         assertEq(t.baseTaxBps(), ANTI_WHALE_TAX_BPS, "baseTaxBps should accept max (4000)");
     }
@@ -152,16 +194,36 @@ contract BoardwalkTokenTest is Test {
         address[] memory exempts = new address[](0);
 
         vm.expectEmit(true, true, true, true, address(t));
-        emit TokenInitialized("MyToken", "MT", BASE_TAX_BPS, address(mockFeeDistributor), presaleManager);
+        emit TokenInitialized(
+            "MyToken", "MT", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(mockFeeDistributor), presaleManager
+        );
 
-        t.initialize("MyToken", "MT", BASE_TAX_BPS, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "MyToken",
+            "MT",
+            BASE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
     }
 
     function test_RevertWhen_InitializeTwice() public {
         address[] memory exempts = new address[](0);
 
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        token.initialize("Other", "OT", 100, address(mockFeeDistributor), presaleManager, exempts);
+        token.initialize(
+            "Other",
+            "OT",
+            100,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
     }
 
     function test_RevertWhen_Initialize_BaseTaxBpsExceedsMax() public {
@@ -169,7 +231,16 @@ contract BoardwalkTokenTest is Test {
         address[] memory exempts = new address[](0);
 
         vm.expectRevert(BoardwalkToken.InvalidBaseTaxBps.selector);
-        t.initialize("Test", "T", ANTI_WHALE_TAX_BPS + 1, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "Test",
+            "T",
+            ANTI_WHALE_TAX_BPS + 1,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
     }
 
     function test_RevertWhen_Initialize_ZeroFeeDistributor() public {
@@ -177,7 +248,9 @@ contract BoardwalkTokenTest is Test {
         address[] memory exempts = new address[](0);
 
         vm.expectRevert(BoardwalkToken.ZeroAddress.selector);
-        t.initialize("Test", "T", BASE_TAX_BPS, address(0), presaleManager, exempts);
+        t.initialize(
+            "Test", "T", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(0), presaleManager, exempts
+        );
     }
 
     function test_RevertWhen_Initialize_ZeroPresaleManager() public {
@@ -185,7 +258,16 @@ contract BoardwalkTokenTest is Test {
         address[] memory exempts = new address[](0);
 
         vm.expectRevert(BoardwalkToken.ZeroAddress.selector);
-        t.initialize("Test", "T", BASE_TAX_BPS, address(mockFeeDistributor), address(0), exempts);
+        t.initialize(
+            "Test",
+            "T",
+            BASE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            address(0),
+            exempts
+        );
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -196,7 +278,16 @@ contract BoardwalkTokenTest is Test {
         address[] memory exempts = new address[](0);
 
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        template.initialize("Test", "T", BASE_TAX_BPS, address(mockFeeDistributor), presaleManager, exempts);
+        template.initialize(
+            "Test",
+            "T",
+            BASE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -848,7 +939,7 @@ contract BoardwalkTokenTest is Test {
         MockFeeDistributor fdA = new MockFeeDistributor();
         BoardwalkToken tokenA = _deployUninitializedToken();
         address[] memory noExempt = new address[](0);
-        tokenA.initialize("A", "A", BASE_TAX_BPS, address(fdA), presaleManager, noExempt);
+        tokenA.initialize("A", "A", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(fdA), presaleManager, noExempt);
 
         vm.startPrank(presaleManager);
         tokenA.mint(alice, amount);
@@ -863,7 +954,7 @@ contract BoardwalkTokenTest is Test {
         // ---- Token B: transfer at seedTime + t2 ----
         MockFeeDistributor fdB = new MockFeeDistributor();
         BoardwalkToken tokenB = _deployUninitializedToken();
-        tokenB.initialize("B", "B", BASE_TAX_BPS, address(fdB), presaleManager, noExempt);
+        tokenB.initialize("B", "B", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(fdB), presaleManager, noExempt);
 
         vm.startPrank(presaleManager);
         tokenB.mint(alice, amount);
@@ -890,7 +981,9 @@ contract BoardwalkTokenTest is Test {
 
         BoardwalkToken t = _deployUninitializedToken();
         address[] memory exempts = new address[](0);
-        t.initialize("Test", "T", bps, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "Test", "T", bps, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(mockFeeDistributor), presaleManager, exempts
+        );
 
         assertEq(t.baseTaxBps(), bps, "baseTaxBps should be stored correctly for any valid value");
     }
@@ -898,13 +991,18 @@ contract BoardwalkTokenTest is Test {
     function testFuzz_Initialize_InvalidBaseTaxBps_Reverts(
         uint256 bps
     ) public {
-        bps = bound(bps, ANTI_WHALE_TAX_BPS + 1, type(uint256).max);
+        bps = bound(bps, ANTI_WHALE_TAX_BPS + 1, type(uint256).max - 1);
 
         BoardwalkToken t = _deployUninitializedToken();
         address[] memory exempts = new address[](0);
 
+        // baseTaxBps > antiWhaleTaxBps reverts InvalidBaseTaxBps;
+        // antiWhaleTaxBps > 10000 (BPS_DENOMINATOR) reverts InvalidAntiWhaleConfig.
+        // Since we hold antiWhaleTaxBps == 4000, the bound on bps guarantees InvalidBaseTaxBps.
         vm.expectRevert(BoardwalkToken.InvalidBaseTaxBps.selector);
-        t.initialize("Test", "T", bps, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "Test", "T", bps, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(mockFeeDistributor), presaleManager, exempts
+        );
     }
 
     function testFuzz_Transfer_ZeroAmountNoTax(
@@ -942,7 +1040,16 @@ contract BoardwalkTokenTest is Test {
         exempts[0] = exempt1;
         exempts[1] = exempt2;
 
-        t.initialize("TestToken", "TT", BASE_TAX_BPS, address(mockFeeDistributor), presaleManager, exempts);
+        t.initialize(
+            "TestToken",
+            "TT",
+            BASE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
+        );
         return t;
     }
 
@@ -953,7 +1060,7 @@ contract BoardwalkTokenTest is Test {
         fd = new MockFeeDistributor();
         t = _deployUninitializedToken();
         address[] memory exempts = new address[](0);
-        t.initialize("Custom", "CT", bps, address(fd), presaleManager, exempts);
+        t.initialize("Custom", "CT", bps, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(fd), presaleManager, exempts);
     }
 
     /// @dev Mint tokens to `to` via the presaleManager

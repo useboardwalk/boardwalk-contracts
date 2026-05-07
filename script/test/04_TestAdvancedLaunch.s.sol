@@ -86,7 +86,6 @@ contract TestAdvancedLaunchScript is BaseTestScript {
                 vestingPercents: vestingPercents,
                 vestingLabels: vestLabels,
                 referrer: referrer,
-                integrator: address(0),
                 issuerFeeRecipients: feeRecipients,
                 issuerFeeSplits: feeSplits,
                 issuerFeeLabels: feeLabels

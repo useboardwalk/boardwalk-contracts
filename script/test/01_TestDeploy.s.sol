@@ -11,6 +11,7 @@ import {VestingStream} from "src/core/VestingStream.sol";
 import {LPStaking} from "src/core/LPStaking.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
+import {FeeRecipientCollector} from "src/core/FeeRecipientCollector.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
 
 contract TestDeployScript is BaseTestScript {
@@ -78,8 +79,18 @@ contract TestDeployScript is BaseTestScript {
         BoardwalkFeeCollector feeCollector = new BoardwalkFeeCollector(owner, raiseToken, dexRouter, treasury, keeper);
         _recordTx("Deploy BoardwalkFeeCollector");
 
-        LaunchFactory.FeeBpsDefaults memory feeBps =
-            LaunchFactory.FeeBpsDefaults({issuer: 40, boardwalk: 45, incentive: 30, referrer: 5, integrator: 0, total: 115});
+        FeeRecipientCollector ancillaryCollector = new FeeRecipientCollector(owner);
+        _recordTx("Deploy AncillaryFeeRecipientCollector");
+
+        LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
+            issuer: 40,
+            boardwalk: 45,
+            incentive: 28,
+            referrer: 5,
+            integrator: 0,
+            ancillary: 2,
+            total: 115
+        });
 
         LaunchFactory factory = new LaunchFactory(
             owner,
@@ -95,11 +106,15 @@ contract TestDeployScript is BaseTestScript {
                 boardwalkDexFactory: dexFactory,
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: bmxBurnTarget,
                 graduationExpress: graduationExpress,
                 graduationAdvanced: graduationAdvanced,
                 expressDuration: expressDuration,
                 advancedDuration: advancedDuration,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: feeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0
@@ -119,6 +134,7 @@ contract TestDeployScript is BaseTestScript {
         console.log("LP_STAKING_TEMPLATE:", address(lpStakingImpl));
         console.log("LP_MANAGER:", address(lpManager));
         console.log("FEE_COLLECTOR:", address(feeCollector));
+        console.log("ANCILLARY_COLLECTOR:", address(ancillaryCollector));
         console.log("LAUNCH_FACTORY:", address(factory));
         console.log("BMX_BURN_AMOUNT:", factory.bmxBurnAmount());
 

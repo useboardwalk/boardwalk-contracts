@@ -47,7 +47,6 @@ contract TestExpressLaunchScript is BaseTestScript {
             vestingPercents: new uint256[](0),
             vestingLabels: new string[](0),
             referrer: address(0),
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels

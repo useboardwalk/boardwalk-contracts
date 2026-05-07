@@ -18,7 +18,6 @@ interface ILaunchFactory {
         uint256[] vestingPercents;
         string[] vestingLabels;
         address referrer;
-        address integrator;
         address[] issuerFeeRecipients;
         uint256[] issuerFeeSplits;
         string[] issuerFeeLabels;
@@ -41,6 +40,7 @@ interface ILaunchFactory {
         uint256 incentive;
         uint256 referrer;
         uint256 integrator;
+        uint256 ancillary;
         uint256 total;
     }
 
@@ -54,13 +54,17 @@ interface ILaunchFactory {
     error InvalidSplitsSum();
     error ZeroAddress();
     error InvalidFeeDefaults();
+    error InvalidAntiWhaleConfig();
     error BmxBurnOutOfRange(uint256 amount);
     error InvalidDuration();
     error InvalidPresaleRange(uint256 min, uint256 max);
     error ZeroGraduation();
-    error IntegratorMismatch();
-    error IntegratorNotAllowedWithReferrer();
+    error IssuerVestingRecipientsRequired();
     error MemberDiscountOutOfRange(uint256 bps);
+    error NotIntegrator();
+    error NotAncillary();
+    error OwnerCannotRotateRole();
+    error DuplicateRoleAddress();
 
     event LaunchCreated(
         address indexed token,
@@ -77,13 +81,15 @@ interface ILaunchFactory {
     event GraduationThresholdChanged(LaunchPath path, uint256 oldThreshold, uint256 newThreshold);
     event PresaleDurationChanged(LaunchPath path, uint256 oldDuration, uint256 newDuration);
     event FeeDefaultsChanged(
-        uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer, uint256 integrator
+        uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer, uint256 integrator, uint256 ancillary
     );
     event PresaleRangeChanged(uint256 oldMin, uint256 oldMax, uint256 newMin, uint256 newMax);
     event FeeCollectorChanged(address oldCollector, address newCollector);
     event IntegratorChanged(address oldIntegrator, address newIntegrator);
+    event AncillaryChanged(address oldAncillary, address newAncillary);
     event NftCollectionChanged(address oldCollection, address newCollection);
     event MemberLaunchDiscountChanged(uint256 oldDiscount, uint256 newDiscount);
+    event AntiWhaleConfigChanged(uint256 oldTaxBps, uint256 oldDuration, uint256 newTaxBps, uint256 newDuration);
 
     function createLaunch(
         LaunchConfig calldata config
@@ -98,9 +104,28 @@ interface ILaunchFactory {
     function graduationAdvanced() external view returns (uint256);
     function boardwalkFeeCollector() external view returns (address);
     function integrator() external view returns (address);
+    function ancillary() external view returns (address);
+    function antiWhaleTaxBps() external view returns (uint256);
+    function antiWhaleDuration() external view returns (uint256);
     function isLaunchToken(
         address token
     ) external view returns (bool);
     function nftCollection() external view returns (address);
     function memberLaunchDiscountBps() external view returns (uint256);
+
+    function signalChangeIntegratorAddress(
+        address newAddress
+    ) external;
+    function executeChangeIntegratorAddress(
+        address newAddress
+    ) external;
+    function cancelChangeIntegratorAddress() external;
+
+    function signalChangeAncillaryAddress(
+        address newAddress
+    ) external;
+    function executeChangeAncillaryAddress(
+        address newAddress
+    ) external;
+    function cancelChangeAncillaryAddress() external;
 }

@@ -10,10 +10,11 @@ import {ILPStaking} from "../interfaces/ILPStaking.sol";
 import {IBoardwalkFeeCollector} from "../interfaces/IBoardwalkFeeCollector.sol";
 import {IBoardwalkToken} from "../interfaces/IBoardwalkToken.sol";
 import {IDEXRouter} from "../interfaces/IDEXRouter.sol";
+import {IFeeRecipientCollector} from "../interfaces/IFeeRecipientCollector.sol";
 
 /// @title FeeDistributor
-/// @notice Per-launch clone. `onTaxReceived` splits the tax and forwards LP/boardwalk shares; issuer
-///         and referrer/integrator shares accrue for pull-based claims.
+/// @notice Per-launch clone. `onTaxReceived` splits the tax and forwards LP/boardwalk/issuer/referrer/integrator/ancillary shares; issuer
+///         and referrer shares accrue for pull-based claims; integrator and ancillary are pushed with a `notifyFees` call;
 /// @dev Inherits Timelocked but `_authAdmin` reverts, disabling the generic signalAction path. Only
 ///      the typed per-recipient flows below mutate state.
 contract FeeDistributor is Timelocked, Initializable {
@@ -21,8 +22,12 @@ contract FeeDistributor is Timelocked, Initializable {
 
     uint256 private constant BPS_DENOMINATOR = 10_000;
 
+    uint256 private constant NOTIFY_GAS_LIMIT = 150_000;
+
     bytes32 public constant ACTION_CHANGE_ISSUER = keccak256("CHANGE_ISSUER");
     bytes32 public constant ACTION_CHANGE_REFERRER = keccak256("CHANGE_REFERRER");
+    bytes32 public constant ACTION_CHANGE_INTEGRATOR = keccak256("CHANGE_INTEGRATOR");
+    bytes32 public constant ACTION_CHANGE_ANCILLARY = keccak256("CHANGE_ANCILLARY");
 
     address public token;
     address public lpStaking;
@@ -35,6 +40,7 @@ contract FeeDistributor is Timelocked, Initializable {
     uint256 public lpIncentiveBps;
     uint256 public referrerBps;
     uint256 public integratorBps;
+    uint256 public ancillaryBps;
     uint256 public totalFeeBps;
 
     address[] public issuerRecipients;
@@ -42,6 +48,7 @@ contract FeeDistributor is Timelocked, Initializable {
 
     address public referrer;
     address public integrator;
+    address public ancillary;
 
     struct ClaimState {
         uint256 totalAccrued;
@@ -54,9 +61,6 @@ contract FeeDistributor is Timelocked, Initializable {
 
     uint256 public referrerAccrued;
     uint256 public referrerClaimed;
-
-    uint256 public integratorAccrued;
-    uint256 public integratorClaimed;
 
     /// @notice Fees from downstream forwards that reverted; flushable via `retryPendingFees`.
     uint256 public pendingLpFees;
@@ -72,11 +76,13 @@ contract FeeDistributor is Timelocked, Initializable {
         uint256[] issuerSplits;
         address referrer;
         address integrator;
+        address ancillary;
         uint256 issuerBps;
         uint256 boardwalkBps;
         uint256 lpIncentiveBps;
         uint256 referrerBps;
         uint256 integratorBps;
+        uint256 ancillaryBps;
     }
 
     error OnlyToken();
@@ -88,7 +94,9 @@ contract FeeDistributor is Timelocked, Initializable {
     error ArrayLengthMismatch();
     error OnlyFeeCollector();
     error NotIntegrator();
+    error NotAncillary();
     error NotAuthorized();
+    error DuplicateRoleAddress();
 
     event TaxReceived(
         uint256 amount,
@@ -96,17 +104,19 @@ contract FeeDistributor is Timelocked, Initializable {
         uint256 boardwalkShare,
         uint256 issuerShare,
         uint256 referrerShare,
-        uint256 integratorShare
+        uint256 integratorShare,
+        uint256 ancillaryShare
     );
     event IssuerClaimed(
         uint256 indexed recipientIdx, address indexed recipient, uint256 tokenAmount, uint256 raiseTokenAmount
     );
     event ReferrerClaimed(address indexed referrer, uint256 amount);
-    event IntegratorClaimed(address indexed integrator, uint256 amount);
     event FeeForwardFailed(string target, uint256 amount);
     event FeeCollectorChanged(address oldCollector, address newCollector);
     event IssuerAddressChanged(uint256 indexed recipientIdx, address oldAddress, address newAddress);
     event ReferrerAddressChanged(address oldAddress, address newAddress);
+    event IntegratorAddressChanged(address oldAddress, address newAddress);
+    event AncillaryAddressChanged(address oldAddress, address newAddress);
 
     constructor() {
         _disableInitializers();
@@ -134,9 +144,11 @@ contract FeeDistributor is Timelocked, Initializable {
         }
         if (splitsSum != BPS_DENOMINATOR) revert InvalidSplitsSum();
 
-        uint256 _totalFeeBps = p.issuerBps + p.boardwalkBps + p.lpIncentiveBps + p.referrerBps + p.integratorBps;
+        uint256 _totalFeeBps =
+            p.issuerBps + p.boardwalkBps + p.lpIncentiveBps + p.referrerBps + p.integratorBps + p.ancillaryBps;
         if (_totalFeeBps == 0) revert InvalidFeeBps();
         if (p.integrator == address(0) && p.integratorBps > 0) revert InvalidFeeBps();
+        if (p.ancillary == address(0) && p.ancillaryBps > 0) revert InvalidFeeBps();
 
         token = p.token;
         lpStaking = p.lpStaking;
@@ -149,6 +161,7 @@ contract FeeDistributor is Timelocked, Initializable {
         lpIncentiveBps = p.lpIncentiveBps;
         referrerBps = p.referrerBps;
         integratorBps = p.integratorBps;
+        ancillaryBps = p.ancillaryBps;
         totalFeeBps = _totalFeeBps;
 
         for (uint256 i = 0; i < p.issuerRecipients.length;) {
@@ -161,6 +174,7 @@ contract FeeDistributor is Timelocked, Initializable {
 
         referrer = p.referrer;
         integrator = p.integrator;
+        ancillary = p.ancillary;
 
         // LPStaking pulls via notifyFees; FeeCollector pulls via receiveFees; router pulls during issuer claim.
         IERC20(p.token).approve(p.lpStaking, type(uint256).max);
@@ -170,6 +184,7 @@ contract FeeDistributor is Timelocked, Initializable {
 
     /// @notice Called by BoardwalkToken on every taxed transfer. Splits by frozen BPS. LP/boardwalk
     ///         forwards are wrapped in try/catch so a bad downstream cannot revert the transfer.
+    ///         Integrator/ancillary use push+notify.
     function onTaxReceived(
         uint256 amount
     ) external {
@@ -180,10 +195,13 @@ contract FeeDistributor is Timelocked, Initializable {
         uint256 boardwalkShare = amount * boardwalkBps / _totalFeeBps;
         uint256 referrerShare = (referrer != address(0)) ? amount * referrerBps / _totalFeeBps : 0;
         uint256 integratorShare = (integrator != address(0)) ? amount * integratorBps / _totalFeeBps : 0;
-        uint256 issuerShare = amount - lpShare - boardwalkShare - referrerShare - integratorShare;
+        uint256 ancillaryShare = (ancillary != address(0)) ? amount * ancillaryBps / _totalFeeBps : 0;
+        uint256 issuerShare = amount - lpShare - boardwalkShare - referrerShare - integratorShare - ancillaryShare;
 
         if (lpShare > 0) _forwardLpFees(lpShare);
         if (boardwalkShare > 0) _forwardBoardwalkFees(boardwalkShare);
+        if (integratorShare > 0) _forwardThirdParty(integrator, integratorShare);
+        if (ancillaryShare > 0) _forwardThirdParty(ancillary, ancillaryShare);
 
         if (issuerShare > 0) {
             _accrueIssuerFees(issuerShare);
@@ -193,11 +211,7 @@ contract FeeDistributor is Timelocked, Initializable {
             referrerAccrued += referrerShare;
         }
 
-        if (integratorShare > 0) {
-            integratorAccrued += integratorShare;
-        }
-
-        emit TaxReceived(amount, lpShare, boardwalkShare, issuerShare, referrerShare, integratorShare);
+        emit TaxReceived(amount, lpShare, boardwalkShare, issuerShare, referrerShare, integratorShare, ancillaryShare);
     }
 
     /// @notice Flush any fees that accumulated when a forward reverted. Permissionless.
@@ -215,8 +229,7 @@ contract FeeDistributor is Timelocked, Initializable {
     }
 
     /// @notice Issuer recipient claims accrued fees swapped to raise token. Rate limit: 10% of
-    ///         `totalAccrued` per recipient per 24h. Dust escape: if `totalAccrued/10 == 0`, the
-    ///         full unclaimed amount is claimable.
+    ///         `totalAccrued` per recipient per 24h.
     function claimAsRaiseToken(
         uint256 recipientIdx,
         uint256 minRaiseTokenOut,
@@ -271,14 +284,6 @@ contract FeeDistributor is Timelocked, Initializable {
         emit ReferrerClaimed(msg.sender, amount);
     }
 
-    function claimIntegratorFees() external {
-        if (msg.sender != integrator) revert NotIntegrator();
-        uint256 amount = _validateThirdPartyClaim(integratorAccrued, integratorClaimed);
-        integratorClaimed += amount;
-        IERC20(token).safeTransfer(msg.sender, amount);
-        emit IntegratorClaimed(msg.sender, amount);
-    }
-
     function signalChangeIssuerAddress(
         uint256 recipientIdx,
         address newAddress
@@ -328,6 +333,58 @@ contract FeeDistributor is Timelocked, Initializable {
         _cancel(ACTION_CHANGE_REFERRER);
     }
 
+    function signalChangeIntegratorAddress(
+        address newAddress
+    ) external {
+        if (msg.sender != integrator) revert NotIntegrator();
+        _signal(ACTION_CHANGE_INTEGRATOR, keccak256(abi.encode(newAddress)), _actionDelay(ACTION_CHANGE_INTEGRATOR));
+    }
+
+    function executeChangeIntegratorAddress(
+        address newAddress
+    ) external {
+        _execute(ACTION_CHANGE_INTEGRATOR, keccak256(abi.encode(newAddress)));
+        if (newAddress == address(0)) revert ZeroAddress();
+        if (IBoardwalkToken(token).isExempt(newAddress)) revert DuplicateRoleAddress();
+
+        address old = integrator;
+        IBoardwalkToken(token).updateExempt(old, false);
+        IBoardwalkToken(token).updateExempt(newAddress, true);
+        emit IntegratorAddressChanged(old, newAddress);
+        integrator = newAddress;
+    }
+
+    function cancelChangeIntegratorAddress() external {
+        if (msg.sender != integrator) revert NotIntegrator();
+        _cancel(ACTION_CHANGE_INTEGRATOR);
+    }
+
+    function signalChangeAncillaryAddress(
+        address newAddress
+    ) external {
+        if (msg.sender != ancillary) revert NotAncillary();
+        _signal(ACTION_CHANGE_ANCILLARY, keccak256(abi.encode(newAddress)), _actionDelay(ACTION_CHANGE_ANCILLARY));
+    }
+
+    function executeChangeAncillaryAddress(
+        address newAddress
+    ) external {
+        _execute(ACTION_CHANGE_ANCILLARY, keccak256(abi.encode(newAddress)));
+        if (newAddress == address(0)) revert ZeroAddress();
+        if (IBoardwalkToken(token).isExempt(newAddress)) revert DuplicateRoleAddress();
+
+        address old = ancillary;
+        IBoardwalkToken(token).updateExempt(old, false);
+        IBoardwalkToken(token).updateExempt(newAddress, true);
+        emit AncillaryAddressChanged(old, newAddress);
+        ancillary = newAddress;
+    }
+
+    function cancelChangeAncillaryAddress() external {
+        if (msg.sender != ancillary) revert NotAncillary();
+        _cancel(ACTION_CHANGE_ANCILLARY);
+    }
+
     /// @notice Collector migration hook. Atomically rotates token exemption and approvals to the
     ///         new collector. Only the current collector can call.
     function setFeeCollector(
@@ -335,6 +392,7 @@ contract FeeDistributor is Timelocked, Initializable {
     ) external {
         if (msg.sender != feeCollector) revert OnlyFeeCollector();
         if (newFeeCollector == address(0)) revert ZeroAddress();
+        if (IBoardwalkToken(token).isExempt(newFeeCollector)) revert DuplicateRoleAddress();
         IBoardwalkToken(token).updateExempt(feeCollector, false);
         IBoardwalkToken(token).updateExempt(newFeeCollector, true);
         IERC20(token).approve(feeCollector, 0);
@@ -347,6 +405,17 @@ contract FeeDistributor is Timelocked, Initializable {
         bytes32
     ) internal pure override {
         revert NotAuthorized();
+    }
+
+    /// @dev Per-clone integrator/ancillary migrations get 14 days; default stays 7 for the
+    ///      pre-existing issuer/referrer flows.
+    function _actionDelay(
+        bytes32 action
+    ) internal pure override returns (uint256) {
+        if (action == ACTION_CHANGE_INTEGRATOR || action == ACTION_CHANGE_ANCILLARY) {
+            return 14 days;
+        }
+        return TIMELOCK_DELAY;
     }
 
     function _forwardLpFees(
@@ -366,6 +435,17 @@ contract FeeDistributor is Timelocked, Initializable {
         catch {
             pendingBoardwalkFees += amount;
             emit FeeForwardFailed("FeeCollector", amount);
+        }
+    }
+
+    function _forwardThirdParty(
+        address to,
+        uint256 amount
+    ) internal {
+        IERC20(token).safeTransfer(to, amount);
+        try IFeeRecipientCollector(to).notifyFees{gas: NOTIFY_GAS_LIMIT}(token, amount) {}
+        catch {
+            emit FeeForwardFailed("Notify", amount);
         }
     }
 

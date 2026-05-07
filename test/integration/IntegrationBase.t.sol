@@ -13,6 +13,7 @@ import {PresaleManager} from "src/core/PresaleManager.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
+import {FeeRecipientCollector} from "src/core/FeeRecipientCollector.sol";
 
 // Interfaces
 import {IFeeDistributor} from "src/interfaces/IFeeDistributor.sol";
@@ -276,6 +277,7 @@ abstract contract IntegrationBase is Test {
     LaunchFactory internal factory;
     BoardwalkLPManager internal lpManager;
     BoardwalkFeeCollector internal feeCollector;
+    FeeRecipientCollector internal ancillaryCollector;
 
     // Templates (for cloning)
     BoardwalkToken internal tokenTemplate;
@@ -346,19 +348,22 @@ abstract contract IntegrationBase is Test {
         feeCollector = new BoardwalkFeeCollector(owner, address(weth), address(router), treasury, keeper);
 
         // Fee defaults: referrer is carve-out from boardwalk
-        // total = issuer + boardwalk + incentive (referrer excluded)
+        // total = issuer + boardwalk + incentive + integrator + ancillary (referrer excluded)
         defaultFeeBps = LaunchFactory.FeeBpsDefaults({
             issuer: 40, // 0.40%
             boardwalk: 45, // 0.45%
-            incentive: 30, // 0.30%
+            incentive: 28, // 0.28%
             referrer: 5, // 0.05% (carved from boardwalk)
             integrator: 0,
-            total: 115 // 1.15% = 40+45+30
+            ancillary: 2, // 0.02%
+            total: 115 // 1.15% = 40+45+28+0+2
         });
 
         // Deploy factory (needs LPManager address, deploy placeholder first)
-        // LPManager needs factory address → chicken-egg, deploy factory first with temp lpManager
         lpManager = new BoardwalkLPManager(address(dexFactory), address(router), address(weth));
+
+        // Deploy ancillary collector (owned by deployer/owner for tests)
+        ancillaryCollector = new FeeRecipientCollector(owner);
 
         factory = new LaunchFactory(
             owner,
@@ -374,11 +379,15 @@ abstract contract IntegrationBase is Test {
                 boardwalkDexFactory: address(dexFactory),
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_THRESHOLD,
                 graduationAdvanced: GRADUATION_THRESHOLD,
                 expressDuration: 24 hours,
                 advancedDuration: 7 days,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0
@@ -415,7 +424,6 @@ abstract contract IntegrationBase is Test {
             vestingPercents: new uint256[](0),
             vestingLabels: new string[](0),
             referrer: address(0),
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels
@@ -463,7 +471,6 @@ abstract contract IntegrationBase is Test {
             vestingPercents: vestPercents,
             vestingLabels: vestLabels,
             referrer: referrer,
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels

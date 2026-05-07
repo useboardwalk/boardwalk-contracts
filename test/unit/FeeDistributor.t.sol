@@ -214,6 +214,59 @@ contract MockERC20 is ERC20 {
     }
 }
 
+/// @dev Minimal mock implementing IFeeRecipientCollector.notifyFees. Used as the integrator /
+///      ancillary recipient in tests. Captures the last-call args + supports forced revert and
+///      gas-griefing modes for regression coverage of the push+notify hardening.
+contract MockFeeRecipientCollector {
+    address public lastToken;
+    uint256 public lastAmount;
+    uint256 public callCount;
+    bool public shouldRevert;
+    bool public shouldBurnGas;
+    bool public shouldReturnBomb;
+    uint256 public bombSize;
+
+    function setShouldRevert(
+        bool _v
+    ) external {
+        shouldRevert = _v;
+    }
+
+    function setShouldBurnGas(
+        bool _v
+    ) external {
+        shouldBurnGas = _v;
+    }
+
+    function setReturnBomb(
+        bool _v,
+        uint256 _size
+    ) external {
+        shouldReturnBomb = _v;
+        bombSize = _size;
+    }
+
+    function notifyFees(address tokenAddr, uint256 amount) external {
+        if (shouldRevert) revert("MockFeeRecipientCollector: forced revert");
+        if (shouldBurnGas) {
+            // Spin until OOG to simulate a malicious recipient consuming all forwarded gas.
+            assembly {
+                for {} 1 {} { pop(sload(0)) }
+            }
+        }
+        if (shouldReturnBomb) {
+            uint256 sz = bombSize;
+            assembly {
+                let ptr := mload(0x40)
+                return(ptr, sz)
+            }
+        }
+        lastToken = tokenAddr;
+        lastAmount = amount;
+        callCount++;
+    }
+}
+
 /// @title FeeDistributorTest
 /// @notice Unit and fuzz tests for FeeDistributor.
 contract FeeDistributorTest is Test {
@@ -233,19 +286,28 @@ contract FeeDistributorTest is Test {
     MockRouter internal router;
     MockERC20 internal token;
     MockERC20 internal weth;
+    MockFeeRecipientCollector internal mockIntegratorCollector;
+    MockFeeRecipientCollector internal mockAncillaryCollector;
 
     address internal issuer1;
     address internal issuer2;
     address internal issuer3;
     address internal referrer;
     address internal integratorAddr;
+    address internal ancillaryAddr;
     address internal alice;
     address internal bob;
 
     // ============ Events (re-declared for vm.expectEmit) ============
 
     event TaxReceived(
-        uint256 amount, uint256 lpShare, uint256 boardwalkShare, uint256 issuerShare, uint256 referrerShare, uint256 integratorShare
+        uint256 amount,
+        uint256 lpShare,
+        uint256 boardwalkShare,
+        uint256 issuerShare,
+        uint256 referrerShare,
+        uint256 integratorShare,
+        uint256 ancillaryShare
     );
     event IssuerClaimed(
         uint256 indexed recipientIdx, address indexed recipient, uint256 tokenAmount, uint256 wethAmount
@@ -267,7 +329,6 @@ contract FeeDistributorTest is Test {
         issuer2 = makeAddr("issuer2");
         issuer3 = makeAddr("issuer3");
         referrer = makeAddr("referrer");
-        integratorAddr = makeAddr("integrator");
         alice = makeAddr("alice");
         bob = makeAddr("bob");
 
@@ -275,14 +336,21 @@ contract FeeDistributorTest is Test {
         vm.label(issuer2, "issuer2");
         vm.label(issuer3, "issuer3");
         vm.label(referrer, "referrer");
-        vm.label(integratorAddr, "integrator");
 
-        // Deploy mocks
+        // Deploy mocks. Integrator/ancillary recipients MUST be contracts because the typed
+        // `try IFeeRecipientCollector(to).notifyFees(...)` call's extcodesize precheck reverts
+        // when `to` is an EOA (Solidity 0.8.28 does not catch that revert in try/catch).
         lpStaking = new MockLPStaking();
         feeCollector = new MockFeeCollector();
         router = new MockRouter();
         token = new MockERC20("TestToken", "TT");
         weth = new MockERC20("WETH", "WETH");
+        mockIntegratorCollector = new MockFeeRecipientCollector();
+        mockAncillaryCollector = new MockFeeRecipientCollector();
+        integratorAddr = address(mockIntegratorCollector);
+        ancillaryAddr = address(mockAncillaryCollector);
+        vm.label(integratorAddr, "integrator");
+        vm.label(ancillaryAddr, "ancillary");
 
         // Set exchange rate: 1 token = 0.5 WETH (for testing swaps)
         router.setExchangeRate(address(token), address(weth), 0.5e18);
@@ -630,7 +698,9 @@ contract FeeDistributorTest is Test {
         uint256 expectedIssuerShare = taxAmount - expectedLpShare - expectedBoardwalkShare - expectedReferrerShare;
 
         vm.expectEmit(true, true, true, true, address(feeDistributor));
-        emit TaxReceived(taxAmount, expectedLpShare, expectedBoardwalkShare, expectedIssuerShare, expectedReferrerShare, 0);
+        emit TaxReceived(
+            taxAmount, expectedLpShare, expectedBoardwalkShare, expectedIssuerShare, expectedReferrerShare, 0, 0
+        );
 
         vm.prank(address(token));
         feeDistributor.onTaxReceived(taxAmount);
@@ -1390,11 +1460,13 @@ contract FeeDistributorTest is Test {
             issuerSplits: _toArray(4000, 3000, 3000), // Sums to 10000
             referrer: referrer,
             integrator: address(0),
+            ancillary: address(0),
             issuerBps: 5000,
             boardwalkBps: 2000,
             lpIncentiveBps: 2000,
             referrerBps: 1000,
-            integratorBps: 0
+            integratorBps: 0,
+            ancillaryBps: 0
         });
     }
 
@@ -1409,11 +1481,13 @@ contract FeeDistributorTest is Test {
             issuerSplits: _toArray(4000, 3000, 3000),
             referrer: address(0),
             integrator: integratorAddr,
+            ancillary: address(0),
             issuerBps: 4000,
             boardwalkBps: 3000,
             lpIncentiveBps: 2000,
             referrerBps: 0,
-            integratorBps: 1000
+            integratorBps: 1000,
+            ancillaryBps: 0
         });
     }
 
@@ -1682,7 +1756,8 @@ contract FeeDistributorTest is Test {
 
         assertEq(lpStaking.totalFeesReceived(), expectedLpShare, "LP share mismatch");
         assertEq(feeCollector.accumulatedFees(address(token)), expectedBoardwalkShare, "Boardwalk share mismatch");
-        assertEq(fd.integratorAccrued(), expectedIntegratorShare, "Integrator accrued mismatch");
+        // Push model: integrator receives tokens directly via safeTransfer.
+        assertEq(token.balanceOf(integratorAddr), expectedIntegratorShare, "Integrator should receive push transfer");
         assertEq(fd.referrerAccrued(), 0, "Referrer accrued should be 0");
 
         (uint256 totalAccrued0,,,) = fd.issuerClaimStates(0);
@@ -1691,76 +1766,340 @@ contract FeeDistributorTest is Test {
         assertEq(totalAccrued0 + totalAccrued1 + totalAccrued2, expectedIssuerShare, "Total issuer accrued mismatch");
     }
 
-    function test_ClaimIntegratorFees_HappyPath() public {
+    function test_OnTaxReceived_IntegratorPushOnly() public {
+        // Push model replaces the old accrue/claim flow: integrator receives tokens directly.
         FeeDistributor fd = _deployUninitializedFeeDistributor();
         FeeDistributor.InitParams memory p = _integratorInitParams();
         fd.initialize(p);
 
         uint256 taxAmount = 10000e18;
         deal(address(token), address(fd), taxAmount);
-
-        vm.prank(address(token));
-        fd.onTaxReceived(taxAmount);
 
         uint256 expectedIntegratorShare = taxAmount * 1000 / 10000;
         uint256 balanceBefore = token.balanceOf(integratorAddr);
 
-        vm.prank(integratorAddr);
-        fd.claimIntegratorFees();
-
-        uint256 balanceAfter = token.balanceOf(integratorAddr);
-        assertEq(balanceAfter - balanceBefore, expectedIntegratorShare, "Integrator should receive full accrued amount");
-        assertEq(fd.integratorClaimed(), expectedIntegratorShare, "integratorClaimed should match");
-    }
-
-    function test_ClaimIntegratorFees_EmitsEvent() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        uint256 taxAmount = 10000e18;
-        deal(address(token), address(fd), taxAmount);
-
         vm.prank(address(token));
         fd.onTaxReceived(taxAmount);
 
-        uint256 expectedIntegratorShare = taxAmount * 1000 / 10000;
-
-        vm.expectEmit(true, true, true, true, address(fd));
-        emit IntegratorClaimed(integratorAddr, expectedIntegratorShare);
-
-        vm.prank(integratorAddr);
-        fd.claimIntegratorFees();
+        uint256 balanceAfter = token.balanceOf(integratorAddr);
+        assertEq(balanceAfter - balanceBefore, expectedIntegratorShare, "Integrator should receive push transfer");
+        // No allowance is granted to partner-controlled collectors in push mode.
+        assertEq(token.allowance(address(fd), integratorAddr), 0, "No allowance should be granted to integrator");
     }
 
-    function test_RevertWhen_ClaimIntegratorFees_NotIntegrator() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        vm.expectRevert(FeeDistributor.NotIntegrator.selector);
-        vm.prank(alice);
-        fd.claimIntegratorFees();
-    }
-
-    function test_RevertWhen_ClaimIntegratorFees_NothingToClaim() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        vm.expectRevert(FeeDistributor.NothingToClaimYet.selector);
-        vm.prank(integratorAddr);
-        fd.claimIntegratorFees();
-    }
-
-    function test_OnTaxReceived_NoIntegrator_ZeroShare() public {
+    function test_OnTaxReceived_NoIntegrator_NoPush() public {
         uint256 taxAmount = 10000e18;
         deal(address(token), address(feeDistributor), taxAmount);
+
+        uint256 integratorBalanceBefore = token.balanceOf(integratorAddr);
 
         vm.prank(address(token));
         feeDistributor.onTaxReceived(taxAmount);
 
-        assertEq(feeDistributor.integratorAccrued(), 0, "Integrator accrued should be 0 when no integrator");
+        // Integrator address is zero in default init, so no push happens.
+        assertEq(token.balanceOf(integratorAddr), integratorBalanceBefore, "No push when integrator is zero");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Push+Notify hardening — adversarial recipient regression
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// @notice A reverting integrator collector must NOT brick the tax callback.
+    function test_ForwardThirdParty_RevertingNotify_ParentSurvives() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        fd.initialize(p);
+
+        mockIntegratorCollector.setShouldRevert(true);
+
+        uint256 taxAmount = 10000e18;
+        uint256 expectedShare = taxAmount * 1000 / 10000;
+        deal(address(token), address(fd), taxAmount);
+
+        vm.expectEmit(true, true, true, true, address(fd));
+        emit FeeForwardFailed("Notify", expectedShare);
+
+        vm.prank(address(token));
+        fd.onTaxReceived(taxAmount);
+
+        // Push-side `safeTransfer` always lands even when notifyFees reverts.
+        assertEq(
+            token.balanceOf(integratorAddr), expectedShare, "Integrator should still receive the safeTransfer"
+        );
+        // notifyFees never succeeded → no state on the mock.
+        assertEq(mockIntegratorCollector.callCount(), 0, "notifyFees should not have succeeded");
+        assertEq(mockIntegratorCollector.lastAmount(), 0, "lastAmount should remain unset");
+    }
+
+    /// @notice A gas-griefing integrator collector (consumes its full forwarded budget) must
+    ///         NOT brick the tax callback. The `{gas: NOTIFY_GAS_LIMIT}` cap bounds adversarial
+    ///         consumption to a known constant per forward, preserving SPEC's "tax delivery
+    ///         never reverts a transfer" invariant.
+    function test_ForwardThirdParty_GasGriefingNotify_ParentSurvives() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        fd.initialize(p);
+
+        mockIntegratorCollector.setShouldBurnGas(true);
+
+        uint256 taxAmount = 10000e18;
+        uint256 expectedShare = taxAmount * 1000 / 10000;
+        deal(address(token), address(fd), taxAmount);
+
+        vm.expectEmit(true, true, true, true, address(fd));
+        emit FeeForwardFailed("Notify", expectedShare);
+
+        // Wallet-default 200K user budget would survive but we use 1M as a conservative test
+        // budget. The cap means parent only loses ~NOTIFY_GAS_LIMIT, not gasleft() * 63/64.
+        vm.prank(address(token));
+        fd.onTaxReceived{gas: 1_000_000}(taxAmount);
+
+        // Tokens still landed; downstream forwards still ran.
+        assertEq(token.balanceOf(integratorAddr), expectedShare, "Integrator should still receive safeTransfer");
+        assertEq(lpStaking.callCount(), 1, "LP forward should still succeed");
+        assertEq(feeCollector.callCount(), 1, "Boardwalk forward should still succeed");
+    }
+
+    /// @notice A return-bomb integrator collector must NOT brick the tax callback. The void
+    ///         return type plus bare `catch {}` mean Solidity emits no RETURNDATACOPY, and the
+    ///         `{gas: NOTIFY_GAS_LIMIT}` cap prevents the callee from amplifying memory cost
+    ///         beyond what the parent can absorb.
+    function test_ForwardThirdParty_ReturnBombNotify_ParentSurvives() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        fd.initialize(p);
+
+        // 1MB return bomb: callee tries to set up a 1MB return buffer (mem expansion in
+        // callee = ~2M gas), which exceeds the 100K gas cap → callee OOGs → catch fires.
+        mockIntegratorCollector.setReturnBomb(true, 1_000_000);
+
+        uint256 taxAmount = 10000e18;
+        uint256 expectedShare = taxAmount * 1000 / 10000;
+        deal(address(token), address(fd), taxAmount);
+
+        vm.expectEmit(true, true, true, true, address(fd));
+        emit FeeForwardFailed("Notify", expectedShare);
+
+        vm.prank(address(token));
+        fd.onTaxReceived(taxAmount);
+
+        assertEq(token.balanceOf(integratorAddr), expectedShare, "Integrator should still receive safeTransfer");
+    }
+
+    /// @notice Both integrator AND ancillary malicious — the worst-case Base/Katana/Fraxtal
+    ///         scenario. Each gas-griefer can consume up to NOTIFY_GAS_LIMIT, so total parent
+    ///         loss is bounded by 2× NOTIFY_GAS_LIMIT. The transfer still completes.
+    function test_ForwardThirdParty_DualGasGrief_ParentSurvives() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        // Add ancillary as well — split BPS to keep total at 10000.
+        p.ancillary = address(mockAncillaryCollector);
+        p.integratorBps = 500;
+        p.ancillaryBps = 500;
+        // issuer 4000 + boardwalk 3000 + lp 2000 + integrator 500 + ancillary 500 = 10000.
+        fd.initialize(p);
+
+        // Both partners malicious — each burns its forwarded budget.
+        mockIntegratorCollector.setShouldBurnGas(true);
+        mockAncillaryCollector.setShouldBurnGas(true);
+
+        uint256 taxAmount = 10000e18;
+        deal(address(token), address(fd), taxAmount);
+
+        // 1M gas budget — well above the 200K minimum the cap design targets.
+        vm.prank(address(token));
+        fd.onTaxReceived{gas: 1_000_000}(taxAmount);
+
+        // safeTransfers still landed. Both forwards emitted FeeForwardFailed, but the caller
+        // survives.
+        assertEq(token.balanceOf(integratorAddr), taxAmount * 500 / 10000, "Integrator share landed");
+        assertEq(token.balanceOf(ancillaryAddr), taxAmount * 500 / 10000, "Ancillary share landed");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Self-Sovereign Integrator/Ancillary Rotation (per-clone)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// @dev Deploys a fresh FeeDistributor seeded with both integrator AND ancillary so the
+    ///      rotation flows can be exercised without the default-init zero-address shortcut.
+    function _deployFeeDistributorWithRoles() internal returns (FeeDistributor) {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        p.ancillary = address(mockAncillaryCollector);
+        p.ancillaryBps = 500;
+        p.integratorBps = 500;
+        // issuer 4000 + boardwalk 3000 + lp 2000 + integrator 500 + ancillary 500 = 10000.
+        fd.initialize(p);
+        return fd;
+    }
+
+    /// @dev Per-clone rotation timelock for integrator/ancillary is 14 days, hardcoded in FD.
+    uint256 internal constant ROLE_ROTATION_DELAY = 14 days;
+
+    function test_SignalChangeIntegratorAddress_OnlyCurrentIntegrator() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        vm.expectRevert(FeeDistributor.NotIntegrator.selector);
+        vm.prank(alice);
+        fd.signalChangeIntegratorAddress(makeAddr("newIntegrator"));
+    }
+
+    function test_ExecuteChangeIntegratorAddress_AfterDelay() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        address newIntegrator = makeAddr("newIntegrator");
+
+        vm.prank(integratorAddr);
+        fd.signalChangeIntegratorAddress(newIntegrator);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        fd.executeChangeIntegratorAddress(newIntegrator);
+
+        assertEq(fd.integrator(), newIntegrator, "integrator should be rotated");
+        assertFalse(token.isExempt(integratorAddr), "old integrator should no longer be exempt");
+        assertTrue(token.isExempt(newIntegrator), "new integrator should be exempt");
+    }
+
+    /// @notice Per-clone delay is 14 days — strictly longer than the codebase's default 7d.
+    function test_RotationDelay_Is14Days() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        address newIntegrator = makeAddr("newIntegrator");
+
+        vm.prank(integratorAddr);
+        fd.signalChangeIntegratorAddress(newIntegrator);
+
+        // At 7 days, executing should still revert.
+        vm.warp(block.timestamp + 7 days);
+        vm.expectRevert();
+        fd.executeChangeIntegratorAddress(newIntegrator);
+    }
+
+    function test_RevertWhen_ExecuteChangeIntegratorAddress_ZeroAddress() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        vm.prank(integratorAddr);
+        fd.signalChangeIntegratorAddress(address(0));
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
+        fd.executeChangeIntegratorAddress(address(0));
+    }
+
+    /// @notice Cannot rotate to an address already exempt — boolean-mapping aliasing protection.
+    function test_RevertWhen_ExecuteChangeIntegratorAddress_DuplicateExempt() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        token.updateExempt(address(mockAncillaryCollector), true);
+
+        vm.prank(integratorAddr);
+        fd.signalChangeIntegratorAddress(address(mockAncillaryCollector));
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(FeeDistributor.DuplicateRoleAddress.selector);
+        fd.executeChangeIntegratorAddress(address(mockAncillaryCollector));
+    }
+
+    function test_CancelChangeIntegratorAddress_OnlyCurrentIntegrator() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        vm.prank(integratorAddr);
+        fd.signalChangeIntegratorAddress(makeAddr("newIntegrator"));
+
+        vm.expectRevert(FeeDistributor.NotIntegrator.selector);
+        vm.prank(alice);
+        fd.cancelChangeIntegratorAddress();
+    }
+
+    function test_CancelChangeIntegratorAddress_ClearsPendingChange() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        address newIntegrator = makeAddr("newIntegrator");
+
+        vm.prank(integratorAddr);
+        fd.signalChangeIntegratorAddress(newIntegrator);
+
+        vm.prank(integratorAddr);
+        fd.cancelChangeIntegratorAddress();
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY + 1);
+        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
+        fd.executeChangeIntegratorAddress(newIntegrator);
+    }
+
+    function test_SignalChangeAncillaryAddress_OnlyCurrentAncillary() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        vm.expectRevert(FeeDistributor.NotAncillary.selector);
+        vm.prank(alice);
+        fd.signalChangeAncillaryAddress(makeAddr("newAncillary"));
+    }
+
+    function test_ExecuteChangeAncillaryAddress_AfterDelay() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        address newAncillary = makeAddr("newAncillary");
+
+        vm.prank(ancillaryAddr);
+        fd.signalChangeAncillaryAddress(newAncillary);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        fd.executeChangeAncillaryAddress(newAncillary);
+
+        assertEq(fd.ancillary(), newAncillary, "ancillary should be rotated");
+        assertFalse(token.isExempt(ancillaryAddr), "old ancillary should no longer be exempt");
+        assertTrue(token.isExempt(newAncillary), "new ancillary should be exempt");
+    }
+
+    function test_RevertWhen_ExecuteChangeAncillaryAddress_ZeroAddress() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        vm.prank(ancillaryAddr);
+        fd.signalChangeAncillaryAddress(address(0));
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
+        fd.executeChangeAncillaryAddress(address(0));
+    }
+
+    function test_RevertWhen_ExecuteChangeAncillaryAddress_DuplicateExempt() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        token.updateExempt(address(mockIntegratorCollector), true);
+
+        vm.prank(ancillaryAddr);
+        fd.signalChangeAncillaryAddress(address(mockIntegratorCollector));
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(FeeDistributor.DuplicateRoleAddress.selector);
+        fd.executeChangeAncillaryAddress(address(mockIntegratorCollector));
+    }
+
+    function test_CancelChangeAncillaryAddress_OnlyCurrentAncillary() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        vm.prank(ancillaryAddr);
+        fd.signalChangeAncillaryAddress(makeAddr("newAncillary"));
+
+        vm.expectRevert(FeeDistributor.NotAncillary.selector);
+        vm.prank(alice);
+        fd.cancelChangeAncillaryAddress();
+    }
+
+    function test_CancelChangeAncillaryAddress_ClearsPendingChange() public {
+        FeeDistributor fd = _deployFeeDistributorWithRoles();
+        address newAncillary = makeAddr("newAncillary");
+
+        vm.prank(ancillaryAddr);
+        fd.signalChangeAncillaryAddress(newAncillary);
+
+        vm.prank(ancillaryAddr);
+        fd.cancelChangeAncillaryAddress();
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY + 1);
+        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
+        fd.executeChangeAncillaryAddress(newAncillary);
+    }
+
+    /// @notice `setFeeCollector` should reject a new collector that is already exempt (catches
+    ///         collisions with FeeDistributor itself, presale, lpStaking, lpManager, integrator,
+    ///         ancillary, or vesting in one boolean read).
+    function test_RevertWhen_SetFeeCollector_DuplicateExempt() public {
+        // The current collector calls setFeeCollector. The new candidate is the integrator
+        // address, which is already exempt at clone init.
+        token.updateExempt(integratorAddr, true);
+
+        vm.prank(address(feeCollector));
+        vm.expectRevert(FeeDistributor.DuplicateRoleAddress.selector);
+        feeDistributor.setFeeCollector(integratorAddr);
     }
 
     function test_SetFeeCollector_ApprovalsRotate() public {

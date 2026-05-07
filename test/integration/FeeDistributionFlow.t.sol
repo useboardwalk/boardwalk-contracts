@@ -85,6 +85,7 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 feeDistBefore = IERC20(tokenAddr).balanceOf(info.feeDistributor);
         uint256 lpStakingBefore = IERC20(tokenAddr).balanceOf(info.lpStaking);
         uint256 feeCollectorBefore = IERC20(tokenAddr).balanceOf(address(feeCollector));
+        uint256 ancillaryBefore = IERC20(tokenAddr).balanceOf(address(ancillaryCollector));
 
         vm.prank(alice);
         IERC20(tokenAddr).transfer(bob, transferAmount);
@@ -96,8 +97,9 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 feeDistDelta = IERC20(tokenAddr).balanceOf(info.feeDistributor) - feeDistBefore;
         uint256 lpStakingDelta = IERC20(tokenAddr).balanceOf(info.lpStaking) - lpStakingBefore;
         uint256 feeCollectorDelta = IERC20(tokenAddr).balanceOf(address(feeCollector)) - feeCollectorBefore;
+        uint256 ancillaryDelta = IERC20(tokenAddr).balanceOf(address(ancillaryCollector)) - ancillaryBefore;
 
-        uint256 accountedFor = feeDistDelta + lpStakingDelta + feeCollectorDelta;
+        uint256 accountedFor = feeDistDelta + lpStakingDelta + feeCollectorDelta + ancillaryDelta;
         // Allow 1 wei rounding tolerance
         assertApproxEqAbs(accountedFor, totalTax, 1, "All tax should be accounted for");
     }
@@ -144,7 +146,7 @@ contract FeeDistributionFlowTest is IntegrationBase {
 
         uint256 lpStakingBefore = IERC20(tokenAddr).balanceOf(info.lpStaking);
         uint256 feeCollectorBefore = IERC20(tokenAddr).balanceOf(address(feeCollector));
-        uint256 feeDistBefore = IERC20(tokenAddr).balanceOf(info.feeDistributor);
+        uint256 ancillaryBefore = IERC20(tokenAddr).balanceOf(address(ancillaryCollector));
 
         vm.prank(alice);
         IERC20(tokenAddr).transfer(bob, transferAmount);
@@ -152,17 +154,21 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 bobReceived = IERC20(tokenAddr).balanceOf(bob);
         uint256 totalTax = transferAmount - bobReceived;
 
-        // Verify exact BPS splits (Express path: issuer=40, boardwalk=45, LP=30, no referrer)
-        // totalFeeBps = 40 + 45 + 30 = 115
-        uint256 expectedLP = totalTax * 30 / 115;
+        // Verify exact BPS splits (Express path, ETH-mainnet schedule):
+        // issuer=40, boardwalk=45, incentive=28, ancillary=2, no referrer/integrator
+        // totalFeeBps = 40 + 45 + 28 + 0 + 2 = 115
+        uint256 expectedLP = totalTax * 28 / 115;
         uint256 expectedBoardwalk = totalTax * 45 / 115;
+        uint256 expectedAncillary = totalTax * 2 / 115;
         // Issuer share = remainder
 
         uint256 lpDelta = IERC20(tokenAddr).balanceOf(info.lpStaking) - lpStakingBefore;
         uint256 bwDelta = IERC20(tokenAddr).balanceOf(address(feeCollector)) - feeCollectorBefore;
+        uint256 ancDelta = IERC20(tokenAddr).balanceOf(address(ancillaryCollector)) - ancillaryBefore;
 
-        assertApproxEqAbs(lpDelta, expectedLP, 1, "LP incentive share should match 30/115 BPS");
+        assertApproxEqAbs(lpDelta, expectedLP, 1, "LP incentive share should match 28/115 BPS");
         assertApproxEqAbs(bwDelta, expectedBoardwalk, 1, "Boardwalk share should match 45/115 BPS");
+        assertApproxEqAbs(ancDelta, expectedAncillary, 1, "Ancillary share should match 2/115 BPS");
     }
 
     // ============ LPManager Exemption Verified ============
@@ -249,13 +255,15 @@ contract FeeDistributionAdvancedPathTest is IntegrationBase {
     // ============ Referrer Carve-Out: BPS Split Verification ============
 
     function test_AdvancedPath_ReferrerCarveOut_SplitsCorrectly() public {
-        // Advanced with referrer: issuer=40, boardwalk=45-5=40, LP=30, referrer=5
-        // totalFeeBps = 40 + 40 + 30 + 5 = 115 (matches token baseTaxBps)
+        // Advanced with referrer (ETH-mainnet schedule):
+        // issuer=40, boardwalk=45-5=40, incentive=28, referrer=5, integrator=0, ancillary=2
+        // totalFeeBps = 40 + 40 + 28 + 5 + 2 = 115 (matches token baseTaxBps)
         FeeDistributor fd = FeeDistributor(info.feeDistributor);
         assertEq(fd.issuerBps(), 40, "Issuer BPS should be 40");
         assertEq(fd.boardwalkBps(), 40, "Boardwalk BPS should be 40 (45 - 5 referrer)");
-        assertEq(fd.lpIncentiveBps(), 30, "LP incentive BPS should be 30");
+        assertEq(fd.lpIncentiveBps(), 28, "LP incentive BPS should be 28");
         assertEq(fd.referrerBps(), 5, "Referrer BPS should be 5");
+        assertEq(fd.ancillaryBps(), 2, "Ancillary BPS should be 2");
         assertEq(fd.totalFeeBps(), 115, "Total fee BPS should be 115");
     }
 
@@ -295,6 +303,7 @@ contract FeeDistributionAdvancedPathTest is IntegrationBase {
         uint256 feeDistBefore = IERC20(tokenAddr).balanceOf(info.feeDistributor);
         uint256 lpStakingBefore = IERC20(tokenAddr).balanceOf(info.lpStaking);
         uint256 feeCollectorBefore = IERC20(tokenAddr).balanceOf(address(feeCollector));
+        uint256 ancillaryBefore = IERC20(tokenAddr).balanceOf(address(ancillaryCollector));
 
         vm.prank(alice);
         IERC20(tokenAddr).transfer(bob, transferAmount);
@@ -305,18 +314,22 @@ contract FeeDistributionAdvancedPathTest is IntegrationBase {
         uint256 feeDistDelta = IERC20(tokenAddr).balanceOf(info.feeDistributor) - feeDistBefore;
         uint256 lpDelta = IERC20(tokenAddr).balanceOf(info.lpStaking) - lpStakingBefore;
         uint256 bwDelta = IERC20(tokenAddr).balanceOf(address(feeCollector)) - feeCollectorBefore;
+        uint256 ancDelta = IERC20(tokenAddr).balanceOf(address(ancillaryCollector)) - ancillaryBefore;
 
         // feeDistDelta = issuer share + referrer share (accrued, not forwarded)
         // lpDelta = LP incentive share (forwarded via notifyFees)
         // bwDelta = boardwalk share (forwarded via receiveFees)
-        uint256 accountedFor = feeDistDelta + lpDelta + bwDelta;
+        // ancDelta = ancillary share (push+notify)
+        uint256 accountedFor = feeDistDelta + lpDelta + bwDelta + ancDelta;
         assertApproxEqAbs(accountedFor, totalTax, 1, "All tax should be accounted for with referrer");
 
-        // Verify individual splits
-        uint256 expectedLP = totalTax * 30 / 115;
+        // Verify individual splits (incentive=28/115, boardwalk=40/115 after referrer carve, ancillary=2/115)
+        uint256 expectedLP = totalTax * 28 / 115;
         uint256 expectedBW = totalTax * 40 / 115;
-        assertApproxEqAbs(lpDelta, expectedLP, 1, "LP share: 30/115");
+        uint256 expectedAnc = totalTax * 2 / 115;
+        assertApproxEqAbs(lpDelta, expectedLP, 1, "LP share: 28/115");
         assertApproxEqAbs(bwDelta, expectedBW, 1, "Boardwalk share: 40/115 (carved by referrer)");
+        assertApproxEqAbs(ancDelta, expectedAnc, 1, "Ancillary share: 2/115");
     }
 
     function test_AdvancedPath_Referrer_IsSet() public {

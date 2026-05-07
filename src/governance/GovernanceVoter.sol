@@ -655,9 +655,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         mintParams[1] = abi.encode(address(0), BMX);
         mintParams[2] = abi.encode(address(0), address(this));
 
-        bytes memory pmCalldata = abi.encodeCall(
-            IV4PositionManager.modifyLiquidities, (abi.encode(mintActions, mintParams), deadline)
-        );
+        bytes memory pmCalldata =
+            abi.encodeCall(IV4PositionManager.modifyLiquidities, (abi.encode(mintActions, mintParams), deadline));
 
         bytes memory commands = abi.encodePacked(UR_V4_POSITION_MANAGER_CALL);
         bytes[] memory inputs = new bytes[](1);

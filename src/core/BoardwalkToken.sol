@@ -10,11 +10,12 @@ import {IFeeDistributor} from "../interfaces/IFeeDistributor.sol";
 ///         is forwarded to FeeDistributor via the `onTaxReceived` callback inside `_update`.
 contract BoardwalkToken is ERC20, Initializable {
     uint256 public constant TOTAL_SUPPLY = 10_000_000_000e18;
-    uint256 private constant ANTI_WHALE_TAX = 4_000;
-    uint256 private constant ANTI_WHALE_DURATION = 90 minutes;
     uint256 private constant BPS_DENOMINATOR = 10_000;
 
     uint256 public baseTaxBps;
+    uint256 public antiWhaleTaxBps;
+    uint256 public antiWhaleDuration;
+
     /// @notice Zero is the sentinel for "not yet seeded" — no tax applies until this is set.
     uint256 public liquiditySeedTime;
 
@@ -30,13 +31,20 @@ contract BoardwalkToken is ERC20, Initializable {
     error OnlyFeeDistributor();
     error ExceedsTotalSupply();
     error InvalidBaseTaxBps();
+    error InvalidAntiWhaleConfig();
     error ZeroAddress();
     error AlreadySeeded();
     error ZeroSeedTime();
     error FutureSeedTime();
 
     event TokenInitialized(
-        string name, string symbol, uint256 baseTaxBps, address feeDistributor, address presaleManager
+        string name,
+        string symbol,
+        uint256 baseTaxBps,
+        uint256 antiWhaleTaxBps,
+        uint256 antiWhaleDuration,
+        address feeDistributor,
+        address presaleManager
     );
     event LiquiditySeedTimeSet(uint256 seedTime);
 
@@ -49,17 +57,23 @@ contract BoardwalkToken is ERC20, Initializable {
         string calldata _name,
         string calldata _ticker,
         uint256 _baseTaxBps,
+        uint256 _antiWhaleTaxBps,
+        uint256 _antiWhaleDuration,
         address _feeDistributor,
         address _presaleManager,
         address[] calldata _exemptAddresses
     ) external initializer {
         if (_feeDistributor == address(0)) revert ZeroAddress();
         if (_presaleManager == address(0)) revert ZeroAddress();
-        if (_baseTaxBps > ANTI_WHALE_TAX) revert InvalidBaseTaxBps();
+        if (_antiWhaleTaxBps > BPS_DENOMINATOR) revert InvalidAntiWhaleConfig();
+        if (_antiWhaleDuration == 0) revert InvalidAntiWhaleConfig();
+        if (_baseTaxBps > _antiWhaleTaxBps) revert InvalidBaseTaxBps();
 
         _tokenName = _name;
         _tokenSymbol = _ticker;
         baseTaxBps = _baseTaxBps;
+        antiWhaleTaxBps = _antiWhaleTaxBps;
+        antiWhaleDuration = _antiWhaleDuration;
         feeDistributor = _feeDistributor;
         presaleManager = _presaleManager;
 
@@ -74,7 +88,9 @@ contract BoardwalkToken is ERC20, Initializable {
             }
         }
 
-        emit TokenInitialized(_name, _ticker, _baseTaxBps, _feeDistributor, _presaleManager);
+        emit TokenInitialized(
+            _name, _ticker, _baseTaxBps, _antiWhaleTaxBps, _antiWhaleDuration, _feeDistributor, _presaleManager
+        );
     }
 
     function name() public view override returns (string memory) {
@@ -106,7 +122,8 @@ contract BoardwalkToken is ERC20, Initializable {
     }
 
     /// @notice FeeDistributor-only. The exempt set is otherwise immutable post-init; this exists
-    ///         exclusively to rotate the fee-collector exemption during a migration.
+    ///         exclusively to rotate the fee-collector / integrator / ancillary exemption during a
+    ///         migration.
     function updateExempt(
         address account,
         bool exempt
@@ -136,8 +153,9 @@ contract BoardwalkToken is ERC20, Initializable {
         }
     }
 
-    /// @dev Returns 0 before seed (no tax until trading begins). During the first 90 minutes after
-    ///      seed, decays linearly from 40% to `baseTaxBps`; after, applies `baseTaxBps` flat.
+    /// @dev Returns 0 before seed (no tax until trading begins). During the anti-whale window
+    ///      after seed, decays linearly from `antiWhaleTaxBps` to `baseTaxBps`; after, applies
+    ///      `baseTaxBps` flat.
     function _calculateTax(
         address from,
         address to,
@@ -150,12 +168,14 @@ contract BoardwalkToken is ERC20, Initializable {
 
         uint256 elapsed = block.timestamp - seedTime;
         uint256 _baseTaxBps = baseTaxBps;
+        uint256 _antiWhaleDuration = antiWhaleDuration;
 
-        if (elapsed >= ANTI_WHALE_DURATION) {
+        if (elapsed >= _antiWhaleDuration) {
             return amount * _baseTaxBps / BPS_DENOMINATOR;
         }
 
-        uint256 currentTax = ANTI_WHALE_TAX - (ANTI_WHALE_TAX - _baseTaxBps) * elapsed / ANTI_WHALE_DURATION;
+        uint256 _antiWhaleTaxBps = antiWhaleTaxBps;
+        uint256 currentTax = _antiWhaleTaxBps - (_antiWhaleTaxBps - _baseTaxBps) * elapsed / _antiWhaleDuration;
         return amount * currentTax / BPS_DENOMINATOR;
     }
 }

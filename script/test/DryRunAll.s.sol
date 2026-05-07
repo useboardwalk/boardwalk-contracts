@@ -10,6 +10,7 @@ import {VestingStream} from "src/core/VestingStream.sol";
 import {LPStaking} from "src/core/LPStaking.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
+import {FeeRecipientCollector} from "src/core/FeeRecipientCollector.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
@@ -64,12 +65,16 @@ contract DryRunAll is Script {
         BoardwalkFeeCollector feeCollector = new BoardwalkFeeCollector(owner, weth, dexRouter, treasury, keeper);
         console.log("BoardwalkFeeCollector:", address(feeCollector));
 
+        FeeRecipientCollector ancillaryCollector = new FeeRecipientCollector(owner);
+        console.log("AncillaryFeeRecipientCollector:", address(ancillaryCollector));
+
         LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
             issuer: 40,
             boardwalk: 45,
-            incentive: 30,
+            incentive: 28,
             referrer: 5,
             integrator: 0,
+            ancillary: 2,
             total: 115
         });
 
@@ -87,11 +92,15 @@ contract DryRunAll is Script {
                 boardwalkDexFactory: dexFactory,
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: 100e18,
                 graduationExpress: 10 ether,
                 graduationAdvanced: 10 ether,
                 expressDuration: 24 hours,
                 advancedDuration: 7 days,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: feeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0

@@ -443,7 +443,6 @@ contract GasBenchmarks is IntegrationBase {
             vestingPercents: new uint256[](0),
             vestingLabels: new string[](0),
             referrer: address(0),
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels
@@ -483,7 +482,6 @@ contract GasBenchmarks is IntegrationBase {
             vestingPercents: vestPercents,
             vestingLabels: vestLabels,
             referrer: referrer,
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels

@@ -7,12 +7,19 @@ interface IBoardwalkToken {
     error OnlyFeeDistributor();
     error ExceedsTotalSupply();
     error InvalidBaseTaxBps();
+    error InvalidAntiWhaleConfig();
     error AlreadySeeded();
     error ZeroSeedTime();
     error FutureSeedTime();
 
     event TokenInitialized(
-        string name, string symbol, uint256 baseTaxBps, address feeDistributor, address presaleManager
+        string name,
+        string symbol,
+        uint256 baseTaxBps,
+        uint256 antiWhaleTaxBps,
+        uint256 antiWhaleDuration,
+        address feeDistributor,
+        address presaleManager
     );
     event LiquiditySeedTimeSet(uint256 seedTime);
 
@@ -20,6 +27,8 @@ interface IBoardwalkToken {
         string calldata name,
         string calldata ticker,
         uint256 baseTaxBps,
+        uint256 antiWhaleTaxBps,
+        uint256 antiWhaleDuration,
         address feeDistributor,
         address presaleManager,
         address[] calldata exemptAddresses
@@ -39,6 +48,8 @@ interface IBoardwalkToken {
         address account
     ) external view returns (bool);
     function baseTaxBps() external view returns (uint256);
+    function antiWhaleTaxBps() external view returns (uint256);
+    function antiWhaleDuration() external view returns (uint256);
     function liquiditySeedTime() external view returns (uint256);
     function feeDistributor() external view returns (address);
     function presaleManager() external view returns (address);

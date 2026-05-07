@@ -33,6 +33,8 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
     address public override feeDistributor;
     address public override presaleManager;
     uint256 public override baseTaxBps;
+    uint256 public override antiWhaleTaxBps;
+    uint256 public override antiWhaleDuration;
     uint256 public override liquiditySeedTime;
     mapping(address => bool) public override isExempt;
 
@@ -42,11 +44,15 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
         string calldata,
         string calldata,
         uint256 _baseTaxBps,
+        uint256 _antiWhaleTaxBps,
+        uint256 _antiWhaleDuration,
         address _feeDistributor,
         address _presaleManager,
         address[] calldata exemptAddresses
     ) external override {
         baseTaxBps = _baseTaxBps;
+        antiWhaleTaxBps = _antiWhaleTaxBps;
+        antiWhaleDuration = _antiWhaleDuration;
         feeDistributor = _feeDistributor;
         presaleManager = _presaleManager;
         for (uint256 i = 0; i < exemptAddresses.length; i++) {
@@ -436,7 +442,7 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
             // Initialize token
             address[] memory exempts = new address[](1);
             exempts[0] = address(presaleManager);
-            token.initialize("TestToken", "TEST", 80, feeDistributor, address(presaleManager), exempts);
+            token.initialize("TestToken", "TEST", 80, 4000, 90 minutes, feeDistributor, address(presaleManager), exempts);
         }
 
         // ============ Helpers ============
@@ -1133,7 +1139,7 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
             MockBoardwalkToken newToken = new MockBoardwalkToken();
             address[] memory exempts = new address[](1);
             exempts[0] = address(pm);
-            newToken.initialize("TestToken", "TEST", 80, feeDistributor, address(pm), exempts);
+            newToken.initialize("TestToken", "TEST", 80, 4000, 90 minutes, feeDistributor, address(pm), exempts);
 
             vm.prank(factory);
             pm.initialize(

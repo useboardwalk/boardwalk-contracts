@@ -15,6 +15,7 @@ import {FeeDistributor} from "src/core/FeeDistributor.sol";
 import {PresaleManager} from "src/core/PresaleManager.sol";
 import {VestingStream} from "src/core/VestingStream.sol";
 import {LPStaking} from "src/core/LPStaking.sol";
+import {FeeRecipientCollector} from "src/core/FeeRecipientCollector.sol";
 import {Timelocked} from "src/base/Timelocked.sol";
 
 // ============ Mocks ============
@@ -216,6 +217,7 @@ contract LaunchFactoryTest is Test {
     address internal boardwalkFeeCollector;
 
     LaunchFactory.FeeBpsDefaults internal defaultFeeBps;
+    FeeRecipientCollector internal ancillaryCollector;
 
     // ============ Action Keys (local constants to avoid consuming vm.prank) ============
 
@@ -246,7 +248,14 @@ contract LaunchFactoryTest is Test {
     event ChangeSignaled(bytes32 indexed action, bytes32 dataHash, uint256 executeTime, uint256 expiresAt);
     event ChangeExecuted(bytes32 indexed action);
     event ChangeCanceled(bytes32 indexed action);
-    event FeeDefaultsChanged(uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer, uint256 integrator);
+    event FeeDefaultsChanged(
+        uint256 issuer,
+        uint256 boardwalk,
+        uint256 incentive,
+        uint256 referrer,
+        uint256 integrator,
+        uint256 ancillary
+    );
     event PresaleRangeChanged(uint256 oldMin, uint256 oldMax, uint256 newMin, uint256 newMax);
     event FeeCollectorChanged(address oldCollector, address newCollector);
 
@@ -282,15 +291,18 @@ contract LaunchFactoryTest is Test {
         weth = new MockERC20("WETH", "WETH");
 
         // Set default fee BPS. Referrer is CARVED from boardwalk, not additive to total.
-        // total = issuer + boardwalk + incentive (the actual token tax rate)
+        // total = issuer + boardwalk + incentive + integrator + ancillary (referrer excluded).
         defaultFeeBps = LaunchFactory.FeeBpsDefaults({
             issuer: 40, // 0.40%
             boardwalk: 45, // 0.45% (referrer carved from this at launch time)
-            incentive: 30, // 0.30%
+            incentive: 28, // 0.28%
             referrer: 5, // 0.05% (carved from boardwalk when referrer present)
             integrator: 0,
-            total: 115 // 1.15% = 40+45+30 (referrer NOT included in total)
+            ancillary: 2, // 0.02%
+            total: 115 // 1.15% = 40+45+28+0+2 (referrer NOT included in total)
         });
+
+        ancillaryCollector = new FeeRecipientCollector(owner);
 
         // Deploy factory
         factory = new LaunchFactory(
@@ -307,11 +319,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0
@@ -355,12 +371,20 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_Initialize_SetsFeeDefaults() public view {
-        (uint256 issuerBps, uint256 boardwalkBps, uint256 incentiveBps, uint256 referrerBps,, uint256 totalBps) =
-            factory.currentFeeBps();
+        (
+            uint256 issuerBps,
+            uint256 boardwalkBps,
+            uint256 incentiveBps,
+            uint256 referrerBps,
+            ,
+            uint256 ancillaryBps,
+            uint256 totalBps
+        ) = factory.currentFeeBps();
         assertEq(issuerBps, defaultFeeBps.issuer, "issuer BPS mismatch");
         assertEq(boardwalkBps, defaultFeeBps.boardwalk, "boardwalk BPS mismatch");
         assertEq(incentiveBps, defaultFeeBps.incentive, "incentive BPS mismatch");
         assertEq(referrerBps, defaultFeeBps.referrer, "referrer BPS mismatch");
+        assertEq(ancillaryBps, defaultFeeBps.ancillary, "ancillary BPS mismatch");
         assertEq(totalBps, defaultFeeBps.total, "total BPS mismatch");
     }
 
@@ -1201,6 +1225,11 @@ contract LaunchFactoryTest is Test {
     function testFuzz_BurnAnyAction(
         bytes32 action
     ) public {
+        // Self-sovereign role rotation actions are not burnable by the owner — exclude them
+        // from the fuzz domain since they would revert with OwnerCannotRotateRole.
+        vm.assume(action != factory.ACTION_SET_INTEGRATOR());
+        vm.assume(action != factory.ACTION_SET_ANCILLARY());
+
         vm.prank(owner);
         factory.signalBurnAction(action);
 
@@ -1255,6 +1284,7 @@ contract LaunchFactoryTest is Test {
             incentive: 15, // 0.15%
             referrer: 10, // 0.10% (carved from boardwalk)
             integrator: 0,
+            ancillary: 0,
             total: 90 // 0.90% = 40+35+15 (referrer excluded from total)
         });
 
@@ -1264,12 +1294,20 @@ contract LaunchFactoryTest is Test {
         vm.warp(block.timestamp + TIMELOCK_DELAY);
         factory.executeSetFeeDefaults(newDefaults);
 
-        (uint256 issuerBps, uint256 boardwalkBps, uint256 incentiveBps, uint256 referrerBps,, uint256 totalBps) =
-            factory.currentFeeBps();
+        (
+            uint256 issuerBps,
+            uint256 boardwalkBps,
+            uint256 incentiveBps,
+            uint256 referrerBps,
+            ,
+            uint256 ancillaryBps,
+            uint256 totalBps
+        ) = factory.currentFeeBps();
         assertEq(issuerBps, newDefaults.issuer, "issuer BPS mismatch");
         assertEq(boardwalkBps, newDefaults.boardwalk, "boardwalk BPS mismatch");
         assertEq(incentiveBps, newDefaults.incentive, "incentive BPS mismatch");
         assertEq(referrerBps, newDefaults.referrer, "referrer BPS mismatch");
+        assertEq(ancillaryBps, newDefaults.ancillary, "ancillary BPS mismatch");
         assertEq(totalBps, newDefaults.total, "total BPS mismatch");
     }
 
@@ -1292,6 +1330,7 @@ contract LaunchFactoryTest is Test {
             incentive: 15,
             referrer: 5,
             integrator: 0,
+            ancillary: 0,
             total: 90
         });
 
@@ -1434,7 +1473,6 @@ contract LaunchFactoryTest is Test {
             vestingPercents: new uint256[](0),
             vestingLabels: new string[](0),
             referrer: address(0),
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels
@@ -1465,7 +1503,6 @@ contract LaunchFactoryTest is Test {
             vestingPercents: new uint256[](0),
             vestingLabels: new string[](0),
             referrer: address(0),
-            integrator: address(0),
             issuerFeeRecipients: feeRecipients,
             issuerFeeSplits: feeSplits,
             issuerFeeLabels: feeLabels
@@ -1476,6 +1513,11 @@ contract LaunchFactoryTest is Test {
     function _deployFactoryWith(
         LaunchFactory.FeeBpsDefaults memory feeBps
     ) internal returns (LaunchFactory) {
+        // For factories with non-zero ancillary BPS, deploy a fresh ancillary collector for them.
+        FeeRecipientCollector localAncillary;
+        if (feeBps.ancillary > 0) {
+            localAncillary = new FeeRecipientCollector(owner);
+        }
         return new LaunchFactory(
             owner,
             LaunchFactory.DeployParams({
@@ -1490,11 +1532,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(localAncillary),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: feeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0
@@ -1611,6 +1657,7 @@ contract LaunchFactoryTest is Test {
             incentive: 20,
             referrer: 5,
             integrator: 0,
+            ancillary: 0,
             total: 999 // sum = 80, total = 999
         });
 
@@ -1627,7 +1674,7 @@ contract LaunchFactoryTest is Test {
         uint256 t = block.timestamp;
         // issuer 81 exceeds max of 80 (step 2 in _validateFeeDefaults)
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 81, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, total: 131});
+            LaunchFactory.FeeBpsDefaults({issuer: 81, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 131});
 
         vm.prank(owner);
         factory.signalAction(ACTION_SET_FEE_DEFAULTS, keccak256(abi.encode(bad)));
@@ -1642,7 +1689,7 @@ contract LaunchFactoryTest is Test {
         uint256 t = block.timestamp;
         // referrer 11 exceeds max of 10 (step 5 in _validateFeeDefaults)
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 11, integrator: 0, total: 80});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 11, integrator: 0, ancillary: 0, total: 80});
 
         vm.prank(owner);
         factory.signalAction(ACTION_SET_FEE_DEFAULTS, keccak256(abi.encode(bad)));
@@ -1657,7 +1704,7 @@ contract LaunchFactoryTest is Test {
         uint256 t = block.timestamp;
         // issuer 0 is below min of 10 (step 2 in _validateFeeDefaults)
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 0, boardwalk: 0, incentive: 0, referrer: 0, integrator: 0, total: 0});
+            LaunchFactory.FeeBpsDefaults({issuer: 0, boardwalk: 0, incentive: 0, referrer: 0, integrator: 0, ancillary: 0, total: 0});
 
         vm.prank(owner);
         factory.signalAction(ACTION_SET_FEE_DEFAULTS, keccak256(abi.encode(bad)));
@@ -1675,7 +1722,7 @@ contract LaunchFactoryTest is Test {
     function test_RevertWhen_Constructor_IssuerBelowMin() public {
         // issuer 9 < min 10
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 9, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, total: 59});
+            LaunchFactory.FeeBpsDefaults({issuer: 9, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 59});
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         _deployFactoryWith(bad);
     }
@@ -1683,7 +1730,7 @@ contract LaunchFactoryTest is Test {
     function test_RevertWhen_Constructor_IssuerAboveMax() public {
         // issuer 81 > max 80
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 81, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, total: 131});
+            LaunchFactory.FeeBpsDefaults({issuer: 81, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 131});
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         _deployFactoryWith(bad);
     }
@@ -1691,7 +1738,7 @@ contract LaunchFactoryTest is Test {
     function test_RevertWhen_Constructor_BoardwalkBelowMin() public {
         // boardwalk 9 < min 10
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 9, incentive: 20, referrer: 5, integrator: 0, total: 59});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 9, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 59});
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         _deployFactoryWith(bad);
     }
@@ -1699,7 +1746,7 @@ contract LaunchFactoryTest is Test {
     function test_RevertWhen_Constructor_BoardwalkAboveMax() public {
         // boardwalk 51 > max 50
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 51, incentive: 20, referrer: 5, integrator: 0, total: 101});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 51, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 101});
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         _deployFactoryWith(bad);
     }
@@ -1707,7 +1754,7 @@ contract LaunchFactoryTest is Test {
     function test_RevertWhen_Constructor_IncentiveAboveMax() public {
         // incentive 51 > max 50
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 51, referrer: 5, integrator: 0, total: 111});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 51, referrer: 5, integrator: 0, ancillary: 0, total: 111});
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         _deployFactoryWith(bad);
     }
@@ -1715,7 +1762,7 @@ contract LaunchFactoryTest is Test {
     function test_RevertWhen_Constructor_ReferrerAboveMax() public {
         // referrer 11 > max 10
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 11, integrator: 0, total: 80});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 11, integrator: 0, ancillary: 0, total: 80});
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         _deployFactoryWith(bad);
     }
@@ -1723,7 +1770,7 @@ contract LaunchFactoryTest is Test {
     function test_RevertWhen_Constructor_SumMismatch() public {
         // total 999 != issuer+boardwalk+incentive = 80
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, total: 999});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 999});
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         _deployFactoryWith(bad);
     }
@@ -1746,11 +1793,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: invalidBurnAmount,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0
@@ -1761,9 +1812,9 @@ contract LaunchFactoryTest is Test {
     function test_Constructor_FeeDefaults_AtMinBoundaries() public {
         // All components at their minimum valid values
         LaunchFactory.FeeBpsDefaults memory minFees =
-            LaunchFactory.FeeBpsDefaults({issuer: 10, boardwalk: 10, incentive: 0, referrer: 0, integrator: 0, total: 20});
+            LaunchFactory.FeeBpsDefaults({issuer: 10, boardwalk: 10, incentive: 0, referrer: 0, integrator: 0, ancillary: 0, total: 20});
         LaunchFactory f = _deployFactoryWith(minFees);
-        (uint256 i, uint256 b, uint256 inc, uint256 r,, uint256 t) = f.currentFeeBps();
+        (uint256 i, uint256 b, uint256 inc, uint256 r,,, uint256 t) = f.currentFeeBps();
         assertEq(i, 10, "issuer at min");
         assertEq(b, 10, "boardwalk at min");
         assertEq(inc, 0, "incentive at min");
@@ -1774,9 +1825,9 @@ contract LaunchFactoryTest is Test {
     function test_Constructor_FeeDefaults_AtMaxBoundaries() public {
         // All components at their maximum valid values
         LaunchFactory.FeeBpsDefaults memory maxFees =
-            LaunchFactory.FeeBpsDefaults({issuer: 80, boardwalk: 50, incentive: 50, referrer: 10, integrator: 0, total: 180});
+            LaunchFactory.FeeBpsDefaults({issuer: 80, boardwalk: 50, incentive: 50, referrer: 10, integrator: 0, ancillary: 0, total: 180});
         LaunchFactory f = _deployFactoryWith(maxFees);
-        (uint256 i, uint256 b, uint256 inc, uint256 r,, uint256 t) = f.currentFeeBps();
+        (uint256 i, uint256 b, uint256 inc, uint256 r,,, uint256 t) = f.currentFeeBps();
         assertEq(i, 80, "issuer at max");
         assertEq(b, 50, "boardwalk at max");
         assertEq(inc, 50, "incentive at max");
@@ -1787,9 +1838,9 @@ contract LaunchFactoryTest is Test {
     function test_Constructor_FeeDefaults_ReferrerEqualsBoardwalk() public {
         // Edge case: referrer == boardwalk (should pass since referrer <= boardwalk)
         LaunchFactory.FeeBpsDefaults memory edge =
-            LaunchFactory.FeeBpsDefaults({issuer: 10, boardwalk: 10, incentive: 0, referrer: 10, integrator: 0, total: 20});
+            LaunchFactory.FeeBpsDefaults({issuer: 10, boardwalk: 10, incentive: 0, referrer: 10, integrator: 0, ancillary: 0, total: 20});
         LaunchFactory f = _deployFactoryWith(edge);
-        (,,, uint256 r,,) = f.currentFeeBps();
+        (,,, uint256 r,,,) = f.currentFeeBps();
         assertEq(r, 10, "referrer == boardwalk should be valid");
     }
 
@@ -1799,7 +1850,7 @@ contract LaunchFactoryTest is Test {
 
     function test_RevertWhen_ExecuteSetFeeDefaults_IssuerBelowMin() public {
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 9, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, total: 59});
+            LaunchFactory.FeeBpsDefaults({issuer: 9, boardwalk: 30, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 59});
         _timelockSetFeeDefaults(bad);
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         factory.executeSetFeeDefaults(bad);
@@ -1807,7 +1858,7 @@ contract LaunchFactoryTest is Test {
 
     function test_RevertWhen_ExecuteSetFeeDefaults_BoardwalkAboveMax() public {
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 51, incentive: 20, referrer: 5, integrator: 0, total: 101});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 51, incentive: 20, referrer: 5, integrator: 0, ancillary: 0, total: 101});
         _timelockSetFeeDefaults(bad);
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         factory.executeSetFeeDefaults(bad);
@@ -1815,7 +1866,7 @@ contract LaunchFactoryTest is Test {
 
     function test_RevertWhen_ExecuteSetFeeDefaults_IncentiveAboveMax() public {
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 51, referrer: 5, integrator: 0, total: 111});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 51, referrer: 5, integrator: 0, ancillary: 0, total: 111});
         _timelockSetFeeDefaults(bad);
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         factory.executeSetFeeDefaults(bad);
@@ -1823,7 +1874,7 @@ contract LaunchFactoryTest is Test {
 
     function test_RevertWhen_ExecuteSetFeeDefaults_ReferrerAboveMax() public {
         LaunchFactory.FeeBpsDefaults memory bad =
-            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 11, integrator: 0, total: 80});
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 30, incentive: 20, referrer: 11, integrator: 0, ancillary: 0, total: 80});
         _timelockSetFeeDefaults(bad);
         vm.expectRevert(LaunchFactory.InvalidFeeDefaults.selector);
         factory.executeSetFeeDefaults(bad);
@@ -1831,15 +1882,15 @@ contract LaunchFactoryTest is Test {
 
     function test_ExecuteSetFeeDefaults_AtMinBoundaries() public {
         LaunchFactory.FeeBpsDefaults memory minFees =
-            LaunchFactory.FeeBpsDefaults({issuer: 10, boardwalk: 10, incentive: 0, referrer: 0, integrator: 0, total: 20});
+            LaunchFactory.FeeBpsDefaults({issuer: 10, boardwalk: 10, incentive: 0, referrer: 0, integrator: 0, ancillary: 0, total: 20});
         _timelockSetFeeDefaults(minFees);
 
         vm.expectEmit(true, false, false, true);
-        emit FeeDefaultsChanged(10, 10, 0, 0, 0);
+        emit FeeDefaultsChanged(10, 10, 0, 0, 0, 0);
 
         factory.executeSetFeeDefaults(minFees);
 
-        (uint256 i, uint256 b, uint256 inc, uint256 r,, uint256 t) = factory.currentFeeBps();
+        (uint256 i, uint256 b, uint256 inc, uint256 r,,, uint256 t) = factory.currentFeeBps();
         assertEq(i, 10, "issuer at min via timelock");
         assertEq(b, 10, "boardwalk at min via timelock");
         assertEq(inc, 0, "incentive at min via timelock");
@@ -1849,15 +1900,15 @@ contract LaunchFactoryTest is Test {
 
     function test_ExecuteSetFeeDefaults_AtMaxBoundaries() public {
         LaunchFactory.FeeBpsDefaults memory maxFees =
-            LaunchFactory.FeeBpsDefaults({issuer: 80, boardwalk: 50, incentive: 50, referrer: 10, integrator: 0, total: 180});
+            LaunchFactory.FeeBpsDefaults({issuer: 80, boardwalk: 50, incentive: 50, referrer: 10, integrator: 0, ancillary: 0, total: 180});
         _timelockSetFeeDefaults(maxFees);
 
         vm.expectEmit(true, false, false, true);
-        emit FeeDefaultsChanged(80, 50, 50, 10, 0);
+        emit FeeDefaultsChanged(80, 50, 50, 10, 0, 0);
 
         factory.executeSetFeeDefaults(maxFees);
 
-        (uint256 i, uint256 b, uint256 inc, uint256 r,, uint256 t) = factory.currentFeeBps();
+        (uint256 i, uint256 b, uint256 inc, uint256 r,,, uint256 t) = factory.currentFeeBps();
         assertEq(i, 80, "issuer at max via timelock");
         assertEq(b, 50, "boardwalk at max via timelock");
         assertEq(inc, 50, "incentive at max via timelock");
@@ -2206,11 +2257,11 @@ contract LaunchFactoryTest is Test {
         vm.assume(totalBps <= 190);
 
         LaunchFactory.FeeBpsDefaults memory fees = LaunchFactory.FeeBpsDefaults({
-            issuer: issuerBps, boardwalk: boardwalkBps, incentive: incentiveBps, referrer: referrerBps, integrator: 0, total: totalBps
+            issuer: issuerBps, boardwalk: boardwalkBps, incentive: incentiveBps, referrer: referrerBps, integrator: 0, ancillary: 0, total: totalBps
         });
 
         LaunchFactory f = _deployFactoryWith(fees);
-        (uint256 i, uint256 b, uint256 inc, uint256 r,, uint256 t) = f.currentFeeBps();
+        (uint256 i, uint256 b, uint256 inc, uint256 r,,, uint256 t) = f.currentFeeBps();
         assertEq(i, issuerBps, "issuer fuzz mismatch");
         assertEq(b, boardwalkBps, "boardwalk fuzz mismatch");
         assertEq(inc, incentiveBps, "incentive fuzz mismatch");
@@ -2408,113 +2459,277 @@ contract LaunchFactoryTest is Test {
         factory.executeSetFeeCollector(newCollector);
     }
 
-    // ============ Integrator Admin Tests ============
+    // ============ Self-Sovereign Integrator Rotation (factory-level) ============
 
-    function test_SignalExecuteSetIntegrator_Success() public {
-        address newIntegrator = makeAddr("newIntegrator");
+    function test_RevertWhen_OwnerSignalsSetIntegrator() public {
+        // Generic signal path is closed for ACTION_SET_INTEGRATOR (and ACTION_SET_ANCILLARY).
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(newIntegrator)));
-        vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetIntegrator(newIntegrator);
-        assertEq(factory.integrator(), newIntegrator);
+        vm.expectRevert(LaunchFactory.OwnerCannotRotateRole.selector);
+        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(makeAddr("any"))));
     }
 
-    function test_SignalSetIntegrator_CanSetToZero() public {
-        uint256 t = block.timestamp;
-
-        address integ = makeAddr("integ");
+    function test_RevertWhen_OwnerSignalsSetAncillary() public {
+        bytes32 action = factory.ACTION_SET_ANCILLARY();
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(integ)));
-        t += TIMELOCK_DELAY;
-        vm.warp(t);
-        factory.executeSetIntegrator(integ);
-        assertEq(factory.integrator(), integ);
-
-        vm.prank(owner);
-        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(address(0))));
-        t += TIMELOCK_DELAY;
-        vm.warp(t);
-        factory.executeSetIntegrator(address(0));
-        assertEq(factory.integrator(), address(0));
+        vm.expectRevert(LaunchFactory.OwnerCannotRotateRole.selector);
+        factory.signalAction(action, keccak256(abi.encode(makeAddr("any"))));
     }
 
-    function test_RevertWhen_SignalSetIntegrator_NotOwner() public {
+    function test_RevertWhen_SignalChangeIntegrator_FromZero() public {
+        // Bootstrap caveat: if integrator was deployed as address(0), it cannot be reached.
+        // The default test factory has integrator==address(0).
+        vm.expectRevert(LaunchFactory.NotIntegrator.selector);
+        factory.signalChangeIntegratorAddress(makeAddr("any"));
+    }
+
+    /// @dev Self-sovereign integrator/ancillary rotations on the factory have a 14-day delay
+    ///      (overrides the default 7), mirroring the partner-controlled migration delay on
+    ///      `FeeRecipientCollector`.
+    uint256 internal constant ROLE_ROTATION_DELAY = 14 days;
+
+    function test_AncillaryRotation_SelfSovereign_Success() public {
+        // The test factory's ancillary is `ancillaryCollector`, which is owned by `owner`.
+        // For this test, we treat the collector address itself as the rotator (since
+        // `msg.sender == ancillary` is the protocol auth gate).
+        address newAncillary = address(new FeeRecipientCollector(owner));
+        vm.prank(address(ancillaryCollector));
+        factory.signalChangeAncillaryAddress(newAncillary);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        factory.executeChangeAncillaryAddress(newAncillary);
+
+        assertEq(factory.ancillary(), newAncillary, "ancillary should be rotated");
+    }
+
+    function test_RevertWhen_AncillaryRotation_DuplicateAddress() public {
+        vm.prank(address(ancillaryCollector));
+        factory.signalChangeAncillaryAddress(boardwalkFeeCollector);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        factory.executeChangeAncillaryAddress(boardwalkFeeCollector);
+    }
+
+    function test_RevertWhen_AncillaryRotation_DuplicateLpManager() public {
+        vm.prank(address(ancillaryCollector));
+        factory.signalChangeAncillaryAddress(boardwalkLPManager);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        factory.executeChangeAncillaryAddress(boardwalkLPManager);
+    }
+
+    function test_RevertWhen_ExecuteChangeAncillaryAddress_ZeroAddress() public {
+        vm.prank(address(ancillaryCollector));
+        factory.signalChangeAncillaryAddress(address(0));
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(LaunchFactory.ZeroAddress.selector);
+        factory.executeChangeAncillaryAddress(address(0));
+    }
+
+    /// @notice The 14-day delay on integrator/ancillary signals is strictly longer than the
+    ///         default 7-day timelock used for other actions.
+    function test_AncillaryRotation_DelayIs14Days() public {
+        address newAncillary = address(new FeeRecipientCollector(owner));
+        vm.prank(address(ancillaryCollector));
+        factory.signalChangeAncillaryAddress(newAncillary);
+
+        // At 7 days, execute should still revert.
+        vm.warp(block.timestamp + 7 days);
         vm.expectRevert();
-        vm.prank(makeAddr("notOwner"));
-        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(makeAddr("integ"))));
+        factory.executeChangeAncillaryAddress(newAncillary);
     }
 
-    // ============ Integrator Validation in _validateConfig ============
+    function test_RevertWhen_CancelChangeAncillaryAddress_NotAncillary() public {
+        vm.prank(address(ancillaryCollector));
+        factory.signalChangeAncillaryAddress(makeAddr("any"));
 
-    function test_RevertWhen_CreateLaunch_IntegratorMismatch_FactoryHasIntegrator() public {
-        address integ = makeAddr("integ");
+        vm.expectRevert(LaunchFactory.NotAncillary.selector);
+        vm.prank(issuer);
+        factory.cancelChangeAncillaryAddress();
+    }
+
+    function test_CancelChangeAncillaryAddress_ClearsPendingChange() public {
+        address newAncillary = address(new FeeRecipientCollector(owner));
+
+        vm.prank(address(ancillaryCollector));
+        factory.signalChangeAncillaryAddress(newAncillary);
+
+        vm.prank(address(ancillaryCollector));
+        factory.cancelChangeAncillaryAddress();
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY + 1);
+        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
+        factory.executeChangeAncillaryAddress(newAncillary);
+    }
+
+    // ============ Self-Sovereign Integrator Rotation (factory with integrator != 0) ============
+
+    /// @dev Deploys a factory with both integrator AND ancillary set so the integrator
+    ///      rotation flow can be exercised (the default factory has integrator==address(0),
+    ///      which makes the rotation gate `msg.sender == integrator` unreachable).
+    function _deployFactoryWithIntegrator()
+        internal
+        returns (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator, FeeRecipientCollector dualAncillary)
+    {
+        dualIntegrator = new FeeRecipientCollector(owner);
+        dualAncillary = new FeeRecipientCollector(owner);
+        // Base/Katana/Fraxtal-style schedule: 30/35/23/5/25/2 = 115.
+        LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
+            issuer: 30,
+            boardwalk: 35,
+            incentive: 23,
+            referrer: 5,
+            integrator: 25,
+            ancillary: 2,
+            total: 115
+        });
+        dualFactory = new LaunchFactory(
+            owner,
+            LaunchFactory.DeployParams({
+                tokenImpl: address(tokenTemplate),
+                feeDistributorImpl: address(feeDistributorTemplate),
+                presaleImpl: address(presaleTemplate),
+                vestingImpl: address(vestingTemplate),
+                lpStakingImpl: address(lpStakingTemplate),
+                bmx: address(bmx),
+                raiseToken: address(weth),
+                boardwalkRouter: boardwalkRouter,
+                boardwalkDexFactory: boardwalkDEXFactory,
+                boardwalkLpManager: boardwalkLPManager,
+                boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(dualIntegrator),
+                ancillary: address(dualAncillary),
+                bmxBurnAmount: DEFAULT_BMX_BURN,
+                graduationExpress: GRADUATION_EXPRESS,
+                graduationAdvanced: GRADUATION_ADVANCED,
+                expressDuration: EXPRESS_DURATION,
+                advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
+                feeBps: feeBps,
+                nftCollection: address(0),
+                memberLaunchDiscountBps: 0
+            })
+        );
+    }
+
+    function test_IntegratorRotation_SelfSovereign_Success() public {
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator,) = _deployFactoryWithIntegrator();
+        address newIntegrator = address(new FeeRecipientCollector(owner));
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.signalChangeIntegratorAddress(newIntegrator);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        dualFactory.executeChangeIntegratorAddress(newIntegrator);
+
+        assertEq(dualFactory.integrator(), newIntegrator, "integrator should be rotated");
+    }
+
+    function test_RevertWhen_ExecuteChangeIntegratorAddress_ZeroAddress() public {
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator,) = _deployFactoryWithIntegrator();
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.signalChangeIntegratorAddress(address(0));
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(LaunchFactory.ZeroAddress.selector);
+        dualFactory.executeChangeIntegratorAddress(address(0));
+    }
+
+    function test_RevertWhen_IntegratorRotation_DuplicateAncillary() public {
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator, FeeRecipientCollector dualAncillary) =
+            _deployFactoryWithIntegrator();
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.signalChangeIntegratorAddress(address(dualAncillary));
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        dualFactory.executeChangeIntegratorAddress(address(dualAncillary));
+    }
+
+    function test_RevertWhen_IntegratorRotation_DuplicateFeeCollector() public {
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator,) = _deployFactoryWithIntegrator();
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.signalChangeIntegratorAddress(boardwalkFeeCollector);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        dualFactory.executeChangeIntegratorAddress(boardwalkFeeCollector);
+    }
+
+    function test_RevertWhen_IntegratorRotation_DuplicateLpManager() public {
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator,) = _deployFactoryWithIntegrator();
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.signalChangeIntegratorAddress(boardwalkLPManager);
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        dualFactory.executeChangeIntegratorAddress(boardwalkLPManager);
+    }
+
+    function test_RevertWhen_CancelChangeIntegratorAddress_NotIntegrator() public {
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator,) = _deployFactoryWithIntegrator();
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.signalChangeIntegratorAddress(makeAddr("any"));
+
+        vm.expectRevert(LaunchFactory.NotIntegrator.selector);
+        vm.prank(issuer);
+        dualFactory.cancelChangeIntegratorAddress();
+    }
+
+    function test_CancelChangeIntegratorAddress_ClearsPendingChange() public {
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator,) = _deployFactoryWithIntegrator();
+        address newIntegrator = address(new FeeRecipientCollector(owner));
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.signalChangeIntegratorAddress(newIntegrator);
+
+        vm.prank(address(dualIntegrator));
+        dualFactory.cancelChangeIntegratorAddress();
+
+        vm.warp(block.timestamp + ROLE_ROTATION_DELAY + 1);
+        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
+        dualFactory.executeChangeIntegratorAddress(newIntegrator);
+    }
+
+    // ============ executeSetFeeCollector duplicate-role revert paths ============
+
+    function test_RevertWhen_ExecuteSetFeeCollector_DuplicateAncillary() public {
+        // Default factory has ancillary == ancillaryCollector. Try to set feeCollector to it.
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(integ)));
+        factory.signalAction(ACTION_SET_FEE_COLLECTOR, keccak256(abi.encode(address(ancillaryCollector))));
+
         vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetIntegrator(integ);
-
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
-        vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
-
-        LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
-        config.integrator = makeAddr("wrongIntegrator");
-
-        vm.prank(issuer);
-        vm.expectRevert(LaunchFactory.IntegratorMismatch.selector);
-        factory.createLaunch(config);
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        factory.executeSetFeeCollector(address(ancillaryCollector));
     }
 
-    function test_RevertWhen_CreateLaunch_IntegratorNotAllowedWithReferrer() public {
-        address integ = makeAddr("integ");
+    function test_RevertWhen_ExecuteSetFeeCollector_DuplicateLpManager() public {
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(integ)));
+        factory.signalAction(ACTION_SET_FEE_COLLECTOR, keccak256(abi.encode(boardwalkLPManager)));
+
         vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetIntegrator(integ);
-
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
-        vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
-
-        LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
-        config.integrator = integ;
-        config.referrer = referrer;
-
-        vm.prank(issuer);
-        vm.expectRevert(LaunchFactory.IntegratorNotAllowedWithReferrer.selector);
-        factory.createLaunch(config);
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        factory.executeSetFeeCollector(boardwalkLPManager);
     }
 
-    function test_RevertWhen_CreateLaunch_IntegratorMismatch_FactoryHasNoIntegrator() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
-        vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+    function test_RevertWhen_ExecuteSetFeeCollector_DuplicateIntegrator() public {
+        // Need a factory with non-zero integrator for this collision to be testable.
+        (LaunchFactory dualFactory, FeeRecipientCollector dualIntegrator,) = _deployFactoryWithIntegrator();
 
-        LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
-        config.integrator = makeAddr("someIntegrator");
-
-        vm.prank(issuer);
-        vm.expectRevert(LaunchFactory.IntegratorMismatch.selector);
-        factory.createLaunch(config);
-    }
-
-    function test_CreateLaunch_WithIntegrator_Success() public {
-        address integ = makeAddr("integ");
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_INTEGRATOR, keccak256(abi.encode(integ)));
+        dualFactory.signalAction(ACTION_SET_FEE_COLLECTOR, keccak256(abi.encode(address(dualIntegrator))));
+
         vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetIntegrator(integ);
-
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
-        vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
-
-        LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
-        config.integrator = integ;
-
-        vm.prank(issuer);
-        address tokenAddr = factory.createLaunch(config);
-        assertTrue(tokenAddr != address(0), "Launch with correct integrator should succeed");
+        vm.expectRevert(LaunchFactory.DuplicateRoleAddress.selector);
+        dualFactory.executeSetFeeCollector(address(dualIntegrator));
     }
 
     // ============ Coverage Gap Tests ============
@@ -2535,11 +2750,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: 1 hours, // Below MIN_ADVANCED_DURATION (2 days)
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0
@@ -2563,11 +2782,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: 30 days, // Above MAX_ADVANCED_DURATION (14 days)
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 0
@@ -2617,11 +2840,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(nft),
                 memberLaunchDiscountBps: 2500
@@ -2657,11 +2884,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(nft),
                 memberLaunchDiscountBps: 2500
@@ -2694,11 +2925,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(nft),
                 memberLaunchDiscountBps: 10_000
@@ -2729,11 +2964,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(0),
                 memberLaunchDiscountBps: 10_001
@@ -2802,11 +3041,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(badNft),
                 memberLaunchDiscountBps: 2500
@@ -2838,11 +3081,15 @@ contract LaunchFactoryTest is Test {
                 boardwalkDexFactory: boardwalkDEXFactory,
                 boardwalkLpManager: boardwalkLPManager,
                 boardwalkFeeCollector: boardwalkFeeCollector,
+                integrator: address(0),
+                ancillary: address(ancillaryCollector),
                 bmxBurnAmount: 0,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
                 advancedDuration: ADVANCED_DURATION,
+                antiWhaleTaxBps: 4000,
+                antiWhaleDuration: 90 minutes,
                 feeBps: defaultFeeBps,
                 nftCollection: address(nft),
                 memberLaunchDiscountBps: 2500

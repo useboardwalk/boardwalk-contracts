@@ -67,6 +67,7 @@ src/
     VestingStream.sol       linear vesting with 7-day cliff
     BoardwalkLPManager.sol  tax-exempt LP wrapper (RAISE_TOKEN pairs only)
     BoardwalkFeeCollector.sol protocol fee aggregation + 30/70 governance split
+    FeeRecipientCollector.sol partner-controlled per-role aggregator (integrator OR ancillary)
     BoostBurn.sol           community token ranking via BMX burn
   governance/                Base only
     GovernanceVoter.sol     weekly voting + execution + vault
