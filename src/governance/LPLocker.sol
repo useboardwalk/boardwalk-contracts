@@ -51,17 +51,6 @@ contract LPLocker {
         _registerLock(tokenId);
     }
 
-    function onERC721Received(
-        address,
-        address,
-        uint256 tokenId,
-        bytes calldata
-    ) external returns (bytes4) {
-        if (msg.sender != POSITION_MANAGER) revert NotAuthorized();
-        _registerLock(tokenId);
-        return this.onERC721Received.selector;
-    }
-
     /// @notice Harvest accrued v4 trading fees for a single locked position to the current treasury.
     function claimFees(
         uint256 tokenId,

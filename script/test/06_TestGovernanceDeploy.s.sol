@@ -84,8 +84,11 @@ contract TestGovernanceDeployScript is BaseTestScript {
             new ParticipationDistributor(bmx, address(governanceVoter));
         _recordTx("Deploy ParticipationDistributor");
 
-        // 4. Wire peers (one-time, validates bidirectional references)
-        governanceVoter.initializePeers(address(lpLocker), address(participationDistributor));
+        // 4. Wire peers (one-time, validates bidirectional references). The feeCollector in
+        //    a test deployment defaults to the OWNER so the script can later call depositRevenue
+        //    via the same EOA; override via FEE_COLLECTOR if testing a different wiring.
+        address feeCollector_ = vm.envOr("FEE_COLLECTOR", deployer);
+        governanceVoter.initializePeers(address(lpLocker), address(participationDistributor), feeCollector_);
         _recordTx("GovernanceVoter.initializePeers");
 
         vm.stopBroadcast();

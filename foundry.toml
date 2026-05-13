@@ -11,6 +11,7 @@ via_ir = true                    # Required for LaunchFactory (deep call stacks)
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "@uniswap/v4-periphery/=lib/v4-periphery/",
+    "@uniswap/v4-core/=lib/v4-periphery/lib/v4-core/",
 ]
 
 [fmt]

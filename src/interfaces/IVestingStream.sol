@@ -36,6 +36,9 @@ interface IVestingStream {
     function claimable(
         uint256 allocationId
     ) external view returns (uint256);
+    function totalVested(
+        uint256 allocationId
+    ) external view returns (uint256);
     function allocationCount() external view returns (uint256);
     function cliffEnd() external view returns (uint256);
     function vestingEnd() external view returns (uint256);

@@ -156,8 +156,12 @@ contract DryRunAll is Script {
         );
         console.log("ParticipationDistributor:", address(participationDistributor));
 
-        // Wire peers
-        governanceVoter.initializePeers(address(lpLocker), address(participationDistributor));
+        // Wire peers. feeCollector defaults to the deployer in a dry-run; override via env.
+        governanceVoter.initializePeers(
+            address(lpLocker),
+            address(participationDistributor),
+            vm.envOr("FEE_COLLECTOR", deployer)
+        );
         console.log("Peers initialized successfully");
 
         // Verify governance wiring

@@ -213,6 +213,12 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
             revert("Not implemented");
         }
 
+        function totalVested(
+            uint256
+        ) external pure override returns (uint256) {
+            revert("Not implemented");
+        }
+
         function allocationCount() external pure override returns (uint256) {
             revert("Not implemented");
         }

@@ -175,6 +175,13 @@ contract MockParticipationDistributorForVoter {
 
 contract MockV4PositionManagerForVoter {
     uint256 public nextTokenId = 1;
+
+    /// @dev Accepts the unlockData + deadline + msg.value paid by GovernanceVoter's mint flow.
+    ///      Real PM minting is exercised in the Base fork tests; this mock only verifies that
+    ///      GovernanceVoter calls into the PM correctly without reverting.
+    function modifyLiquidities(bytes calldata, uint256) external payable {}
+
+    receive() external payable {}
 }
 
 contract MockLPLockerForVoter {
@@ -209,6 +216,7 @@ contract GovernanceVoterTest is Test {
     address public treasury = makeAddr("treasury");
     address public fallbackTreasury = makeAddr("fallbackTreasury");
     address public protocolKeeper = makeAddr("protocolKeeper");
+    address public feeCollector = makeAddr("feeCollector");
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
     address public charlie = makeAddr("charlie");
@@ -226,7 +234,9 @@ contract GovernanceVoterTest is Test {
     event EpochExecuted(uint256 indexed epoch, uint8 option, uint256 raiseTokenAmount, bool forced, address destination);
     event GovernanceBurnChanged(uint256 oldAmount, uint256 newAmount);
     event FallbackTreasuryChanged(address oldAddress, address newAddress);
-    event PeersInitialized(address lpLocker, address participationDistributor);
+    event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
+    event RevenueDeposited(uint256 indexed epoch, uint256 amount);
+    event FeeCollectorChanged(address oldFeeCollector, address newFeeCollector);
 
     function setUp() public {
         epochZero = block.timestamp;
@@ -248,7 +258,7 @@ contract GovernanceVoterTest is Test {
 
         // Wire peers
         vm.prank(owner);
-        voter.initializePeers(address(mockLPLocker), address(mockParticipationDistributor));
+        voter.initializePeers(address(mockLPLocker), address(mockParticipationDistributor), feeCollector);
 
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
@@ -284,6 +294,19 @@ contract GovernanceVoterTest is Test {
         sbfBmx.setBalance(user, weight);
         stakedBmxTracker.setDepositBalance(user, address(bmx), weight);
         sbfBmx.setDepositBalance(user, bnBmx, weight / 10);
+    }
+
+    /// @dev Voter budget is sourced exclusively from `depositRevenue`. Mints the
+    ///      requested amount of raise token to the authorized depositor and calls depositRevenue.
+    ///      The deposit is attributed to whatever epoch is current at the moment of this call.
+    function _fundVoter(
+        uint256 amount
+    ) internal {
+        raiseToken.mint(feeCollector, amount);
+        vm.startPrank(feeCollector);
+        raiseToken.approve(address(voter), amount);
+        voter.depositRevenue(amount);
+        vm.stopPrank();
     }
 
     /// @dev Helper: finalize and execute epoch 0 as treasury (advance voting: epoch 0 always treasury)
@@ -323,12 +346,13 @@ contract GovernanceVoterTest is Test {
 
         vm.prank(owner);
         vm.expectEmit(true, true, true, true);
-        emit PeersInitialized(address(freshLocker), address(freshDist));
-        freshVoter.initializePeers(address(freshLocker), address(freshDist));
+        emit PeersInitialized(address(freshLocker), address(freshDist), feeCollector);
+        freshVoter.initializePeers(address(freshLocker), address(freshDist), feeCollector);
 
         assertTrue(freshVoter.peersInitialized());
         assertEq(freshVoter.lpLocker(), address(freshLocker));
         assertEq(freshVoter.participationDistributor(), address(freshDist));
+        assertEq(freshVoter.feeCollector(), feeCollector);
     }
 
     function test_RevertWhen_InitializePeers_Twice() public {
@@ -337,11 +361,11 @@ contract GovernanceVoterTest is Test {
         MockParticipationDistributorForVoter freshDist = new MockParticipationDistributorForVoter(address(freshVoter));
 
         vm.prank(owner);
-        freshVoter.initializePeers(address(freshLocker), address(freshDist));
+        freshVoter.initializePeers(address(freshLocker), address(freshDist), feeCollector);
 
         vm.prank(owner);
         vm.expectRevert(GovernanceVoter.PeersAlreadyInitialized.selector);
-        freshVoter.initializePeers(address(freshLocker), address(freshDist));
+        freshVoter.initializePeers(address(freshLocker), address(freshDist), feeCollector);
     }
 
     function test_RevertWhen_InitializePeers_WiringMismatch() public {
@@ -352,7 +376,7 @@ contract GovernanceVoterTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(GovernanceVoter.PeerWiringMismatch.selector);
-        freshVoter.initializePeers(address(badLocker), address(freshDist));
+        freshVoter.initializePeers(address(badLocker), address(freshDist), feeCollector);
     }
 
     function test_RevertWhen_Execute_PeersNotInitialized() public {
@@ -464,7 +488,7 @@ contract GovernanceVoterTest is Test {
         vm.prank(bob);
         voter.vote(2);
 
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -483,11 +507,11 @@ contract GovernanceVoterTest is Test {
         voter.vote(2);
 
         // Finalize and execute epoch 0 (always treasury)
-        raiseToken.mint(address(voter), 50e18);
+        _fundVoter(50e18);
         _finalizeAndExecuteEpochZero();
 
         // Add revenue for epoch 1
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
 
         // Finalize epoch 1 — should use epoch 0's votes (option 2)
         vm.warp(epochZero + 2 * EPOCH_DURATION);
@@ -512,6 +536,223 @@ contract GovernanceVoterTest is Test {
 
         GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(1);
         assertEq(info.winningOption, 1); // Treasury (quorum not met)
+    }
+
+    /// @notice quorum base is max(snapshotTotalWeight, liveSupply) — direction 1:
+    ///         liveSupply shrinks below snapshot, so quorum base = snapshot (the larger).
+    function test_QuorumBase_UsesSnapshot_WhenSupplyShrinks() public {
+        sbfBmx.setBalance(alice, 600e18);
+        stakedBmxTracker.setDepositBalance(alice, address(bmx), 600e18);
+        sbfBmx.setDepositBalance(alice, bnBmx, 60e18);
+        sbfBmx.setTotalSupply(1000e18);
+        vm.prank(alice);
+        voter.vote(2); // weight = 600e18, snapshotTotalWeight = 1000e18
+
+        sbfBmx.setTotalSupply(900e18); // shrink before finalize
+
+        _finalizeAndExecuteEpochZero();
+        vm.warp(epochZero + 2 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(1, type(uint256).max);
+
+        // max(1000, 900) = 1000. 600/1000 = 60% > 51% -> quorum met.
+        GovernanceVoter.EpochInfo memory info1 = voter.getEpochInfo(1);
+        assertEq(info1.winningOption, 2, "quorum met with snapshot as base (snapshot > liveSupply)");
+        // _determineWinner reads `epochInfoStorage[epoch - 1].snapshotTotalWeight`.
+        GovernanceVoter.EpochInfo memory info0 = voter.getEpochInfo(0);
+        assertEq(info0.snapshotTotalWeight, 1000e18, "epoch-0 snapshot (used by quorum) is 1000");
+    }
+
+    /// @notice quorum base is max(snapshotTotalWeight, liveSupply) — direction 2:
+    ///         liveSupply grows above snapshot, so quorum base = liveSupply (the larger).
+    ///         A first voter who deflated supply pre-snapshot can no longer manipulate quorum.
+    function test_QuorumBase_UsesLiveSupply_WhenSupplyGrows() public {
+        // Alice + bob with small weights; snapshot will be the smaller (vote-time) value.
+        sbfBmx.setBalance(alice, 200e18);
+        sbfBmx.setBalance(bob, 200e18);
+        sbfBmx.setBalance(charlie, 0);
+        stakedBmxTracker.setDepositBalance(alice, address(bmx), 200e18);
+        stakedBmxTracker.setDepositBalance(bob, address(bmx), 200e18);
+        sbfBmx.setDepositBalance(alice, bnBmx, 20e18);
+        sbfBmx.setDepositBalance(bob, bnBmx, 20e18);
+
+        sbfBmx.setTotalSupply(500e18);
+        vm.prank(alice);
+        voter.vote(2); // weight = 200, snapshot = 500
+        vm.prank(bob);
+        voter.vote(2); // weight = 200 -> totalVoteWeight = 400
+
+        sbfBmx.setTotalSupply(1500e18); // grow before finalize
+
+        _finalizeAndExecuteEpochZero();
+        vm.warp(epochZero + 2 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(1, type(uint256).max);
+
+        // max(500, 1500) = 1500. 400/1500 ≈ 26.7% < 51% -> quorum NOT met. winner = treasury.
+        GovernanceVoter.EpochInfo memory info1 = voter.getEpochInfo(1);
+        assertEq(
+            info1.winningOption,
+            voter.OPTION_TREASURY(),
+            "live > snapshot: quorum not met by under-snapshot votes"
+        );
+        GovernanceVoter.EpochInfo memory info0 = voter.getEpochInfo(0);
+        assertEq(info0.snapshotTotalWeight, 500e18, "epoch-0 snapshot (used by quorum) is 500");
+    }
+
+    /// @notice Votes for an option that is ineligible at finalize time must NOT
+    ///         contribute to quorum. Scenario: option 2 wins 3 consecutive
+    ///         epochs (becoming ineligible for the next), but the majority still voted for it
+    ///         during the cooldown-boundary epoch. those majority votes no longer
+    ///         satisfy quorum on behalf of the minority-supported option 3.
+    function test_QuorumExcludesIneligibleOptions() public {
+        sbfBmx.setTotalSupply(2000e18);
+        _finalizeAndExecuteEpochZero();
+
+        // Pattern: vote in epoch K -> finalize(K+1) reads those votes. We need option 2 to win
+        // finalize(2), (3), (4) -> 3 consecutive wins -> lastIneligibleEpoch[1] = 5. Then
+        // votes in epoch 4 (cast BEFORE finalize(4) flips ineligibility) determine finalize(5).
+        // At finalize(5), option 2 is now ineligible.
+
+        // ----- Epoch 1 votes drive finalize(2) -----
+        vm.warp(epochZero + EPOCH_DURATION);
+        _setupVoter(alice, 1000e18);
+        _setupVoter(bob, 500e18);
+        vm.prank(alice);
+        voter.vote(2);
+        vm.prank(bob);
+        voter.vote(2);
+        // finalize(1) uses epoch 0 (empty) -> treasury, count stays 0
+        vm.warp(epochZero + 2 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(1, type(uint256).max);
+        vm.prank(protocolKeeper);
+        voter.execute(1, 0, 0, block.timestamp);
+
+        // ----- Epoch 2 votes drive finalize(3) -----
+        _setupVoter(alice, 1000e18);
+        _setupVoter(bob, 500e18);
+        vm.prank(alice);
+        voter.vote(2);
+        vm.prank(bob);
+        voter.vote(2);
+        // finalize(2) reads epoch 1 votes for option 2 -> option 2 wins (#1)
+        vm.warp(epochZero + 3 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(2, type(uint256).max);
+        vm.prank(protocolKeeper);
+        voter.execute(2, 0, 0, block.timestamp);
+
+        // ----- Epoch 3 votes drive finalize(4) -----
+        _setupVoter(alice, 1000e18);
+        _setupVoter(bob, 500e18);
+        vm.prank(alice);
+        voter.vote(2);
+        vm.prank(bob);
+        voter.vote(2);
+        // finalize(3) reads epoch 2 votes for option 2 -> option 2 wins (#2)
+        vm.warp(epochZero + 4 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(3, type(uint256).max);
+        vm.prank(protocolKeeper);
+        voter.execute(3, 0, 0, block.timestamp);
+
+        // ----- Epoch 4 votes drive finalize(5). KEY epoch: majority + minority cast at the
+        // cooldown boundary. lastIneligibleEpoch[1] is still 0 right now (count=2 entering
+        // finalize(4); ineligibility is set only when count reaches 3 INSIDE finalize(4)).
+        _setupVoter(alice, 1000e18);
+        _setupVoter(bob, 500e18);
+        vm.prank(alice);
+        voter.vote(2); // majority for option 2 (1000)
+        vm.prank(bob);
+        voter.vote(2); // majority for option 2 (500)
+        _setupVoter(charlie, 200e18);
+        vm.prank(charlie);
+        voter.vote(3); // minority for option 3 (200)
+
+        // finalize(4) reads epoch 3 votes for option 2 -> option 2 wins (#3),
+        // lastIneligibleEpoch[1] = 5. After this call, option 2 is ineligible at epoch 5.
+        vm.warp(epochZero + 5 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(4, type(uint256).max);
+        vm.prank(protocolKeeper);
+        voter.execute(4, 0, 0, block.timestamp);
+
+        // Sanity: epoch 4's stored votes are intact (1700e18 totalVoteWeight); option 2 ineligible.
+        GovernanceVoter.EpochInfo memory info4 = voter.getEpochInfo(4);
+        assertEq(info4.totalVoteWeight, 1700e18, "epoch 4 totalVoteWeight = 1500 + 200 unchanged");
+        assertFalse(voter.isOptionEligible(2), "option 2 ineligible at epoch 5 after 3 wins");
+
+        // Finalize epoch 5 using epoch 4's votes (option 2 majority + option 3 minority).
+        // totalVoteWeight=1700, quorumBase=2000, 1700/2000=85% > 51% -> met.
+        //                     Option 2 filtered as ineligible; option 3 (200) wins by default.
+        // eligibleVoteWeight = option 3's 200 only.
+        //                     200/2000 = 10% < 51% -> quorum FAILS, winner = treasury.
+        vm.warp(epochZero + 6 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(5, type(uint256).max);
+
+        GovernanceVoter.EpochInfo memory info5 = voter.getEpochInfo(5);
+        assertEq(
+            info5.winningOption,
+            voter.OPTION_TREASURY(),
+            "minority eligibleVoteWeight fails quorum; winner = treasury"
+        );
+    }
+
+    /// @notice when no option is ineligible at finalize time,
+    ///         eligibleVoteWeight == totalVoteWeight and the prior quorum/winner logic
+    ///         is preserved.
+    function test_Quorum_AllOptionsEligible_BehavesAsBefore() public {
+        sbfBmx.setTotalSupply(2000e18);
+
+        // Epoch 0 votes: alice + bob for option 2 (1500 total, > 51% of 2000). No prior wins,
+        // no cooldown, all options eligible at finalize(1) time.
+        vm.prank(alice);
+        voter.vote(2);
+        vm.prank(bob);
+        voter.vote(2);
+
+        _finalizeAndExecuteEpochZero();
+        vm.warp(epochZero + 2 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(1, type(uint256).max);
+
+        // 1500 / 2000 = 75% > 51%: quorum met. Option 2 wins as before.
+        GovernanceVoter.EpochInfo memory info1 = voter.getEpochInfo(1);
+        assertEq(info1.winningOption, 2, "all-eligible regression: option 2 wins");
+        GovernanceVoter.EpochInfo memory info0 = voter.getEpochInfo(0);
+        assertEq(info0.totalVoteWeight, 1500e18, "all-eligible regression: vote-weight unchanged");
+    }
+
+    /// @notice accepted tradeoff — if supply genuinely shrinks between snapshot and
+    ///         finalize, quorum gets harder. Snapshot=1000, liveSupply=800, votes=480 (60% of
+    ///         live, only 48% of snapshot) ⇒ quorumBase = max(1000, 800) = 1000, quorum NOT met.
+    function test_Quorum_HarderWhenSupplyShrinksAfterSnapshot() public {
+        sbfBmx.setBalance(alice, 480e18);
+        sbfBmx.setBalance(bob, 0);
+        sbfBmx.setBalance(charlie, 0);
+        stakedBmxTracker.setDepositBalance(alice, address(bmx), 480e18);
+        sbfBmx.setDepositBalance(alice, bnBmx, 48e18);
+
+        sbfBmx.setTotalSupply(1000e18);
+        vm.prank(alice);
+        voter.vote(2); // weight = 480, snapshotTotalWeight = 1000
+
+        sbfBmx.setTotalSupply(800e18); // legitimate shrink (e.g. mass unstake)
+
+        _finalizeAndExecuteEpochZero();
+        vm.warp(epochZero + 2 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(1, type(uint256).max);
+
+        // 480 / max(1000, 800) = 48% < 51% -> NOT met
+        GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(1);
+        assertEq(
+            info.winningOption,
+            voter.OPTION_TREASURY(),
+            "accepted tradeoff: legitimate-shrink scenario falls below quorum"
+        );
     }
 
     function test_RevertWhen_Finalize_AlreadyFinalized() public {
@@ -541,11 +782,11 @@ contract GovernanceVoterTest is Test {
 
     function test_PerEpochBudget_OnlyNewRevenue() public {
         // Epoch 0: 50 WETH arrives
-        raiseToken.mint(address(voter), 50e18);
+        _fundVoter(50e18);
         _finalizeAndExecuteEpochZero();
 
         // Epoch 1: 100 more WETH arrives (total balance was 0 after execute, now 100)
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + 2 * EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(1, type(uint256).max);
@@ -555,7 +796,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_AccountedBudget_DecreasesOnExecute() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -569,7 +810,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_AccountedBudget_DecreasesOnForceExecute() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -585,7 +826,7 @@ contract GovernanceVoterTest is Test {
     // ============ Execution ============
 
     function test_Execute_Option1_Treasury() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -596,7 +837,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_Execute_OwnerCanExecute() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -609,7 +850,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_RevertWhen_Execute_NotKeeperOrOwner() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -626,7 +867,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_RevertWhen_Execute_AlreadyExecuted() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -639,12 +880,12 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_Execute_BudgetSnapshot_NotLiveBalance() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
 
-        raiseToken.mint(address(voter), 50e18);
+        _fundVoter(50e18);
         vm.prank(protocolKeeper);
         voter.execute(0, 0, 0, block.timestamp);
 
@@ -656,7 +897,7 @@ contract GovernanceVoterTest is Test {
 
     function test_Execute_SequentialEnforcement() public {
         // Finalize epoch 0
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -968,11 +1209,11 @@ contract GovernanceVoterTest is Test {
         voter.vote(option);
 
         // Finalize and execute epoch 0 (always treasury)
-        raiseToken.mint(address(voter), 10e18); // small amount for epoch 0
+        _fundVoter(10e18); // small amount for epoch 0
         _finalizeAndExecuteEpochZero();
 
         // Add budget for epoch 1
-        raiseToken.mint(address(voter), budgetAmount);
+        _fundVoter(budgetAmount);
 
         // Finalize epoch 1 (uses epoch 0 votes)
         vm.warp(epochZero + 2 * EPOCH_DURATION);
@@ -1016,7 +1257,7 @@ contract GovernanceVoterTest is Test {
 
     function test_Execute_Option1_TransfersToTreasury() public {
         // Epoch 0 always treasury, just test that
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -1134,11 +1375,13 @@ contract GovernanceVoterTest is Test {
     // ============ ForceMarkExecuted ============
 
     function test_ForceMarkExecuted_HappyPath() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
 
+        // the gate is measured from finalizedAt; finalize was at epochEnd here, so
+        // the windows happen to coincide.
         vm.warp(epochZero + EPOCH_DURATION + 14 days);
         voter.forceMarkExecuted(0);
 
@@ -1148,8 +1391,121 @@ contract GovernanceVoterTest is Test {
         assertEq(raiseToken.balanceOf(treasury), 0);
     }
 
+    /// @notice With a late finalize at epochEnd + 30 days, forceMarkExecuted is NOT
+    ///         immediately reachable — the FORCE_EXECUTE_DELAY (14d) is measured from the
+    ///         finalize timestamp, not from epochEnd. The keeper retains a full 14-day window
+    ///         from finalize to call execute before the fallback path opens.
+    function test_ForceMarkExecuted_RespectsFinalizedAt() public {
+        _fundVoter(100e18);
+
+        // finalize is delayed 30 days past epoch end.
+        vm.warp(epochZero + EPOCH_DURATION + 30 days);
+        vm.prank(protocolKeeper);
+        voter.finalize(0, type(uint256).max);
+        uint256 finalizeTs = block.timestamp;
+
+        // Attempting forceMarkExecuted right after finalize must revert: under the OLD gate
+        // (`epochEnd + 14d`) this would have succeeded immediately because we are already
+        // well past epochEnd + 14d. The gate (`finalizedAt + 14d`) still hasn't been reached.
+        vm.expectRevert(GovernanceVoter.EpochNotOverdue.selector);
+        voter.forceMarkExecuted(0);
+
+        // Warp to finalizedAt + 14d -> succeeds.
+        vm.warp(finalizeTs + 14 days);
+        voter.forceMarkExecuted(0);
+
+        GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(0);
+        assertTrue(info.executed, "force succeeded at finalizedAt + 14d");
+        assertEq(raiseToken.balanceOf(fallbackTreasury), 100e18);
+    }
+
+    // ============ Revenue depositor rotation ============
+
+    /// @notice The fee collector MUST be rotatable so a `BoardwalkFeeCollector.MIGRATE_COLLECTOR`
+    ///         can be paired with a matching rotation here; otherwise the new collector would
+    ///         be unable to call `depositRevenue` and governance revenue would brick.
+    function test_ExecuteSetFeeCollector_RotatesAndEmits() public {
+        address newFeeCollector = makeAddr("newFeeCollector");
+        bytes32 action = voter.ACTION_SET_FEE_COLLECTOR();
+
+        // Owner signals + waits + executes (default 7-day timelock).
+        vm.prank(owner);
+        voter.signalAction(action, keccak256(abi.encode(newFeeCollector)));
+        vm.warp(block.timestamp + 7 days);
+
+        vm.expectEmit(true, true, true, true);
+        emit FeeCollectorChanged(feeCollector, newFeeCollector);
+        voter.executeSetFeeCollector(newFeeCollector);
+
+        assertEq(voter.feeCollector(), newFeeCollector, "feeCollector rotated");
+
+        // The new fee collector can now call depositRevenue; the OLD one cannot.
+        uint256 currentEp = voter.currentEpoch();
+        raiseToken.mint(newFeeCollector, 10e18);
+        vm.startPrank(newFeeCollector);
+        raiseToken.approve(address(voter), 10e18);
+        voter.depositRevenue(10e18);
+        vm.stopPrank();
+        assertEq(voter.epochRevenue(currentEp), 10e18, "new fee collector credited");
+
+        raiseToken.mint(feeCollector, 1e18);
+        vm.startPrank(feeCollector);
+        raiseToken.approve(address(voter), 1e18);
+        vm.expectRevert(GovernanceVoter.NotFeeCollector.selector);
+        voter.depositRevenue(1e18);
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_ExecuteSetFeeCollector_ZeroAddress() public {
+        bytes32 action = voter.ACTION_SET_FEE_COLLECTOR();
+        vm.prank(owner);
+        voter.signalAction(action, keccak256(abi.encode(address(0))));
+        vm.warp(block.timestamp + 7 days);
+
+        vm.expectRevert(GovernanceVoter.ZeroAddress.selector);
+        voter.executeSetFeeCollector(address(0));
+    }
+
+    function test_RevertWhen_ExecuteSetFeeCollector_BeforeDelay() public {
+        address newFeeCollector = makeAddr("newFeeCollector");
+        bytes32 action = voter.ACTION_SET_FEE_COLLECTOR();
+        vm.prank(owner);
+        voter.signalAction(action, keccak256(abi.encode(newFeeCollector)));
+
+        vm.expectRevert();
+        voter.executeSetFeeCollector(newFeeCollector);
+    }
+
+    /// @notice finalizedAt is stored when finalize completes.
+    function test_FinalizedAt_StoredOnFinalize() public {
+        _fundVoter(100e18);
+        vm.warp(epochZero + EPOCH_DURATION + 3 hours);
+        vm.prank(protocolKeeper);
+        voter.finalize(0, type(uint256).max);
+
+        assertEq(voter.finalizedAt(0), block.timestamp, "finalizedAt[epoch] == finalize-call timestamp");
+    }
+
+    /// @notice an on-time finalize still has a 14-day window for the
+    ///         keeper to execute; after that window the fallback path becomes reachable.
+    function test_ForceMarkExecuted_OnTimeFinalize_StillAvailableAfter14d() public {
+        _fundVoter(100e18);
+        vm.warp(epochZero + EPOCH_DURATION + 1);
+        vm.prank(protocolKeeper);
+        voter.finalize(0, type(uint256).max);
+
+        // Before 14d -> reverts.
+        vm.warp(block.timestamp + 14 days - 1);
+        vm.expectRevert(GovernanceVoter.EpochNotOverdue.selector);
+        voter.forceMarkExecuted(0);
+
+        // At 14d -> succeeds.
+        vm.warp(block.timestamp + 1);
+        voter.forceMarkExecuted(0);
+    }
+
     function test_RevertWhen_ForceMarkExecuted_NotOverdue() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -1164,7 +1520,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_RevertWhen_ForceMarkExecuted_AlreadyExecuted() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -1177,7 +1533,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_ForceMarkExecuted_UnblocksSequentialFinalization() public {
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -1279,7 +1635,7 @@ contract GovernanceVoterTest is Test {
 
         _finalizeAndExecuteEpochZero();
 
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + 2 * EPOCH_DURATION);
 
         // Process one voter per batch (3 voters in epoch 0 to validate)
@@ -1365,7 +1721,7 @@ contract GovernanceVoterTest is Test {
         voter.finalize(2, type(uint256).max);
     }
 
-    function test_BatchFinalize_QuorumUsesMinSupply() public {
+    function test_BatchFinalize_QuorumStillMetAfterSupplyShrink() public {
         // Vote in epoch 0
         sbfBmx.setTotalSupply(2000e18);
         vm.prank(alice);
@@ -1382,9 +1738,10 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         voter.finalize(1, type(uint256).max);
 
-        // min(2000e18, 1000e18) = 1000e18, totalVoteWeight=1500e18 → 150% > 51%
+        // quorumBase = max(2000e18, 1000e18) = 2000e18.
+        // totalVoteWeight = 1500e18 → 1500/2000 = 75% > 51% → quorum met.
         GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(1);
-        assertEq(info.winningOption, 2); // Quorum met with reduced base
+        assertEq(info.winningOption, 2); // Quorum met with snapshot as base
     }
 
     function test_BatchFinalize_PartialUnstake_ReducesProportionally() public {
@@ -1399,7 +1756,7 @@ contract GovernanceVoterTest is Test {
 
         _finalizeAndExecuteEpochZero();
 
-        raiseToken.mint(address(voter), 100e18);
+        _fundVoter(100e18);
         vm.warp(epochZero + 2 * EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(1, type(uint256).max);
@@ -1454,7 +1811,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_ForceMarkExecuted_EmitsForcedTrue() public {
-        raiseToken.mint(address(voter), 50e18);
+        _fundVoter(50e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -1466,7 +1823,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_Execute_EmitsForcedFalse() public {
-        raiseToken.mint(address(voter), 75e18);
+        _fundVoter(75e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -1507,18 +1864,24 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_ForceMarkExecuted_UsesUpdatedFallbackTreasury() public {
+        // Deposit BEFORE the 21-day timelock warp so the revenue is credited to epoch 0; 
+        // the budget is sourced from epochRevenue[epoch], not the live WETH balance.
+        _fundVoter(80e18);
+
         address newFallback = makeAddr("newFallback");
         vm.prank(owner);
         voter.signalAction(ACTION_SET_FALLBACK_TREASURY, keccak256(abi.encode(newFallback)));
         vm.warp(block.timestamp + 21 days);
         voter.executeSetFallbackTreasury(newFallback);
 
-        raiseToken.mint(address(voter), 80e18);
-        vm.warp(epochZero + EPOCH_DURATION);
+        // We're now past epoch 0; finalize it directly (it's overdue).
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
 
-        vm.warp(epochZero + EPOCH_DURATION + 14 days);
+        // FORCE_EXECUTE_DELAY is measured from `finalizedAt`, not from epoch end.
+        // The finalize call above was at block.timestamp == (epochZero + 21d), so the gate is
+        // 14d later.
+        vm.warp(block.timestamp + 14 days);
         voter.forceMarkExecuted(0);
 
         assertEq(raiseToken.balanceOf(newFallback), 80e18);
@@ -1526,7 +1889,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_Execute_TreasuryOption_StillRoutesToTreasury() public {
-        raiseToken.mint(address(voter), 60e18);
+        _fundVoter(60e18);
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(protocolKeeper);
         voter.finalize(0, type(uint256).max);
@@ -1564,10 +1927,17 @@ contract GovernanceVoterTest is Test {
     function test_RevertWhen_InitializePeers_ZeroAddress() public {
         GovernanceVoter freshVoter = new GovernanceVoter(owner, _defaultParams());
         MockLPLockerForVoter freshLocker = new MockLPLockerForVoter(address(freshVoter));
+        MockParticipationDistributorForVoter freshDist = new MockParticipationDistributorForVoter(address(freshVoter));
 
+        // ZeroAddress when participation distributor is 0
         vm.prank(owner);
         vm.expectRevert(GovernanceVoter.ZeroAddress.selector);
-        freshVoter.initializePeers(address(freshLocker), address(0));
+        freshVoter.initializePeers(address(freshLocker), address(0), feeCollector);
+
+        // ZeroAddress when revenue depositor is 0
+        vm.prank(owner);
+        vm.expectRevert(GovernanceVoter.ZeroAddress.selector);
+        freshVoter.initializePeers(address(freshLocker), address(freshDist), address(0));
     }
 
     function test_Finalize_QuorumJustBelowThreshold_DefaultsTreasury() public {
@@ -1603,12 +1973,111 @@ contract GovernanceVoterTest is Test {
         assertEq(voter.accountedBudget(), 0);
     }
 
-    function test_MultiEpochCatchup_KeeperOfflineThenSequentialFinalizeExecute() public {
-        // Keeper returns after several epochs; catch-up can be done sequentially in one block.
-        vm.warp(epochZero + 4 * EPOCH_DURATION);
+    // ============ per-epoch revenue accounting via depositRevenue ============
 
+    /// @notice Deposits credit the CURRENT epoch's bucket and emit RevenueDeposited(epoch).
+    function test_DepositRevenue_AttributesToCurrentEpoch() public {
+        // Epoch 0 deposit
+        uint256 amount0 = 30e18;
+        raiseToken.mint(feeCollector, amount0);
+        vm.startPrank(feeCollector);
+        raiseToken.approve(address(voter), amount0);
+        vm.expectEmit(true, true, true, true);
+        emit RevenueDeposited(0, amount0);
+        voter.depositRevenue(amount0);
+        vm.stopPrank();
+        assertEq(voter.epochRevenue(0), amount0, "epoch 0 bucket");
+
+        // Warp into epoch 2 and deposit; epoch 1 should remain zero.
+        vm.warp(epochZero + 2 * EPOCH_DURATION);
+        uint256 amount2 = 70e18;
+        raiseToken.mint(feeCollector, amount2);
+        vm.startPrank(feeCollector);
+        raiseToken.approve(address(voter), amount2);
+        voter.depositRevenue(amount2);
+        vm.stopPrank();
+        assertEq(voter.epochRevenue(0), amount0, "epoch 0 bucket unchanged");
+        assertEq(voter.epochRevenue(1), 0, "epoch 1 bucket stayed zero");
+        assertEq(voter.epochRevenue(2), amount2, "epoch 2 bucket");
+    }
+
+    /// @notice A non-authorized caller cannot deposit (depositor is bound once at initializePeers).
+    function test_DepositRevenue_RevertsForUnauthorized() public {
+        raiseToken.mint(alice, 10e18);
+        vm.prank(alice);
+        raiseToken.approve(address(voter), 10e18);
+        vm.expectRevert(GovernanceVoter.NotFeeCollector.selector);
+        vm.prank(alice);
+        voter.depositRevenue(10e18);
+    }
+
+    /// @notice Revenue deposited during each of epochs 1, 2, 3 funds those epochs' own
+    ///         budgets — a delayed finalize at epoch 4 does NOT absorb any of it into a single
+    ///         epoch. Each epoch is finalized AND executed before the next finalize
+    function test_Finalize_UsesEpochRevenue_DelayedFinalize() public {
+        // Deposit different amounts inside each of epochs 1, 2, 3.
+        uint256[3] memory amounts = [uint256(100e18), uint256(200e18), uint256(300e18)];
+        _finalizeAndExecuteEpochZero(); // epoch 0 -> treasury, currentEpoch is now 1
+
+        for (uint256 i = 0; i < 3; i++) {
+            uint256 amt = amounts[i];
+            raiseToken.mint(feeCollector, amt);
+            vm.startPrank(feeCollector);
+            raiseToken.approve(address(voter), amt);
+            voter.depositRevenue(amt);
+            vm.stopPrank();
+            assertEq(voter.epochRevenue(i + 1), amt, "deposit hits the current epoch");
+            // Advance to the next epoch (don't finalize yet — that's the "delayed" part).
+            vm.warp(epochZero + (i + 2) * EPOCH_DURATION);
+        }
+
+        // Now (currentEpoch = 4) walk through finalize+execute in order. finalize requires the
+        // previous epoch to be finalized AND executed, hence the execute step inside the loop.
+        for (uint256 i = 0; i < 3; i++) {
+            vm.prank(protocolKeeper);
+            voter.finalize(i + 1, type(uint256).max);
+            GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(i + 1);
+            assertEq(info.budget, amounts[i], "finalize takes only this epoch's revenue");
+            vm.prank(protocolKeeper);
+            voter.execute(i + 1, 0, 0, block.timestamp);
+        }
+    }
+
+    /// @notice Epochs with no deposit have a zero budget at finalize time (no balance leak).
+    function test_Finalize_NoRevenueDeposited_BudgetIsZero() public {
+        vm.warp(epochZero + EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(0, type(uint256).max);
+        GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(0);
+        assertEq(info.budget, 0, "no deposit -> zero budget");
+    }
+
+    /// @notice AccountedBudget still decrements on execute under the new
+    ///         deposit-driven accounting (it is now incremented from e.budget in finalize).
+    function test_AccountedBudget_DecrementsOnExecute() public {
+        _fundVoter(100e18);
+        vm.warp(epochZero + EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        voter.finalize(0, type(uint256).max);
+        assertEq(voter.accountedBudget(), 100e18, "accountedBudget = e.budget after finalize");
+
+        vm.prank(protocolKeeper);
+        voter.execute(0, 0, 0, block.timestamp);
+        assertEq(voter.accountedBudget(), 0, "accountedBudget cleared on execute");
+    }
+
+    function test_MultiEpochCatchup_KeeperOfflineThenSequentialFinalizeExecute() public {
+        // Revenue must be deposited DURING each epoch to attribute to that epoch.
+        // We simulate steady-state fee collection across epochs 0..3 by depositing inside each
+        // before the keeper comes back online and catches up at epoch 4.
         for (uint256 i = 0; i < 4; i++) {
-            raiseToken.mint(address(voter), 10e18);
+            vm.warp(epochZero + i * EPOCH_DURATION);
+            _fundVoter(10e18);
+        }
+
+        // Keeper returns at epoch 4; catch-up can be done sequentially in one block.
+        vm.warp(epochZero + 4 * EPOCH_DURATION);
+        for (uint256 i = 0; i < 4; i++) {
             vm.prank(protocolKeeper);
             voter.finalize(i, type(uint256).max);
             vm.prank(protocolKeeper);

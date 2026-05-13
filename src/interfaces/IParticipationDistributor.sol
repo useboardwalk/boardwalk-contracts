@@ -24,8 +24,11 @@ interface IParticipationDistributor {
     function claim(
         uint256 epoch
     ) external;
+    function claimAll(
+        uint256[] calldata epochs
+    ) external;
     function claimable(
         uint256 epoch,
         address user
-    ) external view returns (uint256);
+    ) external view returns (uint256 totalAllocation, uint256 claimableAmount);
 }

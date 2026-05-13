@@ -7,6 +7,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {Timelocked} from "../base/Timelocked.sol";
 import {IFeeDistributor} from "../interfaces/IFeeDistributor.sol";
 import {IDEXRouter} from "../interfaces/IDEXRouter.sol";
+import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 
 /// @title BoardwalkFeeCollector
 /// @notice Singleton aggregator for the boardwalk share of every launch's tax. Keeper batch-swaps
@@ -37,6 +38,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     error NotKeeper();
     error ArrayLengthMismatch();
     error ZeroAddress();
+    error RaiseTokenMismatch();
 
     event FeesReceived(address indexed token, uint256 amount);
     event FeesSwapped(address indexed token, uint256 tokenAmount, uint256 raiseTokenAmount);
@@ -129,7 +131,10 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
                 uint256 governanceAmount = totalTokenReceived * GOVERNANCE_BPS / BPS_DENOMINATOR;
                 uint256 treasuryAmount = totalTokenReceived - governanceAmount;
                 IERC20(RAISE_TOKEN).safeTransfer(treasury, treasuryAmount);
-                IERC20(RAISE_TOKEN).safeTransfer(_governanceVault, governanceAmount);
+                if (IERC20(RAISE_TOKEN).allowance(address(this), _governanceVault) < governanceAmount) {
+                    IERC20(RAISE_TOKEN).forceApprove(_governanceVault, type(uint256).max);
+                }
+                IGovernanceVoter(_governanceVault).depositRevenue(governanceAmount);
             } else {
                 IERC20(RAISE_TOKEN).safeTransfer(treasury, totalTokenReceived);
             }
@@ -162,6 +167,9 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         address _vault
     ) external {
         _execute(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(_vault)));
+        if (_vault != address(0) && IGovernanceVoter(_vault).WETH() != RAISE_TOKEN) {
+            revert RaiseTokenMismatch();
+        }
         emit GovernanceVaultUpdated(_vault);
         governanceVault = _vault;
     }

@@ -40,6 +40,8 @@ interface IGovernanceVoter {
     error PeersAlreadyInitialized();
     error PeerWiringMismatch();
     error PeersNotInitialized();
+    error OnlyWETH();
+    error NotFeeCollector();
 
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
@@ -50,11 +52,20 @@ interface IGovernanceVoter {
     event TreasuryChanged(address oldAddress, address newAddress);
     event KeeperChanged(address oldKeeper, address newKeeper);
     event FallbackTreasuryChanged(address oldAddress, address newAddress);
-    event PeersInitialized(address lpLocker, address participationDistributor);
+    event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
+    event RevenueDeposited(uint256 indexed epoch, uint256 amount);
+    event FeeCollectorChanged(address oldFeeCollector, address newFeeCollector);
 
     function initializePeers(
         address _lpLocker,
-        address _participationDistributor
+        address _participationDistributor,
+        address _feeCollector
+    ) external;
+    function depositRevenue(
+        uint256 amount
+    ) external;
+    function executeSetFeeCollector(
+        address newFeeCollector
     ) external;
     function vote(
         uint8 option
@@ -89,4 +100,18 @@ interface IGovernanceVoter {
     function getEpochVoters(
         uint256 epoch
     ) external view returns (address[] memory);
+    function WETH() external view returns (address);
+    function feeCollector() external view returns (address);
+    function epochRevenue(
+        uint256 epoch
+    ) external view returns (uint256);
+    function finalizedAt(
+        uint256 epoch
+    ) external view returns (uint256);
+
+    function ACTION_SET_GOVERNANCE_BURN() external view returns (bytes32);
+    function ACTION_SET_TREASURY() external view returns (bytes32);
+    function ACTION_SET_FALLBACK_TREASURY() external view returns (bytes32);
+    function ACTION_SET_KEEPER() external view returns (bytes32);
+    function ACTION_SET_FEE_COLLECTOR() external view returns (bytes32);
 }

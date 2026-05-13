@@ -3,6 +3,7 @@ pragma solidity =0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
+import {IParticipationDistributor} from "src/interfaces/IParticipationDistributor.sol";
 import {IGovernanceVoter} from "src/interfaces/IGovernanceVoter.sol";
 
 contract MockBMXToken {
@@ -106,7 +107,7 @@ contract ParticipationDistributorTest is Test {
     }
 
     function test_RevertWhen_CreateStream_NotVoter() public {
-        vm.expectRevert(ParticipationDistributor.NotGovernanceVoter.selector);
+        vm.expectRevert(IParticipationDistributor.NotGovernanceVoter.selector);
         vm.prank(alice);
         distributor.createStream(1, 100e18);
     }
@@ -117,7 +118,7 @@ contract ParticipationDistributorTest is Test {
         bmx.mint(address(mockVoter), 100e18);
         vm.startPrank(address(mockVoter));
         bmx.approve(address(distributor), 100e18);
-        vm.expectRevert(ParticipationDistributor.StreamAlreadyExists.selector);
+        vm.expectRevert(IParticipationDistributor.StreamAlreadyExists.selector);
         distributor.createStream(1, 100e18);
         vm.stopPrank();
     }
@@ -178,7 +179,7 @@ contract ParticipationDistributorTest is Test {
         address nobody = makeAddr("nobody");
 
         vm.warp(block.timestamp + 7 days);
-        vm.expectRevert(ParticipationDistributor.NothingToClaim.selector);
+        vm.expectRevert(IParticipationDistributor.NothingToClaim.selector);
         vm.prank(nobody);
         distributor.claim(1);
     }
@@ -186,7 +187,7 @@ contract ParticipationDistributorTest is Test {
     function test_RevertWhen_Claim_NothingToClaim() public {
         _createStream(1, 100e18);
 
-        vm.expectRevert(ParticipationDistributor.NothingToClaim.selector);
+        vm.expectRevert(IParticipationDistributor.NothingToClaim.selector);
         vm.prank(alice);
         distributor.claim(1);
     }
@@ -243,7 +244,7 @@ contract ParticipationDistributorTest is Test {
         vm.prank(alice);
         distributor.claim(1);
 
-        vm.expectRevert(ParticipationDistributor.NothingToClaim.selector);
+        vm.expectRevert(IParticipationDistributor.NothingToClaim.selector);
         vm.prank(alice);
         distributor.claim(1);
     }
@@ -333,7 +334,7 @@ contract ParticipationDistributorTest is Test {
         uint256[] memory epochs = new uint256[](1);
         epochs[0] = 1;
 
-        vm.expectRevert(ParticipationDistributor.NothingToClaim.selector);
+        vm.expectRevert(IParticipationDistributor.NothingToClaim.selector);
         vm.prank(nobody);
         distributor.claimAll(epochs);
     }
@@ -341,7 +342,7 @@ contract ParticipationDistributorTest is Test {
     function test_ClaimAll_EmptyArray() public {
         uint256[] memory epochs = new uint256[](0);
 
-        vm.expectRevert(ParticipationDistributor.NothingToClaim.selector);
+        vm.expectRevert(IParticipationDistributor.NothingToClaim.selector);
         vm.prank(alice);
         distributor.claimAll(epochs);
     }
@@ -406,5 +407,23 @@ contract ParticipationDistributorTest is Test {
         (uint256 alloc, uint256 claimableAmt) = distributor.claimable(6, alice);
         assertEq(alloc, 0);
         assertEq(claimableAmt, 0);
+    }
+
+    /// @notice Verify the interface declares the (totalAllocation, claimableAmount) tuple. A
+    ///         caller dispatching through `IParticipationDistributor` must be able to destructure
+    ///         both return values exactly the same way the implementation returns them.
+    function test_Interface_ClaimableTuple() public {
+        _createStream(1, 100e18);
+
+        vm.warp(block.timestamp + 1 days);
+
+        IParticipationDistributor iface = IParticipationDistributor(address(distributor));
+        (uint256 totalAllocation, uint256 claimableAmount) = iface.claimable(1, alice);
+
+        uint256 expectedAllocation = 100e18 * 700e18 / 1000e18;
+        uint256 expectedClaimable = expectedAllocation * 1 days / 7 days;
+
+        assertEq(totalAllocation, expectedAllocation, "interface return[0] should be totalAllocation");
+        assertEq(claimableAmount, expectedClaimable, "interface return[1] should be claimableAmount");
     }
 }

@@ -6,6 +6,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
+import {ActionConstants} from "@uniswap/v4-periphery/src/libraries/ActionConstants.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {Timelocked} from "../base/Timelocked.sol";
 import {IRewardTracker} from "../interfaces/IRewardTracker.sol";
 import {IParticipationDistributor} from "../interfaces/IParticipationDistributor.sol";
@@ -37,6 +40,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     bytes32 public constant ACTION_SET_TREASURY = keccak256("SET_TREASURY");
     bytes32 public constant ACTION_SET_FALLBACK_TREASURY = keccak256("SET_FALLBACK_TREASURY");
     bytes32 public constant ACTION_SET_KEEPER = keccak256("SET_KEEPER");
+    bytes32 public constant ACTION_SET_FEE_COLLECTOR = keccak256("SET_FEE_COLLECTOR");
 
     uint8 public constant OPTION_TREASURY = 1;
     uint8 public constant OPTION_BUY_BURN_BMX = 2;
@@ -45,7 +49,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     uint8 private constant NUM_OPTIONS = 4;
 
     bytes1 private constant UR_V4_SWAP = 0x10;
-    bytes1 private constant UR_V4_POSITION_MANAGER_CALL = 0x14;
 
     IRewardTracker public immutable SBF_BMX;
     IRewardTracker public immutable STAKED_BMX_TRACKER;
@@ -81,15 +84,19 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     address public treasury;
     address public keeper;
     address public fallbackTreasury;
+    uint256 public governanceBurnAmount;
 
     address public lpLocker;
     address public participationDistributor;
+    address public feeCollector;
     bool public peersInitialized;
+
+    mapping(uint256 => uint256) public epochRevenue;
+    mapping(uint256 => uint256) public finalizedAt;
 
     /// @notice Sum of budgets for finalized-but-not-executed epochs.
     uint256 public accountedBudget;
 
-    uint256 public governanceBurnAmount;
     mapping(uint256 => EpochInfo) public epochInfoStorage;
     mapping(uint256 => mapping(address => UserVote)) public userVotes;
     uint256[4] public consecutiveWinCount;
@@ -123,6 +130,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     error PeersAlreadyInitialized();
     error PeerWiringMismatch();
     error PeersNotInitialized();
+    error NotFeeCollector();
 
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
@@ -133,7 +141,9 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     event TreasuryChanged(address oldAddress, address newAddress);
     event KeeperChanged(address oldKeeper, address newKeeper);
     event FallbackTreasuryChanged(address oldAddress, address newAddress);
-    event PeersInitialized(address lpLocker, address participationDistributor);
+    event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
+    event RevenueDeposited(uint256 indexed epoch, uint256 amount);
+    event FeeCollectorChanged(address oldFeeCollector, address newFeeCollector);
 
     struct DeployParams {
         address sbfBmx;
@@ -197,18 +207,34 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     /// @notice Wire peer contracts. One-shot after deployment; both peers must point back at this contract.
     function initializePeers(
         address _lpLocker,
-        address _participationDistributor
+        address _participationDistributor,
+        address _feeCollector
     ) external onlyOwner {
         if (peersInitialized) revert PeersAlreadyInitialized();
-        if (_lpLocker == address(0) || _participationDistributor == address(0)) revert ZeroAddress();
+        if (_lpLocker == address(0) || _participationDistributor == address(0) || _feeCollector == address(0)) {
+            revert ZeroAddress();
+        }
         if (ILPLocker(_lpLocker).GOVERNANCE_VOTER() != address(this)) revert PeerWiringMismatch();
         if (IParticipationDistributor(_participationDistributor).GOVERNANCE_VOTER() != address(this)) {
             revert PeerWiringMismatch();
         }
         lpLocker = _lpLocker;
         participationDistributor = _participationDistributor;
+        feeCollector = _feeCollector;
         peersInitialized = true;
-        emit PeersInitialized(_lpLocker, _participationDistributor);
+        emit PeersInitialized(_lpLocker, _participationDistributor, _feeCollector);
+    }
+
+    /// @notice Pull `amount` WETH from `feeCollector` and credit it to the current epoch's
+    ///         revenue bucket. Caller must have pre-approved this contract for `amount`.
+    function depositRevenue(
+        uint256 amount
+    ) external {
+        if (msg.sender != feeCollector) revert NotFeeCollector();
+        IERC20(WETH).safeTransferFrom(msg.sender, address(this), amount);
+        uint256 e = currentEpoch();
+        epochRevenue[e] += amount;
+        emit RevenueDeposited(e, amount);
     }
 
     /// @notice Cast a vote for the current epoch. Advance voting: vote in epoch N directs fees for epoch N+1.
@@ -277,10 +303,9 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
             finalizationInProgress = true;
             finalizingEpoch = epoch;
 
-            // Budget = only new revenue since the last finalize consumed it.
-            uint256 currentBalance = IERC20(WETH).balanceOf(address(this));
-            e.budget = currentBalance - accountedBudget;
-            accountedBudget = currentBalance;
+            // Budget = WETH deposited during this epoch's window. Set once on first batch.
+            e.budget = epochRevenue[epoch];
+            accountedBudget += e.budget;
         } else {
             if (finalizingEpoch != epoch) revert WrongFinalizeEpoch();
         }
@@ -295,6 +320,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         (uint8 winner, bool quorumMet) = _determineWinner(epoch);
         e.winningOption = winner;
         e.finalized = true;
+        // `forceMarkExecuted` measures FORCE_EXECUTE_DELAY from this timestamp.
+        finalizedAt[epoch] = block.timestamp;
 
         _primeEpoch(epoch + 1);
 
@@ -343,8 +370,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
     }
 
-    /// @notice Deadlock resolver. After FORCE_EXECUTE_DELAY past epoch end, anyone can mark a stuck
-    ///         epoch as executed and route its budget to `fallbackTreasury`.
+    /// @notice Deadlock resolver. After `FORCE_EXECUTE_DELAY` past finalize, anyone can mark a
+    ///         stuck epoch as executed and route its budget to `fallbackTreasury`.
     function forceMarkExecuted(
         uint256 epoch
     ) external {
@@ -352,8 +379,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         if (!e.finalized) revert EpochNotFinalized();
         if (e.executed) revert EpochAlreadyExecuted();
 
-        uint256 epochEnd = EPOCH_ZERO + (epoch + 1) * EPOCH_DURATION;
-        if (block.timestamp < epochEnd + FORCE_EXECUTE_DELAY) revert EpochNotOverdue();
+        if (block.timestamp < finalizedAt[epoch] + FORCE_EXECUTE_DELAY) revert EpochNotOverdue();
 
         e.executed = true;
         uint256 amount = e.budget;
@@ -437,6 +463,15 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         keeper = _keeper;
     }
 
+    /// @notice Rotate the `feeCollector` address authorized to call `depositRevenue`.
+    function executeSetFeeCollector(
+        address _newFeeCollector
+    ) external {
+        _executeNonZeroAddress(ACTION_SET_FEE_COLLECTOR, _newFeeCollector);
+        emit FeeCollectorChanged(feeCollector, _newFeeCollector);
+        feeCollector = _newFeeCollector;
+    }
+
     function executeSetFallbackTreasury(
         address _fallbackTreasury
     ) external {
@@ -462,13 +497,31 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
         EpochInfo storage votingEpoch = epochInfoStorage[epoch - 1];
 
-        // Quorum base = min(snapshot, liveSupply). Prevents inflating quorum by deflating supply
-        //               between snapshot and finalize; supply increases only make quorum easier.
-        uint256 liveSupply = SBF_BMX.totalSupply();
-        uint256 quorumBase = votingEpoch.snapshotTotalWeight < liveSupply ? votingEpoch.snapshotTotalWeight : liveSupply;
+        // Sum eligible-only weight and pick the plurality winner. Ineligible options'
+        // weights are excluded from `eligibleVoteWeight` so they can't satisfy quorum on
+        // behalf of an eligible minority.
+        uint256 highestWeight;
+        uint256 eligibleVoteWeight;
+        for (uint8 i = 0; i < NUM_OPTIONS;) {
+            if (_isOptionEligible(i + 1, epoch)) {
+                uint256 w = votingEpoch.optionWeights[i];
+                eligibleVoteWeight += w;
+                if (w > highestWeight) {
+                    highestWeight = w;
+                    winner = i + 1;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
 
-        quorumMet = quorumBase > 0 && votingEpoch.snapshotSet && votingEpoch.totalVoteWeight > 0
-            && votingEpoch.totalVoteWeight * BPS_DENOMINATOR >= quorumBase * QUORUM_BPS;
+        // Quorum base = max(snapshot, liveSupply).
+        uint256 liveSupply = SBF_BMX.totalSupply();
+        uint256 quorumBase = votingEpoch.snapshotTotalWeight > liveSupply ? votingEpoch.snapshotTotalWeight : liveSupply;
+
+        quorumMet = quorumBase > 0 && votingEpoch.snapshotSet && eligibleVoteWeight > 0
+            && eligibleVoteWeight * BPS_DENOMINATOR >= quorumBase * QUORUM_BPS;
 
         if (!quorumMet) {
             for (uint8 i = 0; i < NUM_OPTIONS;) {
@@ -478,17 +531,6 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
                 }
             }
             return (OPTION_TREASURY, false);
-        }
-
-        uint256 highestWeight;
-        for (uint8 i = 0; i < NUM_OPTIONS;) {
-            if (_isOptionEligible(i + 1, epoch) && votingEpoch.optionWeights[i] > highestWeight) {
-                highestWeight = votingEpoch.optionWeights[i];
-                winner = i + 1;
-            }
-            unchecked {
-                ++i;
-            }
         }
 
         if (winner > 0) {
@@ -619,8 +661,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         IERC20(BMX).safeTransfer(DEAD_ADDRESS, bmxReceived);
     }
 
-    /// @dev Action path: MINT_POSITION + SETTLE_PAIR + SWEEP. The WETH half is unwrapped and the
-    ///      LP position is minted with native ETH; SWEEP recovers residual ETH.
+    /// @dev Mints an ETH/BMX v4 LP position by calling PositionManager directly.
     function _executeBuyBurnLp(
         uint256 raiseAmount,
         uint256 amountOutMin,
@@ -632,37 +673,39 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         uint256 bmxReceived = _swapRaiseTokenForBmx(halfForBmx, amountOutMin, address(this), deadline);
         uint256 tokenId = IV4PositionManager(V4_POSITION_MANAGER).nextTokenId();
 
-        IERC20(BMX).safeTransfer(UNIVERSAL_ROUTER, bmxReceived);
+        IERC20(BMX).safeTransfer(V4_POSITION_MANAGER, bmxReceived);
         IWETH(WETH).withdraw(halfForEth);
 
-        bytes memory mintActions =
-            abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP));
-        bytes[] memory mintParams = new bytes[](3);
+        bytes memory mintActions = abi.encodePacked(
+            uint8(Actions.MINT_POSITION),
+            uint8(Actions.SETTLE),
+            uint8(Actions.SETTLE),
+            uint8(Actions.SWEEP),
+            uint8(Actions.SWEEP)
+        );
+        bytes[] memory mintParams = new bytes[](5);
         mintParams[0] = abi.encode(
             address(0),
             BMX,
             POOL_FEE,
             POOL_TICK_SPACING,
             POOL_HOOKS,
-            int24(-887220),
-            int24(887220),
+            TickMath.minUsableTick(POOL_TICK_SPACING),
+            TickMath.maxUsableTick(POOL_TICK_SPACING),
             liquidity,
             halfForEth.toUint128(),
             bmxReceived.toUint128(),
             lpLocker,
             ""
         );
-        mintParams[1] = abi.encode(address(0), BMX);
-        mintParams[2] = abi.encode(address(0), address(this));
+        mintParams[1] = abi.encode(Currency.wrap(address(0)), ActionConstants.OPEN_DELTA, false);
+        mintParams[2] = abi.encode(Currency.wrap(BMX), ActionConstants.OPEN_DELTA, false);
+        mintParams[3] = abi.encode(Currency.wrap(address(0)), address(this));
+        mintParams[4] = abi.encode(Currency.wrap(BMX), address(this));
 
-        bytes memory pmCalldata =
-            abi.encodeCall(IV4PositionManager.modifyLiquidities, (abi.encode(mintActions, mintParams), deadline));
-
-        bytes memory commands = abi.encodePacked(UR_V4_POSITION_MANAGER_CALL);
-        bytes[] memory inputs = new bytes[](1);
-        inputs[0] = abi.encode(pmCalldata);
-
-        IUniversalRouter(UNIVERSAL_ROUTER).execute{value: halfForEth}(commands, inputs, deadline);
+        IV4PositionManager(V4_POSITION_MANAGER).modifyLiquidities{value: halfForEth}(
+            abi.encode(mintActions, mintParams), deadline
+        );
 
         ILPLocker(lpLocker).lockPosition(tokenId);
 

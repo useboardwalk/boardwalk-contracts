@@ -55,6 +55,7 @@ contract LPStakingTest is Test {
     event Claimed(address indexed user, uint256 amount);
     event VestingDistributed(uint256 amount);
     event FeesReceived(uint256 amount);
+    event FeesLost(uint256 amount);
     event EpochAdvanced(uint256 epochStart, uint256 epochFees, uint256 feeRate);
 
     // ============ Setup ============
@@ -475,8 +476,11 @@ contract LPStakingTest is Test {
     // ============ notifyFees ============
 
     function test_notifyFees_OnlyFeeDistributor() public {
-        deal(address(rewardToken), feeDistributor, 100e18);
+        // a staker must exist or notifyFees burns to DEAD. Stake first so we
+        // exercise the happy path that emits FeesReceived and increments pendingEpochFees.
+        _stakeAlice(1000e18);
 
+        deal(address(rewardToken), feeDistributor, 100e18);
         vm.startPrank(feeDistributor);
         rewardToken.approve(address(lpStaking), 100e18);
         vm.expectEmit(true, false, false, true);
@@ -498,8 +502,10 @@ contract LPStakingTest is Test {
     }
 
     function test_notifyFees_AddsToPendingNotCurrent() public {
-        deal(address(rewardToken), feeDistributor, 200e18);
+        // with stakers present, fees accumulate to pendingEpochFees as before.
+        _stakeAlice(1000e18);
 
+        deal(address(rewardToken), feeDistributor, 200e18);
         vm.startPrank(feeDistributor);
         rewardToken.approve(address(lpStaking), 200e18);
         lpStaking.notifyFees(100e18);
@@ -780,18 +786,43 @@ contract LPStakingTest is Test {
         assertEq(lpStaking.pendingRewards(alice), 0, "No pending after joining zero-staker period");
     }
 
-    function test_ZeroStakerPeriods_FeesLost() public {
-        // No stakers, fees accumulate but are lost when epoch advances
+    /// @notice when fees arrive while there are zero stakers, they are burned to
+    ///         `DEAD_ADDRESS` immediately (emitting `FeesLost`) instead of accruing to
+    ///         `pendingEpochFees`. This closes the path where the first staker
+    ///         after dormancy could harvest all accumulated zero-staker fees as a windfall.
+    function test_NotifyFees_ZeroStakers_BurnsToDead() public {
         vm.warp(seedTime + VESTING_DELAY);
 
+        uint256 deadBefore = rewardToken.balanceOf(address(0x000000000000000000000000000000000000dEaD));
+
+        _mintAndApproveRewardForFees(100e18);
+        vm.expectEmit(true, false, false, true);
+        emit FeesLost(100e18);
+        vm.prank(feeDistributor);
+        lpStaking.notifyFees(100e18);
+
+        assertEq(lpStaking.pendingEpochFees(), 0, "pendingEpochFees should stay zero");
+        assertEq(lpStaking.currentEpochFees(), 0, "currentEpochFees should stay zero");
+        assertEq(
+            rewardToken.balanceOf(address(0x000000000000000000000000000000000000dEaD)) - deadBefore,
+            100e18,
+            "DEAD should receive the burned fees"
+        );
+    }
+
+    /// @notice zero-staker fees burned to DEAD ⇒ a
+    ///         first staker arriving after the dormancy window can NOT harvest those fees.
+    function test_FirstStakerAfterZeroStaker_DoesNotInheritFees() public {
+        vm.warp(seedTime + VESTING_DELAY);
+
+        // Step 1: fees arrive while totalWeight == 0 → burned to DEAD.
         _mintAndApproveRewardForFees(100e18);
         vm.prank(feeDistributor);
         lpStaking.notifyFees(100e18);
 
-        // Warp past epoch end with no stakers
+        // Step 2: warp past the epoch boundary and have a fresh staker enter.
         vm.warp(block.timestamp + EPOCH_DURATION + 1);
 
-        // Alice stakes - triggers epoch advance during zero-staker period
         uint256 stakeAmount = 1000e18;
         deal(address(lpToken), alice, stakeAmount);
         vm.startPrank(alice);
@@ -799,12 +830,12 @@ contract LPStakingTest is Test {
         lpStaking.stake(stakeAmount);
         vm.stopPrank();
 
-        // Epoch should have advanced, fees promoted to current
-        assertEq(lpStaking.currentEpochFees(), 100e18, "Previous pending should become current");
-        // But accRewardPerWeight should be 0 — no rewards distributed during zero-staker period
-        assertEq(lpStaking.accRewardPerWeight(), 0, "Fees should be lost when no stakers during epoch");
-        // Alice has 0 pending right after staking
-        assertEq(lpStaking.pendingRewards(alice), 0, "No pending for alice right after staking");
+        // Step 3: state remains clean — no fees promoted from the dormancy window, no rewards
+        // accrued. Alice cannot windfall the 100e18 that arrived before she staked.
+        assertEq(lpStaking.currentEpochFees(), 0, "no fees were promoted to current");
+        assertEq(lpStaking.pendingEpochFees(), 0, "no fees were left pending");
+        assertEq(lpStaking.accRewardPerWeight(), 0, "no reward accumulator advance");
+        assertEq(lpStaking.pendingRewards(alice), 0, "first staker harvests nothing");
     }
 
     // ============ Multiplier Points ============
@@ -1254,6 +1285,19 @@ contract LPStakingTest is Test {
         rewardToken.mint(feeDistributor, amount);
         vm.prank(feeDistributor);
         rewardToken.approve(address(lpStaking), amount);
+    }
+
+    /// @dev Convenience helper: stakes `amount` of lpToken as alice so subsequent notifyFees
+    ///      calls land in the happy path (totalWeight > 0). the zero-staker path
+    ///      burns to DEAD; many tests need a staker pre-populated to exercise pending accrual.
+    function _stakeAlice(
+        uint256 amount
+    ) internal {
+        deal(address(lpToken), alice, amount);
+        vm.startPrank(alice);
+        lpToken.approve(address(lpStaking), amount);
+        lpStaking.stake(amount);
+        vm.stopPrank();
     }
 
     // ================================================================

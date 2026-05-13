@@ -12,7 +12,8 @@ import {ParticipationDistributor} from "src/governance/ParticipationDistributor.
 ///         After deployment, call BoardwalkFeeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, ...)
 ///         followed by executeSetGovernanceVault after the 7-day timelock.
 ///
-/// @dev Required env: DEPLOYER_PRIVATE_KEY, OWNER, KEEPER
+/// @dev Required env: DEPLOYER_PRIVATE_KEY, OWNER, KEEPER, FEE_COLLECTOR (BoardwalkFeeCollector
+///      address — bound as the revenue depositor when peers are wired).
 contract DeployGovernance is Script {
     address internal constant BASE_WETH = 0x4200000000000000000000000000000000000006;
     address internal constant BASE_SBF_BMX = 0x38E5be3501687500E6338217276069d16178077E;
@@ -80,9 +81,11 @@ contract DeployGovernance is Script {
         );
         console.log("ParticipationDistributor deployed to:", address(participationDistributor));
 
-        // 4. Wire peers (one-time, validates bidirectional references)
-        governanceVoter.initializePeers(address(lpLocker), address(participationDistributor));
-        console.log("Peers initialized successfully");
+        // 4. Wire peers (one-time, validates bidirectional references). The revenue depositor is
+        //    BoardwalkFeeCollector; it is the only contract authorized to call depositRevenue.
+        address feeCollector = vm.envAddress("FEE_COLLECTOR");
+        governanceVoter.initializePeers(address(lpLocker), address(participationDistributor), feeCollector);
+        console.log("Peers initialized successfully (feeCollector =", feeCollector, ")");
 
         console.log("");
         console.log("Next steps:");

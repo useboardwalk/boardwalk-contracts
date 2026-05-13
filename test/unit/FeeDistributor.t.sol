@@ -139,6 +139,28 @@ contract MockFeeCollector is IBoardwalkFeeCollector {
         revert("Not implemented");
     }
 
+    function executeSetGovernanceVault(
+        address
+    ) external pure override {
+        revert("Not implemented");
+    }
+
+    function ACTION_SET_TREASURY() external pure override returns (bytes32) {
+        return keccak256("SET_TREASURY");
+    }
+
+    function ACTION_SET_KEEPER() external pure override returns (bytes32) {
+        return keccak256("SET_KEEPER");
+    }
+
+    function ACTION_MIGRATE_COLLECTOR() external pure override returns (bytes32) {
+        return keccak256("MIGRATE_COLLECTOR");
+    }
+
+    function ACTION_SET_GOVERNANCE_VAULT() external pure override returns (bytes32) {
+        return keccak256("SET_GOVERNANCE_VAULT");
+    }
+
     function governanceVault() external pure override returns (address) {
         revert("Not implemented");
     }

@@ -14,6 +14,7 @@ interface ILPStaking {
     event Claimed(address indexed user, uint256 amount);
     event VestingDistributed(uint256 amount);
     event FeesReceived(uint256 amount);
+    event FeesLost(uint256 amount);
     event EpochAdvanced(uint256 epochStart, uint256 epochFees, uint256 feeRate);
 
     function setInitializer(

@@ -104,7 +104,7 @@ contract MockPositionManager {
 }
 
 /// @title GovernanceIntegrationTest
-/// @notice Cross-contract integration tests for the governance system post-Apex audit fixes.
+/// @notice Cross-contract integration tests for the governance system.
 ///         Tests full epoch lifecycles, advance voting model, peer initialization, dormant epochs,
 ///         Option 3/4 flows, collector migration, and sequential enforcement.
 contract GovernanceIntegrationTest is Test {
@@ -122,6 +122,7 @@ contract GovernanceIntegrationTest is Test {
     address public treasury = makeAddr("treasury");
     address public fallbackTreasury = makeAddr("fallbackTreasury");
     address public keeper = makeAddr("keeper");
+    address public feeCollector = makeAddr("feeCollector");
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
     address public charlie = makeAddr("charlie");
@@ -138,7 +139,7 @@ contract GovernanceIntegrationTest is Test {
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
     event EpochExecuted(uint256 indexed epoch, uint8 option, uint256 raiseTokenAmount, bool forced, address destination);
-    event PeersInitialized(address lpLocker, address participationDistributor);
+    event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
 
     function setUp() public {
         epochZero = block.timestamp;
@@ -180,7 +181,7 @@ contract GovernanceIntegrationTest is Test {
 
         // Initialize peers
         vm.prank(owner);
-        voter.initializePeers(address(locker), address(participationDistributor));
+        voter.initializePeers(address(locker), address(participationDistributor), feeCollector);
 
         // Setup default voter weights
         _setupVoter(alice, 1000e18);
@@ -210,8 +211,15 @@ contract GovernanceIntegrationTest is Test {
         voter.vote(option);
     }
 
+    /// @dev Funding the voter requires the depositor to call `depositRevenue`,
+    ///      which credits the current epoch's `epochRevenue`. Bare WETH transfers no longer
+    ///      contribute to `e.budget` at finalize time.
     function _fundVoter(uint256 amount) internal {
-        raiseToken.mint(address(voter), amount);
+        raiseToken.mint(feeCollector, amount);
+        vm.startPrank(feeCollector);
+        raiseToken.approve(address(voter), amount);
+        voter.depositRevenue(amount);
+        vm.stopPrank();
     }
 
     // ============ Test 1: Full Epoch Lifecycle (3+ epochs, advance voting) ============
@@ -356,7 +364,7 @@ contract GovernanceIntegrationTest is Test {
     function test_PeerInitialization_CannotReinitialize() public {
         vm.prank(owner);
         vm.expectRevert(GovernanceVoter.PeersAlreadyInitialized.selector);
-        voter.initializePeers(address(locker), address(participationDistributor));
+        voter.initializePeers(address(locker), address(participationDistributor), feeCollector);
     }
 
     function test_PeerInitialization_RejectsWrongWiring() public {
@@ -382,7 +390,7 @@ contract GovernanceIntegrationTest is Test {
         // locker.GOVERNANCE_VOTER() == address(voter), not voter2 -> mismatch
         vm.prank(owner);
         vm.expectRevert(GovernanceVoter.PeerWiringMismatch.selector);
-        voter2.initializePeers(address(locker), address(participationDistributor));
+        voter2.initializePeers(address(locker), address(participationDistributor), feeCollector);
     }
 
     // ============ Test 4: Option 4 (Participation) Flow — Cross-Contract ============

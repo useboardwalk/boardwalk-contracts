@@ -357,6 +357,14 @@ contract BoardwalkLPManagerTest is Test {
         );
     }
 
+    /// @notice addLiquidity accepts any LP recipient. The former enforcement
+    ///         of `to == msg.sender` was reverted because it didn't actually
+    ///         close the tax-bypass route — Alice can always transfer the LP token to Bob
+    ///         after minting it to herself, so the cross-recipient restriction added complexity
+    ///         without security benefit. The protocol's design intent is "LP mint/burn is
+    ///         tax-free; swaps on the pair always pay full tax". Two parties (or one party
+    ///         splitting across wallets) coordinating an LP-route transfer is documented as
+    ///         an accepted tradeoff in SPEC.md.
     function test_addLiquidity_LPTokensToDifferentRecipient() public {
         uint256 amountA = 100e18;
         uint256 amountB = 200e18;
@@ -369,7 +377,10 @@ contract BoardwalkLPManagerTest is Test {
         tokenB.approve(address(lpManager), amountB);
         vm.stopPrank();
 
-        // LP tokens go to bob, not alice
+        address pairAddr = factory.getPair(address(tokenA), address(tokenB));
+        if (pairAddr == address(0)) pairAddr = factory.createPair(address(tokenA), address(tokenB));
+        uint256 bobLpBefore = IERC20(pairAddr).balanceOf(bob);
+
         vm.prank(alice);
         (,, uint256 liquidity) = lpManager.addLiquidity(
             address(tokenA),
@@ -378,13 +389,12 @@ contract BoardwalkLPManagerTest is Test {
             amountB,
             MIN_AMOUNT,
             MIN_AMOUNT,
-            bob, // LP tokens to bob
+            bob,
             DEADLINE
         );
 
-        address pairAddr = factory.getPair(address(tokenA), address(tokenB));
-        assertEq(MockUniswapV2Pair(pairAddr).balanceOf(bob), liquidity, "Bob should receive LP tokens");
-        assertEq(MockUniswapV2Pair(pairAddr).balanceOf(alice), 0, "Alice should not receive LP tokens");
+        assertGt(liquidity, 0, "liquidity should be minted");
+        assertEq(IERC20(pairAddr).balanceOf(bob) - bobLpBefore, liquidity, "LP should land at bob");
     }
 
     function test_RevertWhen_addLiquidity_ZeroAmountA() public {

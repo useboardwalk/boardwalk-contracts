@@ -916,6 +916,9 @@ contract BoardwalkFeeCollectorTest is Test {
 
     function test_SignalExecuteSetGovernanceVault_Success() public {
         address vault = makeAddr("vault");
+        // executeSetGovernanceVault checks IGovernanceVoter(vault).WETH() == RAISE_TOKEN.
+        vm.mockCall(vault, abi.encodeWithSignature("WETH()"), abi.encode(address(weth)));
+
         vm.prank(owner);
         feeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(vault)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
@@ -944,6 +947,8 @@ contract BoardwalkFeeCollectorTest is Test {
 
     function test_ExecuteSetGovernanceVault_CanSetToZero() public {
         address vault = makeAddr("vault");
+        // executeSetGovernanceVault checks IGovernanceVoter(vault).WETH() == RAISE_TOKEN.
+        vm.mockCall(vault, abi.encodeWithSignature("WETH()"), abi.encode(address(weth)));
 
         vm.warp(1000);
         vm.prank(owner);
@@ -952,6 +957,7 @@ contract BoardwalkFeeCollectorTest is Test {
         feeCollector.executeSetGovernanceVault(vault);
         assertEq(feeCollector.governanceVault(), vault);
 
+        // address(0) is exempt from the WETH-compat guard (the if-branch is gated on != 0).
         vm.warp(1000 + TIMELOCK_DELAY + 100);
         vm.prank(owner);
         feeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(address(0))));
@@ -962,6 +968,11 @@ contract BoardwalkFeeCollectorTest is Test {
 
     function test_SwapToRaiseToken_SplitsWhenGovernanceVaultSet() public {
         address vault = makeAddr("vault");
+        // the vault must answer WETH() with the collector's RAISE_TOKEN, and accept
+        // a depositRevenue(amount) call. We mock both so the test can use a plain EOA address.
+        vm.mockCall(vault, abi.encodeWithSignature("WETH()"), abi.encode(address(weth)));
+        vm.mockCall(vault, abi.encodeWithSignature("depositRevenue(uint256)"), "");
+
         vm.prank(owner);
         feeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(vault)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
@@ -983,8 +994,24 @@ contract BoardwalkFeeCollectorTest is Test {
         uint256 governanceExpected = total * 7000 / 10000;
         uint256 treasuryExpected = total - governanceExpected;
 
-        assertEq(weth.balanceOf(treasury), treasuryExpected);
-        assertEq(weth.balanceOf(vault), governanceExpected);
+        // Treasury receives its share via safeTransfer (same as before), but the
+        // governance share is forwarded through the vault's depositRevenue. The mocked vault
+        // ignores the call, so the WETH stays in the collector with a standing max-allowance.
+        // We assert treasury and the leftover-at-collector branch instead of the vault balance.
+        assertEq(weth.balanceOf(treasury), treasuryExpected, "treasury portion routed normally");
+        assertEq(
+            weth.balanceOf(address(feeCollector)),
+            governanceExpected,
+            "governance share held pending depositRevenue's transferFrom (mocked, so no pull)"
+        );
+        // Lazy-max-approve: the collector tops the allowance to type(uint256).max once and
+        // leaves it there for subsequent swaps (saves ~5k gas per call). Safe because the
+        // voter's only `safeTransferFrom` path is `depositRevenue`, gated by msg.sender check.
+        assertEq(
+            weth.allowance(address(feeCollector), vault),
+            type(uint256).max,
+            "collector approved the vault to max for ongoing depositRevenue calls"
+        );
     }
 
     function test_SwapToRaiseToken_FullToTreasuryWhenNoVault() public {

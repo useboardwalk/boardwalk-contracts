@@ -7,6 +7,7 @@ interface IBoardwalkFeeCollector {
     error NotKeeper();
     error ArrayLengthMismatch();
     error ZeroAddress();
+    error RaiseTokenMismatch();
 
     event FeesReceived(address indexed token, uint256 amount);
     event FeesSwapped(address indexed token, uint256 tokenAmount, uint256 raiseTokenAmount);
@@ -28,6 +29,9 @@ interface IBoardwalkFeeCollector {
         address newCollector,
         address[] calldata distributors
     ) external;
+    function executeSetGovernanceVault(
+        address vault
+    ) external;
     function accumulatedFees(
         address token
     ) external view returns (uint256);
@@ -37,4 +41,9 @@ interface IBoardwalkFeeCollector {
     function keeper() external view returns (address);
     function governanceVault() external view returns (address);
     function GOVERNANCE_BPS() external view returns (uint256);
+
+    function ACTION_SET_TREASURY() external view returns (bytes32);
+    function ACTION_SET_KEEPER() external view returns (bytes32);
+    function ACTION_MIGRATE_COLLECTOR() external view returns (bytes32);
+    function ACTION_SET_GOVERNANCE_VAULT() external view returns (bytes32);
 }

@@ -17,8 +17,8 @@ import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 /// Optional env:
 ///   VOTER_PRIVATE_KEY — sbfBMX holder key for voting (defaults to DEPLOYER_PRIVATE_KEY)
 ///   VOTE_OPTION       — 1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation (default: 1)
-///   REVENUE_AMOUNT    — WETH to send as simulated revenue before finalize (default: 0.0001 ether)
-///   ACTION            — "vote", "finalize", "execute", "forceExecute", or "all" (default: "all")
+///   REVENUE_AMOUNT    — WETH to deposit via depositRevenue (default: 0.0001 ether)
+///   ACTION            — "vote", "deposit", "finalize", "execute", "forceExecute", or "all" (default: "all")
 contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
     function _scriptName() internal pure override returns (string memory) {
         return "TestGovernanceVoteAndExecuteScript";
@@ -79,12 +79,17 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
             vm.stopBroadcast();
         }
 
-        // ---- Finalize + Execute (uses keeper key) ----
+        // ---- Deposit / Finalize / Execute (uses keeper key) ----
         if (
-            actionHash == keccak256("finalize") || actionHash == keccak256("execute")
-                || actionHash == keccak256("all") || actionHash == keccak256("forceExecute")
+            actionHash == keccak256("deposit") || actionHash == keccak256("finalize")
+                || actionHash == keccak256("execute") || actionHash == keccak256("all")
+                || actionHash == keccak256("forceExecute")
         ) {
             vm.startBroadcast(keeperPrivateKey);
+
+            if (actionHash == keccak256("deposit") || actionHash == keccak256("all")) {
+                _doDeposit(voter, revenueAmount);
+            }
 
             if (actionHash == keccak256("finalize") || actionHash == keccak256("all")) {
                 _doFinalize(voter, revenueAmount, currentEpoch);
@@ -140,6 +145,46 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
         _recordTx(string.concat("GovernanceVoter.vote(", vm.toString(option), ")"));
     }
 
+    /// @notice Deposit `amount` WETH into the voter via `depositRevenue`. Credits
+    ///         `epochRevenue[currentEpoch()]` — operators should call this WHILE the target epoch
+    ///         is live, before block.timestamp moves into the next epoch.
+    function _doDeposit(GovernanceVoter voter, uint256 amount) internal {
+        if (amount == 0) {
+            console.log("REVENUE_AMOUNT is 0, skipping deposit");
+            return;
+        }
+
+        address weth = voter.WETH();
+        address depositor = voter.feeCollector();
+
+        if (msg.sender != depositor) {
+            console.log("WARNING: broadcasting key is NOT the feeCollector; cannot call depositRevenue.");
+            console.log("  broadcaster:", msg.sender);
+            console.log("  expected   :", depositor);
+            console.log("  Skipping the deposit. Set DEPLOYER_PRIVATE_KEY to the depositor's key, or");
+            console.log("  have the depositor independently call depositRevenue.");
+            return;
+        }
+
+        if (IERC20(weth).balanceOf(msg.sender) < amount) {
+            console.log("WARNING: depositor has insufficient WETH balance for the requested deposit.");
+            console.log("  required:", amount);
+            console.log("  balance :", IERC20(weth).balanceOf(msg.sender));
+            return;
+        }
+
+        uint256 epochCredited = voter.currentEpoch();
+        uint256 priorEpochRevenue = voter.epochRevenue(epochCredited);
+
+        IERC20(weth).approve(address(voter), amount);
+        voter.depositRevenue(amount);
+        _recordTx("GovernanceVoter.depositRevenue(...)");
+
+        console.log("Deposited", amount, "WETH via depositRevenue");
+        console.log("  Credited to epochRevenue[", epochCredited, "]");
+        console.log("  epochRevenue[", epochCredited, "] now:", priorEpochRevenue + amount);
+    }
+
     function _doFinalize(GovernanceVoter voter, uint256 revenueAmount, uint256 currentEpoch) internal {
         uint256 epochToFinalize = type(uint256).max;
         for (uint256 i = 0; i < currentEpoch; i++) {
@@ -156,17 +201,25 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
             return;
         }
 
-        // Send revenue to voter before finalizing
-        address weth = voter.WETH();
-        uint256 existingBalance = IERC20(weth).balanceOf(address(voter));
-        if (revenueAmount > 0 && IERC20(weth).balanceOf(msg.sender) >= revenueAmount) {
-            IERC20(weth).transfer(address(voter), revenueAmount);
-            _recordTx("Transfer WETH revenue to GovernanceVoter");
-            console.log("Sent", revenueAmount, "WETH as simulated revenue");
-        } else if (existingBalance > 0) {
-            console.log("GovernanceVoter already has", existingBalance, "WETH");
-        } else {
-            console.log("WARNING: No WETH balance and no revenue sent. Budget will be 0.");
+        // depositRevenue credits the CURRENT epoch only. The epoch we are about
+        // to finalize (`epochToFinalize`) is necessarily PAST, so any deposit landing here funds
+        // a FUTURE epoch — not `epochToFinalize`. Print both numbers loudly so operators don't
+        // misread `result.budget` as "the amount I just deposited". `epochToFinalize`'s budget
+        // comes from deposits that landed while it was the current epoch.
+        if (revenueAmount > 0) {
+            uint256 currentEpochAtDeposit = voter.currentEpoch();
+            console.log("--- Inline depositRevenue inside _doFinalize ---");
+            console.log("  Target finalize epoch:", epochToFinalize);
+            console.log("  Current (live) epoch :", currentEpochAtDeposit);
+            console.log("  Deposit will fund epochRevenue[", currentEpochAtDeposit, "] -- NOT epoch", epochToFinalize);
+            console.log("  To target a specific epoch's budget, run ACTION=deposit during that epoch.");
+            _doDeposit(voter, revenueAmount);
+        }
+
+        uint256 targetEpochRevenue = voter.epochRevenue(epochToFinalize);
+        console.log("epochRevenue[", epochToFinalize, "] before finalize:", targetEpochRevenue);
+        if (targetEpochRevenue == 0) {
+            console.log("  -> result.budget will be 0 because no deposits landed while this epoch was live.");
         }
 
         console.log("Finalizing epoch", epochToFinalize);

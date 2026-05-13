@@ -16,6 +16,7 @@ contract LPStaking is ReentrancyGuardTransient, Initializable {
     uint256 public constant VESTING_DURATION = 3 * 365 days;
     uint256 public constant VESTING_DELAY = 24 hours;
     uint256 public constant EPOCH_DURATION = 7 days;
+    address public constant DEAD_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
 
     IERC20 public lpToken;
     IERC20 public rewardToken;
@@ -59,6 +60,8 @@ contract LPStaking is ReentrancyGuardTransient, Initializable {
     event Claimed(address indexed user, uint256 amount);
     event VestingDistributed(uint256 amount);
     event FeesReceived(uint256 amount);
+    /// @dev Emitted when fees arrive while there are zero stakers; the amount is burned
+    event FeesLost(uint256 amount);
     event EpochAdvanced(uint256 epochStart, uint256 epochFees, uint256 feeRate);
 
     constructor() {
@@ -170,6 +173,13 @@ contract LPStaking is ReentrancyGuardTransient, Initializable {
         _updateAllRewards();
 
         rewardToken.safeTransferFrom(msg.sender, address(this), amount);
+
+        // If no stakers, burn the fees
+        if (totalWeight == 0) {
+            rewardToken.safeTransfer(DEAD_ADDRESS, amount);
+            emit FeesLost(amount);
+            return;
+        }
 
         pendingEpochFees += amount;
 

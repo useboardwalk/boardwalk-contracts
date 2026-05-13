@@ -4,11 +4,12 @@ pragma solidity =0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
+import {IParticipationDistributor} from "../interfaces/IParticipationDistributor.sol";
 
 /// @title ParticipationDistributor
 /// @notice 7-day linear BMX stream per epoch when governance Option 4 wins. Eligibility is locked
 ///         at vote time: voters from epoch N-1 share epoch N's BMX in proportion to their vote weight.
-contract ParticipationDistributor {
+contract ParticipationDistributor is IParticipationDistributor {
     using SafeERC20 for IERC20;
 
     uint256 public constant STREAM_DURATION = 7 days;
@@ -16,21 +17,8 @@ contract ParticipationDistributor {
     address public immutable BMX;
     address public immutable GOVERNANCE_VOTER;
 
-    struct StreamInfo {
-        uint256 totalBmx;
-        uint256 totalWeight;
-        uint256 startTime;
-    }
-
     mapping(uint256 => StreamInfo) public streams;
     mapping(uint256 => mapping(address => uint256)) public claimed;
-
-    error NotGovernanceVoter();
-    error StreamAlreadyExists();
-    error NothingToClaim();
-
-    event StreamCreated(uint256 indexed epoch, uint256 totalBmx, uint256 totalWeight);
-    event Claimed(uint256 indexed epoch, address indexed user, uint256 amount);
 
     constructor(
         address _bmx,
@@ -45,7 +33,7 @@ contract ParticipationDistributor {
     function createStream(
         uint256 epoch,
         uint256 bmxAmount
-    ) external {
+    ) external override {
         if (msg.sender != GOVERNANCE_VOTER) revert NotGovernanceVoter();
         if (streams[epoch].totalBmx != 0) revert StreamAlreadyExists();
 
@@ -61,7 +49,7 @@ contract ParticipationDistributor {
 
     function claim(
         uint256 epoch
-    ) external {
+    ) external override {
         uint256 amount = _processClaim(epoch);
         if (amount == 0) revert NothingToClaim();
         IERC20(BMX).safeTransfer(msg.sender, amount);
@@ -70,7 +58,7 @@ contract ParticipationDistributor {
     /// @notice Reverts if nothing is claimable across the supplied epochs (skips zero-claimable ones).
     function claimAll(
         uint256[] calldata epochs
-    ) external {
+    ) external override {
         uint256 total;
         for (uint256 i; i < epochs.length; ++i) {
             total += _processClaim(epochs[i]);
@@ -94,7 +82,7 @@ contract ParticipationDistributor {
     function claimable(
         uint256 epoch,
         address user
-    ) public view returns (uint256 totalAllocation, uint256 claimableAmount) {
+    ) public view override returns (uint256 totalAllocation, uint256 claimableAmount) {
         StreamInfo memory s = streams[epoch];
         if (s.totalBmx == 0 || s.totalWeight == 0) return (0, 0);
 

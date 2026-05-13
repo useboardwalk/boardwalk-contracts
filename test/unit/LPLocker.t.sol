@@ -18,10 +18,26 @@ contract MockPositionManager {
     function safeTransferFrom(address from, address to, uint256 tokenId) external {
         require(ownerOf[tokenId] == from, "Not owner");
         ownerOf[tokenId] = to;
-        (bool success,) = to.call(
-            abi.encodeWithSignature("onERC721Received(address,address,uint256,bytes)", msg.sender, from, tokenId, "")
-        );
-        require(success, "Transfer rejected");
+        // Mirrors the OZ ERC721 contract: invoke onERC721Received if `to` is a contract; revert
+        // if the receiver does not return the magic selector. After LPLocker no longer
+        // implements the hook, so calls into it from this path now revert.
+        if (to.code.length > 0) {
+            (bool success, bytes memory ret) = to.call(
+                abi.encodeWithSignature(
+                    "onERC721Received(address,address,uint256,bytes)", msg.sender, from, tokenId, ""
+                )
+            );
+            require(
+                success && ret.length >= 4 && bytes4(ret) == bytes4(keccak256("onERC721Received(address,address,uint256,bytes)")),
+                "Transfer rejected"
+            );
+        }
+    }
+
+    /// @notice Non-safe ERC-721 transfer. Does NOT invoke `onERC721Received` on the receiver.
+    function transferFrom(address from, address to, uint256 tokenId) external {
+        require(ownerOf[tokenId] == from, "Not owner");
+        ownerOf[tokenId] = to;
     }
 }
 
@@ -62,34 +78,47 @@ contract LPLockerTest is Test {
         );
     }
 
-    function test_OnERC721Received_FromPositionManager_AutoLocks() public {
-        positionManager.mint(address(mockGovernanceVoter), 1);
+    // ============ NFT injection — onERC721Received removed ============
 
-        vm.expectEmit(true, true, true, true);
-        emit LPLocked(1);
+    /// @notice safeTransferFrom from any external account (PositionManager included as the
+    ///         sender) must REVERT at the receiver: LPLocker no longer implements
+    ///         `onERC721Received`, so the receiver-hook check in OZ-style ERC721 transfers
+    ///         fails. This blocks arbitrary NFT injection that previously inflated
+    ///         `lockedTokenIds` and `claimAllFees` iteration.
+    function test_RevertWhen_DirectNftTransfer_FromExternalAccount() public {
+        positionManager.mint(alice, 99);
+        vm.expectRevert(bytes("Transfer rejected"));
+        vm.prank(alice);
+        positionManager.safeTransferFrom(alice, address(locker), 99);
+    }
 
+    /// @notice Acknowledged residual: a plain (non-safe) `transferFrom` skips the receiver
+    ///         hook and the NFT ends up owned by the locker. That id is NOT registered in
+    ///         `lockedTokenIds`, so `claimAllFees` ignores it and accounting stays correct.
+    ///         The stranded NFT is permanently inaccessible — no rescue path exists, the
+    ///         prior owner voluntarily transferred it. This is a deliberate trade-off: the
+    ///         alternative (an allowlist on receipt) adds surface area for marginal gain.
+    function test_PlainTransferFrom_StrandsNftButDoesNotBreakClaim() public {
+        positionManager.mint(alice, 99);
+        // First, legitimately lock a position so claimAllFees has something to iterate.
         vm.prank(address(mockGovernanceVoter));
-        positionManager.safeTransferFrom(address(mockGovernanceVoter), address(locker), 1);
+        locker.lockPosition(1);
+        uint256 lengthBefore = locker.getLockedPositions().length;
 
-        assertTrue(locker.lockedPositions(1));
-    }
+        // Attacker strands an NFT via plain transferFrom — succeeds (no hook called).
+        vm.prank(alice);
+        positionManager.transferFrom(alice, address(locker), 99);
+        assertEq(positionManager.ownerOf(99), address(locker), "NFT now owned by locker");
 
-    function test_OnERC721Received_AcceptsAnySenderWhenPositionManagerCalls() public {
-        positionManager.mint(alice, 2);
+        // Critical assertions: locker accounting is unchanged.
+        assertFalse(locker.lockedPositions(99), "stranded id NOT marked locked");
+        assertEq(locker.getLockedPositions().length, lengthBefore, "stranded id NOT pushed");
 
+        // claimAllFees still functions on the legitimately locked positions and is not influenced
+        // by the stranded id.
         vm.expectEmit(true, true, true, true);
-        emit LPLocked(2);
-
-        vm.prank(alice);
-        positionManager.safeTransferFrom(alice, address(locker), 2);
-
-        assertTrue(locker.lockedPositions(2));
-    }
-
-    function test_RevertWhen_OnERC721Received_DirectCallNotPositionManager() public {
-        vm.expectRevert(LPLocker.NotAuthorized.selector);
-        vm.prank(alice);
-        locker.onERC721Received(address(0), address(0), 3, "");
+        emit FeesClaimed(1);
+        locker.claimAllFees(block.timestamp);
     }
 
     // ============ lockPosition ============
@@ -120,9 +149,9 @@ contract LPLockerTest is Test {
     }
 
     function test_ClaimFees_EmitsEvent() public {
-        positionManager.mint(address(mockGovernanceVoter), 1);
+        // Positions are locked exclusively via lockPosition from the GovernanceVoter.
         vm.prank(address(mockGovernanceVoter));
-        positionManager.safeTransferFrom(address(mockGovernanceVoter), address(locker), 1);
+        locker.lockPosition(1);
 
         vm.expectEmit(true, true, true, true);
         emit FeesClaimed(1);
@@ -169,33 +198,18 @@ contract LPLockerTest is Test {
         assertEq(ids[2], 30);
     }
 
-    function test_GetLockedPositions_TracksOnERC721Received() public {
-        positionManager.mint(alice, 5);
-        positionManager.mint(alice, 6);
-
-        vm.startPrank(alice);
-        positionManager.safeTransferFrom(alice, address(locker), 5);
-        positionManager.safeTransferFrom(alice, address(locker), 6);
+    /// @notice lockPosition is the sole registration path. Multiple locks accumulate
+    ///         into `lockedTokenIds` in call order.
+    function test_GetLockedPositions_TracksLockPosition_Multiple() public {
+        vm.startPrank(address(mockGovernanceVoter));
+        locker.lockPosition(5);
+        locker.lockPosition(6);
         vm.stopPrank();
 
         uint256[] memory ids = locker.getLockedPositions();
         assertEq(ids.length, 2);
         assertEq(ids[0], 5);
         assertEq(ids[1], 6);
-    }
-
-    function test_GetLockedPositions_TracksBothPaths() public {
-        vm.prank(address(mockGovernanceVoter));
-        locker.lockPosition(100);
-
-        positionManager.mint(alice, 200);
-        vm.prank(alice);
-        positionManager.safeTransferFrom(alice, address(locker), 200);
-
-        uint256[] memory ids = locker.getLockedPositions();
-        assertEq(ids.length, 2);
-        assertEq(ids[0], 100);
-        assertEq(ids[1], 200);
     }
 
     // ============ claimAllFees ============
@@ -232,14 +246,14 @@ contract LPLockerTest is Test {
         locker.claimAllFees(block.timestamp);
     }
 
-    function test_RevertWhen_OnERC721Received_AlreadyLocked() public {
-        positionManager.mint(alice, 77);
-
-        vm.prank(alice);
-        positionManager.safeTransferFrom(alice, address(locker), 77);
+    /// @notice Only the GovernanceVoter can lock, so a double-lock requires two calls
+    ///         from the voter for the same id.
+    function test_RevertWhen_LockPosition_DoubleLock() public {
+        vm.prank(address(mockGovernanceVoter));
+        locker.lockPosition(77);
 
         vm.expectRevert(LPLocker.AlreadyLocked.selector);
-        vm.prank(address(positionManager));
-        locker.onERC721Received(address(0), alice, 77, "");
+        vm.prank(address(mockGovernanceVoter));
+        locker.lockPosition(77);
     }
 }

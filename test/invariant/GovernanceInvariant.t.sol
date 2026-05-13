@@ -87,6 +87,7 @@ contract GovernanceHandler is Test {
     GovernanceVoter public voter;
     MockGovToken public raiseToken;
     address public keeper;
+    address public feeCollector;
 
     uint256 public maxEpochSeen;
     uint256 public nextFinalizeEpoch;
@@ -99,10 +100,11 @@ contract GovernanceHandler is Test {
 
     bool public deltaMismatch;
 
-    constructor(GovernanceVoter voter_, MockGovToken raiseToken_, address keeper_) {
+    constructor(GovernanceVoter voter_, MockGovToken raiseToken_, address keeper_, address feeCollector_) {
         voter = voter_;
         raiseToken = raiseToken_;
         keeper = keeper_;
+        feeCollector = feeCollector_;
     }
 
     function warpTime(uint256 dt) external {
@@ -111,11 +113,19 @@ contract GovernanceHandler is Test {
         vm.warp(block.timestamp + dt);
     }
 
+    /// @dev Routes through `depositRevenue` so that epochRevenue[currentEpoch] is
+    ///      properly credited. A bare `mint(voter, amount)` would orphan the raise token in the
+    ///      voter and leave epochRevenue at 0, which makes downstream invariants trivially hold
+    ///      and obscures real bugs.
     function depositRaise(uint256 amount) external {
         callCount++;
         amount = bound(amount, 0, 1_000e18);
         if (amount == 0) return;
-        raiseToken.mint(address(voter), amount);
+        raiseToken.mint(feeCollector, amount);
+        vm.prank(feeCollector);
+        raiseToken.approve(address(voter), amount);
+        vm.prank(feeCollector);
+        voter.depositRevenue(amount);
     }
 
     function finalizeNext(uint256 batchSeed) external {
@@ -208,6 +218,7 @@ contract GovernanceInvariantTest is Test {
     address public keeper = makeAddr("keeper");
     address public treasury = makeAddr("treasury");
     address public fallbackTreasury = makeAddr("fallbackTreasury");
+    address public feeCollector = makeAddr("feeCollector");
 
     function setUp() public {
         sbfBmx = new MockGovRewardTracker();
@@ -238,9 +249,9 @@ contract GovernanceInvariantTest is Test {
         distributor = new MockInvariantParticipationDistributor(address(voter));
 
         vm.prank(owner);
-        voter.initializePeers(address(locker), address(distributor));
+        voter.initializePeers(address(locker), address(distributor), feeCollector);
 
-        handler = new GovernanceHandler(voter, raiseToken, keeper);
+        handler = new GovernanceHandler(voter, raiseToken, keeper, feeCollector);
         targetContract(address(handler));
     }
 

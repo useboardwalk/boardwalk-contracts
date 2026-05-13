@@ -82,7 +82,7 @@ contract GovernanceVoterForkTest is Test {
 
         pd = new ParticipationDistributor(BASE_BMX, address(voter));
 
-        voter.initializePeers(address(locker), address(pd));
+        voter.initializePeers(address(locker), address(pd), makeAddr("feeCollector"));
         vm.stopPrank();
     }
 
@@ -120,12 +120,23 @@ contract GovernanceVoterForkTest is Test {
         assertFalse(success, "Voter should reject ETH from non-WETH/non-PM sender");
     }
 
-    /// @notice Verify LPLocker can receive ETH (from PositionManager fee claims)
-    function test_LockerReceivesEth() public {
+    /// @notice LPLocker accepts ETH only from `POSITION_MANAGER` (fee-claim path). A random
+    ///         sender must be rejected. This previously asserted the opposite — the test
+    ///         pranked from the test contract, which is NOT the PM, so the call always
+    ///         reverted. Fixed to prank the actual PM.
+    function test_LockerReceivesEth_OnlyFromPositionManager() public {
+        // Random sender (the test contract) must NOT be accepted.
         vm.deal(address(this), 1 ether);
+        (bool rejected,) = address(locker).call{value: 1 ether}("");
+        assertFalse(rejected, "LPLocker must reject ETH from non-PM senders");
+
+        // PositionManager IS accepted (the fee-claim path).
+        vm.deal(BASE_POSITION_MANAGER, 1 ether);
+        uint256 before = address(locker).balance;
+        vm.prank(BASE_POSITION_MANAGER);
         (bool ok,) = address(locker).call{value: 1 ether}("");
-        assertTrue(ok, "LPLocker should accept ETH");
-        assertEq(address(locker).balance, 1 ether);
+        assertTrue(ok, "LPLocker must accept ETH from PositionManager");
+        assertEq(address(locker).balance - before, 1 ether);
     }
 
     /// @notice Test that voter can unwrap WETH and send ETH to Universal Router
@@ -198,5 +209,177 @@ contract GovernanceVoterForkTest is Test {
         // but we can verify the locker was deployed correctly and wired
         assertEq(locker.POSITION_MANAGER(), BASE_POSITION_MANAGER);
         assertEq(locker.GOVERNANCE_VOTER(), address(voter));
+    }
+
+    // ============================================================================
+    // Option 3 — direct PM mint, OPEN_DELTA SETTLE,
+    // double SWEEP to GovernanceVoter, dynamic TickMath ticks. Fork tests exercise
+    // the encoding against the real Base PositionManager + Universal Router.
+    // ============================================================================
+
+    /// @dev Make alice a valid voter without needing on-chain sbfBMX balance. Mocks the four
+    ///      reward-tracker reads that `GovernanceVoter.vote()` performs.
+    function _mockAliceVoter(address alice, uint256 weight, uint256 totalSupply_) internal {
+        vm.mockCall(
+            BASE_SBF_BMX,
+            abi.encodeWithSelector(IERC20.balanceOf.selector, alice),
+            abi.encode(weight)
+        );
+        vm.mockCall(BASE_SBF_BMX, abi.encodeWithSignature("totalSupply()"), abi.encode(totalSupply_));
+        // stakedBmx = 0 -> participation-points gate is skipped (see _vote check).
+        vm.mockCall(
+            BASE_STAKED_BMX_TRACKER,
+            abi.encodeWithSignature("depositBalances(address,address)", alice, BASE_BMX),
+            abi.encode(uint256(0))
+        );
+        vm.mockCall(
+            BASE_SBF_BMX,
+            abi.encodeWithSignature("depositBalances(address,address)", alice, BASE_BN_BMX),
+            abi.encode(uint256(0))
+        );
+    }
+
+    /// @dev Drive the voter from epoch 0 through finalize+execute of an Option 3 winning
+    ///      epoch (1). Returns the WETH budget assigned to epoch 1 so the caller can
+    ///      assert against treasury deltas etc.
+    function _runOption3ToExecution(uint256 budgetWeth) internal returns (uint256 epochOneBudget) {
+        address alice = makeAddr("voterAlice");
+        _mockAliceVoter(alice, 1000e18, 1000e18);
+
+        // Epoch 0 vote for option 3 (drives finalize(1) winner).
+        vm.prank(alice);
+        voter.vote(3);
+
+        // Finalize+execute epoch 0 (always defaults to treasury).
+        vm.warp(block.timestamp + 7 days);
+        vm.prank(keeper);
+        voter.finalize(0, type(uint256).max);
+        vm.prank(keeper);
+        voter.execute(0, 0, 0, block.timestamp);
+
+        // currentEpoch is now 1. Deposit revenue here so epochRevenue[1] is funded.
+        address depositor = voter.feeCollector();
+        deal(BASE_WETH, depositor, budgetWeth);
+        vm.startPrank(depositor);
+        IERC20(BASE_WETH).approve(address(voter), budgetWeth);
+        voter.depositRevenue(budgetWeth);
+        vm.stopPrank();
+        epochOneBudget = budgetWeth;
+
+        // Finalize epoch 1 (snapshot total = 1000, totalVote = 1000, 100% > 51% -> option 3 wins).
+        // e.budget = epochRevenue[1] = budgetWeth.
+        vm.warp(block.timestamp + 7 days);
+        vm.prank(keeper);
+        voter.finalize(1, type(uint256).max);
+    }
+
+    /// @notice Assert NFT lands at LPLocker, GovernanceVoter is left with no BMX/ETH residue,
+    ///         and the PositionManager's balances return to their pre-execution snapshot (SWEEP recovers
+    ///         everything pre-funded for this mint). Treasury WETH delta is allowed to be zero — exact
+    ///         mint consumption may legitimately leave no residual to sweep.
+    function testFork_Option3_FullExecution_Succeeds() public {
+        uint256 budget = 1 ether;
+        _runOption3ToExecution(budget);
+
+        uint256 pmBmxBefore = IERC20(BASE_BMX).balanceOf(BASE_POSITION_MANAGER);
+        uint256 pmEthBefore = BASE_POSITION_MANAGER.balance;
+        uint256 lockerCountBefore = locker.getLockedPositions().length;
+
+        vm.prank(keeper);
+        // liquidity = 0 would be a no-op mint; pick a small value that the half-budget can fund.
+        voter.execute(1, 0, uint256(1e15), block.timestamp);
+
+        // 1. NFT registered at locker.
+        assertEq(locker.getLockedPositions().length, lockerCountBefore + 1, "NFT should be registered at locker");
+
+        // 2. No BMX residue at GovernanceVoter; PM BMX returned to snapshot.
+        assertEq(IERC20(BASE_BMX).balanceOf(address(voter)), 0, "voter BMX residue (any leftover goes to DEAD)");
+        assertEq(
+            IERC20(BASE_BMX).balanceOf(BASE_POSITION_MANAGER),
+            pmBmxBefore,
+            "PM BMX delta == 0 (SWEEP recovered pre-funded BMX)"
+        );
+
+        // 3. No ETH residue at GovernanceVoter; PM ETH returned to snapshot.
+        //    Treasury WETH delta is NOT asserted non-zero — exact mint consumption can produce
+        //    zero residual. Non-zero assertion lives in the partial-mint test below.
+        assertEq(address(voter).balance, 0, "voter ETH residue should be 0");
+        assertEq(BASE_POSITION_MANAGER.balance, pmEthBefore, "PM ETH delta == 0 (SWEEP recovered pre-funded ETH)");
+    }
+
+    /// @notice Deliberately oversize the BMX/ETH inputs so the mint legitimately consumes
+    ///         less than the pre-funded amounts. SWEEP must reclaim every wei back to
+    ///         GovernanceVoter; the BMX residue is then burned to DEAD; treasury must receive
+    ///         a strictly positive WETH delta (the swept ETH residue, re-wrapped).
+    function testFork_Option3_PartialMint_NoStuckBMX() public {
+        uint256 budget = 1 ether;
+        _runOption3ToExecution(budget);
+
+        uint256 pmBmxBefore = IERC20(BASE_BMX).balanceOf(BASE_POSITION_MANAGER);
+        uint256 pmEthBefore = BASE_POSITION_MANAGER.balance;
+        uint256 treasuryWethBefore = IERC20(BASE_WETH).balanceOf(treasury);
+        uint256 deadBmxBefore = IERC20(BASE_BMX).balanceOf(0x000000000000000000000000000000000000dEaD);
+
+        // Tiny liquidity: mint consumes far less BMX/ETH than the pre-funded budget allows.
+        vm.prank(keeper);
+        voter.execute(1, 0, uint256(1), block.timestamp);
+
+        // PM returns to snapshot exactly (SWEEP recovered every prefunded wei).
+        assertEq(IERC20(BASE_BMX).balanceOf(BASE_POSITION_MANAGER), pmBmxBefore, "PM BMX delta == 0");
+        assertEq(BASE_POSITION_MANAGER.balance, pmEthBefore, "PM ETH delta == 0");
+
+        // GovernanceVoter is drained (BMX -> DEAD, ETH -> treasury).
+        assertEq(IERC20(BASE_BMX).balanceOf(address(voter)), 0, "voter BMX residue should be 0");
+        assertEq(address(voter).balance, 0, "voter ETH residue should be 0");
+
+        // BMX residue burned cleanly.
+        assertGt(
+            IERC20(BASE_BMX).balanceOf(0x000000000000000000000000000000000000dEaD),
+            deadBmxBefore,
+            "DEAD address should receive burned BMX residue"
+        );
+
+        // Treasury WETH delta strictly positive: the swept ETH residue is wrapped and forwarded.
+        assertGt(IERC20(BASE_WETH).balanceOf(treasury), treasuryWethBefore, "treasury should receive swept ETH residue");
+    }
+
+    /// @notice Verifies the Base Universal Router accepts the current
+    ///         `_swapRaiseTokenForBmx` calldata layout (V4_SWAP with SWAP_EXACT_IN_SINGLE +
+    ///         SETTLE(payerIsUser=false) + TAKE_ALL). If a UR upgrade changes the expected
+    ///         parameter shape (e.g. a new `minHopPriceX36` field), the swap reverts here.
+    function testFork_SwapRaiseTokenForBmx_RouterAccepts0x140Calldata() public {
+        // Option 2 (BuyBurnBMX) exercises ONLY _swapRaiseTokenForBmx, no LP mint. Reusing
+        // _runOption3ToExecution would be wrong — we want Option 2 to isolate the UR swap.
+        address alice = makeAddr("voterAlice");
+        _mockAliceVoter(alice, 1000e18, 1000e18);
+
+        vm.prank(alice);
+        voter.vote(2);
+
+        vm.warp(block.timestamp + 7 days);
+        vm.prank(keeper);
+        voter.finalize(0, type(uint256).max);
+        vm.prank(keeper);
+        voter.execute(0, 0, 0, block.timestamp);
+
+        // Deposit through feeCollector so epochRevenue[1] is funded.
+        address depositor = voter.feeCollector();
+        deal(BASE_WETH, depositor, 0.1 ether);
+        vm.startPrank(depositor);
+        IERC20(BASE_WETH).approve(address(voter), 0.1 ether);
+        voter.depositRevenue(0.1 ether);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 7 days);
+        vm.prank(keeper);
+        voter.finalize(1, type(uint256).max);
+
+        // Option 2 routes 100% of the budget through _swapRaiseTokenForBmx -> Universal Router.
+        // A reverting execute() here means the configured UR did not accept our 0x140 calldata.
+        vm.prank(keeper);
+        voter.execute(1, 0, 0, block.timestamp);
+
+        // Sanity: DEAD received the swapped BMX (BuyBurnBMX outcome).
+        assertGt(IERC20(BASE_BMX).balanceOf(0x000000000000000000000000000000000000dEaD), 0);
     }
 }

@@ -11,13 +11,18 @@ interface IFeeRecipientCollector {
     event ClaimFailed(address indexed token);
     event TokenRemoved(address indexed token);
 
-    /// @notice Best-effort registration. Caller must be the FeeDistributor that the token claims as
-    ///         its own (cross-checked via `IBoardwalkToken(token).feeDistributor()`). Tokens already
-    ///         arrive via the preceding `safeTransfer`; this call only adds the token to the
-    ///         tracked set.
     function notifyFees(
         address token,
         uint256 amount
+    ) external;
+    function batchClaim(
+        uint256 limit
+    ) external;
+    function claimToken(
+        address token
+    ) external;
+    function removeTrackedToken(
+        address token
     ) external;
 
     function signalChangeOnDistributors(
@@ -30,6 +35,14 @@ interface IFeeRecipientCollector {
     ) external;
     function cancelChangeOnDistributors(
         address[] calldata distributors
+    ) external;
+
+    function signalChangeOnFactory(
+        address factory,
+        address newAddress
+    ) external;
+    function cancelChangeOnFactory(
+        address factory
     ) external;
 
     function trackedTokenCount() external view returns (uint256);
