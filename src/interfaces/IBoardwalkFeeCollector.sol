@@ -11,6 +11,7 @@ interface IBoardwalkFeeCollector {
 
     event FeesReceived(address indexed token, uint256 amount);
     event FeesSwapped(address indexed token, uint256 tokenAmount, uint256 raiseTokenAmount);
+    event RevenueForwarded(uint256 totalAmount, uint256 governanceAmount, uint256 treasuryAmount);
     event TreasuryUpdated(address indexed newTreasury);
     event KeeperUpdated(address indexed newKeeper);
     event CollectorMigrated(address newCollector, uint256 distributorCount);
@@ -25,6 +26,7 @@ interface IBoardwalkFeeCollector {
         uint256[] calldata minAmountsOut,
         uint256 deadline
     ) external;
+    function forwardRevenue() external;
     function executeMigrateCollector(
         address newCollector,
         address[] calldata distributors

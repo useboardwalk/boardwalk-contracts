@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FeeDistributor} from "src/core/FeeDistributor.sol";
-import {IFeeDistributor} from "src/interfaces/IFeeDistributor.sol";
 import {ILPStaking} from "src/interfaces/ILPStaking.sol";
 import {IBoardwalkFeeCollector} from "src/interfaces/IBoardwalkFeeCollector.sol";
 import {Timelocked} from "src/base/Timelocked.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-/// @dev Mock LPStaking that records notifyFees calls (configurable to revert for failure tests)
+/// @dev Mock LPStaking that records notifyFees calls (configurable to revert for failure tests).
 contract MockLPStaking is ILPStaking {
     uint256 public lastFeeAmount;
     uint256 public totalFeesReceived;
@@ -33,7 +33,6 @@ contract MockLPStaking is ILPStaking {
         callCount++;
     }
 
-    // Stubs for interface compliance
     function setInitializer(
         address
     ) external pure override {}
@@ -86,7 +85,9 @@ contract MockLPStaking is ILPStaking {
     }
 }
 
-/// @dev Mock BoardwalkFeeCollector that records receiveFees calls (configurable to revert for failure tests)
+/// @dev Mock BoardwalkFeeCollector that records receiveFees calls (configurable to revert for
+///      failure tests). Audit-fix stubs (executeSetGovernanceVault + ACTION_* getters) are kept
+///      so MockFeeCollector continues to satisfy the IBoardwalkFeeCollector ABI.
 contract MockFeeCollector is IBoardwalkFeeCollector {
     mapping(address => uint256) public accumulatedFees;
     uint256 public callCount;
@@ -99,20 +100,23 @@ contract MockFeeCollector is IBoardwalkFeeCollector {
     }
 
     function receiveFees(
-        address token,
+        address tokenAddr,
         uint256 amount
     ) external override {
         if (shouldRevert) revert("MockFeeCollector: forced revert");
-        accumulatedFees[token] += amount;
+        accumulatedFees[tokenAddr] += amount;
         callCount++;
     }
 
-    // Stubs for interface compliance
     function swapToRaiseToken(
         address[] calldata,
         uint256[] calldata,
         uint256
     ) external pure override {
+        revert("Not implemented");
+    }
+
+    function forwardRevenue() external pure override {
         revert("Not implemented");
     }
 
@@ -170,17 +174,41 @@ contract MockFeeCollector is IBoardwalkFeeCollector {
     }
 }
 
-/// @dev Mock Router for swapExactTokensForTokens
+/// @dev Minimal mock implementing the only function FeeDistributor calls on the chain-level
+///      IntegratorFeeCollector singleton: `receiveFees(address,uint256)`. Pulls via
+///      `transferFrom` to mirror the production pull pattern (FD grants max allowance at init).
+///      Configurable revert flag covers the negative-path try/catch fallback test.
+contract MockIntegratorFeeCollector {
+    address public lastToken;
+    uint256 public lastAmount;
+    uint256 public callCount;
+    bool public shouldRevert;
+
+    function setShouldRevert(
+        bool _v
+    ) external {
+        shouldRevert = _v;
+    }
+
+    function receiveFees(address tokenAddr, uint256 amount) external {
+        if (shouldRevert) revert("MockIntegratorFeeCollector: forced revert");
+        IERC20(tokenAddr).transferFrom(msg.sender, address(this), amount);
+        lastToken = tokenAddr;
+        lastAmount = amount;
+        callCount++;
+    }
+}
+
+/// @dev Mock Router for swapExactTokensForTokens.
 contract MockRouter {
-    uint256 public constant MOCK_SLIPPAGE_BPS = 100; // 1% slippage
-    mapping(address => mapping(address => uint256)) public exchangeRates; // token -> weth rate
+    mapping(address => mapping(address => uint256)) public exchangeRates;
 
     function setExchangeRate(
-        address token,
-        address weth,
+        address tokenIn,
+        address tokenOut,
         uint256 rate
     ) external {
-        exchangeRates[token][weth] = rate; // e.g., 1 token = rate wei WETH
+        exchangeRates[tokenIn][tokenOut] = rate;
     }
 
     function swapExactTokensForTokens(
@@ -192,7 +220,6 @@ contract MockRouter {
     ) external returns (uint256[] memory amounts) {
         require(block.timestamp <= deadline, "Deadline exceeded");
         require(path.length == 2, "Invalid path");
-        // Allow 0 for testing, but in production this should be > 0
 
         address tokenIn = path[0];
         address tokenOut = path[1];
@@ -202,10 +229,7 @@ contract MockRouter {
         uint256 amountOut = (amountIn * rate) / 1e18;
         require(amountOut >= amountOutMin, "Slippage exceeded");
 
-        // Transfer tokens from caller (FeeDistributor) to this mock
         ERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
-
-        // Mint WETH to recipient (mock can mint)
         MockERC20(tokenOut).mint(to, amountOut);
 
         amounts = new uint256[](2);
@@ -214,7 +238,7 @@ contract MockRouter {
     }
 }
 
-/// @dev Simple ERC20 token for testing
+/// @dev Simple ERC20 token for testing.
 contract MockERC20 is ERC20 {
     mapping(address => bool) public isExempt;
 
@@ -230,74 +254,22 @@ contract MockERC20 is ERC20 {
         _mint(to, amount);
     }
 
-    /// @dev FeeDistributor calls updateExempt during collector migration
+    /// @dev FeeDistributor calls updateExempt during BoardwalkFeeCollector migration.
     function updateExempt(address account, bool exempt) external {
         isExempt[account] = exempt;
     }
 }
 
-/// @dev Minimal mock implementing IFeeRecipientCollector.notifyFees. Used as the integrator /
-///      ancillary recipient in tests. Captures the last-call args + supports forced revert and
-///      gas-griefing modes for regression coverage of the push+notify hardening.
-contract MockFeeRecipientCollector {
-    address public lastToken;
-    uint256 public lastAmount;
-    uint256 public callCount;
-    bool public shouldRevert;
-    bool public shouldBurnGas;
-    bool public shouldReturnBomb;
-    uint256 public bombSize;
-
-    function setShouldRevert(
-        bool _v
-    ) external {
-        shouldRevert = _v;
-    }
-
-    function setShouldBurnGas(
-        bool _v
-    ) external {
-        shouldBurnGas = _v;
-    }
-
-    function setReturnBomb(
-        bool _v,
-        uint256 _size
-    ) external {
-        shouldReturnBomb = _v;
-        bombSize = _size;
-    }
-
-    function notifyFees(address tokenAddr, uint256 amount) external {
-        if (shouldRevert) revert("MockFeeRecipientCollector: forced revert");
-        if (shouldBurnGas) {
-            // Spin until OOG to simulate a malicious recipient consuming all forwarded gas.
-            assembly {
-                for {} 1 {} { pop(sload(0)) }
-            }
-        }
-        if (shouldReturnBomb) {
-            uint256 sz = bombSize;
-            assembly {
-                let ptr := mload(0x40)
-                return(ptr, sz)
-            }
-        }
-        lastToken = tokenAddr;
-        lastAmount = amount;
-        callCount++;
-    }
-}
-
 /// @title FeeDistributorTest
-/// @notice Unit and fuzz tests for FeeDistributor.
+/// @notice Unit and fuzz tests for FeeDistributor against the post-refactor surface:
+///         per-launch integrator role replaced by a chain-level `integratorCollector` pulled
+///         via `receiveFees`; ancillary role removed entirely.
 contract FeeDistributorTest is Test {
     // ============ Constants ============
 
     uint256 internal constant BPS_DENOMINATOR = 10_000;
     uint256 internal constant TIMELOCK_DELAY = 7 days;
     uint256 internal constant TIMELOCK_EXPIRY = 7 days;
-    uint256 internal constant RATE_LIMIT_BPS = 1000; // 10% = 1000/10000
 
     // ============ State ============
 
@@ -305,18 +277,16 @@ contract FeeDistributorTest is Test {
     FeeDistributor internal feeDistributor;
     MockLPStaking internal lpStaking;
     MockFeeCollector internal feeCollector;
+    MockIntegratorFeeCollector internal integratorCollector;
     MockRouter internal router;
     MockERC20 internal token;
     MockERC20 internal weth;
-    MockFeeRecipientCollector internal mockIntegratorCollector;
-    MockFeeRecipientCollector internal mockAncillaryCollector;
 
+    address internal integratorCollectorAddr;
     address internal issuer1;
     address internal issuer2;
     address internal issuer3;
     address internal referrer;
-    address internal integratorAddr;
-    address internal ancillaryAddr;
     address internal alice;
     address internal bob;
 
@@ -328,16 +298,14 @@ contract FeeDistributorTest is Test {
         uint256 boardwalkShare,
         uint256 issuerShare,
         uint256 referrerShare,
-        uint256 integratorShare,
-        uint256 ancillaryShare
+        uint256 integratorShare
     );
     event IssuerClaimed(
-        uint256 indexed recipientIdx, address indexed recipient, uint256 tokenAmount, uint256 wethAmount
+        uint256 indexed recipientIdx, address indexed recipient, uint256 tokenAmount, uint256 raiseTokenAmount
     );
     event ReferrerClaimed(address indexed referrer, uint256 amount);
     event IssuerAddressChanged(uint256 indexed recipientIdx, address oldAddress, address newAddress);
     event ReferrerAddressChanged(address oldAddress, address newAddress);
-    event IntegratorClaimed(address indexed integrator, uint256 amount);
     event FeeCollectorChanged(address oldCollector, address newCollector);
     event FeeForwardFailed(string target, uint256 amount);
     event ChangeSignaled(bytes32 indexed action, bytes32 dataHash, uint256 executeTime, uint256 expiresAt);
@@ -359,25 +327,18 @@ contract FeeDistributorTest is Test {
         vm.label(issuer3, "issuer3");
         vm.label(referrer, "referrer");
 
-        // Deploy mocks. Integrator/ancillary recipients MUST be contracts because the typed
-        // `try IFeeRecipientCollector(to).notifyFees(...)` call's extcodesize precheck reverts
-        // when `to` is an EOA (Solidity 0.8.28 does not catch that revert in try/catch).
         lpStaking = new MockLPStaking();
         feeCollector = new MockFeeCollector();
+        integratorCollector = new MockIntegratorFeeCollector();
         router = new MockRouter();
         token = new MockERC20("TestToken", "TT");
         weth = new MockERC20("WETH", "WETH");
-        mockIntegratorCollector = new MockFeeRecipientCollector();
-        mockAncillaryCollector = new MockFeeRecipientCollector();
-        integratorAddr = address(mockIntegratorCollector);
-        ancillaryAddr = address(mockAncillaryCollector);
-        vm.label(integratorAddr, "integrator");
-        vm.label(ancillaryAddr, "ancillary");
+        integratorCollectorAddr = address(integratorCollector);
+        vm.label(integratorCollectorAddr, "integratorCollector");
 
-        // Set exchange rate: 1 token = 0.5 WETH (for testing swaps)
+        // 1 token = 0.5 WETH for swap tests
         router.setExchangeRate(address(token), address(weth), 0.5e18);
 
-        // Deploy template and clone
         template = new FeeDistributor();
         feeDistributor = _deployInitializedFeeDistributor();
     }
@@ -396,8 +357,10 @@ contract FeeDistributorTest is Test {
         assertEq(feeDistributor.boardwalkBps(), 2000, "boardwalkBps mismatch");
         assertEq(feeDistributor.lpIncentiveBps(), 2000, "lpIncentiveBps mismatch");
         assertEq(feeDistributor.referrerBps(), 1000, "referrerBps mismatch");
+        assertEq(feeDistributor.integratorBps(), 0, "integratorBps mismatch");
         assertEq(feeDistributor.totalFeeBps(), 10000, "totalFeeBps mismatch");
         assertEq(feeDistributor.referrer(), referrer, "referrer mismatch");
+        assertEq(feeDistributor.integratorCollector(), address(0), "integratorCollector should be unset by default");
         assertEq(feeDistributor.issuerRecipientCount(), 3, "issuerRecipientCount mismatch");
     }
 
@@ -453,7 +416,7 @@ contract FeeDistributorTest is Test {
         FeeDistributor.InitParams memory p = _defaultInitParams();
         p.referrer = address(0);
         p.referrerBps = 0;
-        p.issuerBps = 6000; // Adjust to sum to 10000
+        p.issuerBps = 6000; // Adjust to keep total = 10000
 
         fd.initialize(p);
 
@@ -544,7 +507,7 @@ contract FeeDistributorTest is Test {
     function test_RevertWhen_Initialize_InvalidSplitsSum() public {
         FeeDistributor fd = _deployUninitializedFeeDistributor();
         FeeDistributor.InitParams memory p = _defaultInitParams();
-        p.issuerSplits = _toArray(3000, 3000, 3000); // Sums to 9000, not 10000
+        p.issuerSplits = _toArray(3000, 3000, 3000); // sums to 9000, not 10000
 
         vm.expectRevert(FeeDistributor.InvalidSplitsSum.selector);
         fd.initialize(p);
@@ -557,6 +520,7 @@ contract FeeDistributorTest is Test {
         p.boardwalkBps = 0;
         p.lpIncentiveBps = 0;
         p.referrerBps = 0;
+        p.integratorBps = 0;
 
         vm.expectRevert(FeeDistributor.InvalidFeeBps.selector);
         fd.initialize(p);
@@ -567,6 +531,43 @@ contract FeeDistributorTest is Test {
 
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         template.initialize(p);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Initialization — Integrator Collector (post-refactor)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// @notice With a non-zero integratorBps, the chain-level integrator collector address must
+    ///         be wired and granted max allowance for the pull pattern.
+    function test_Init_WithIntegratorCollector() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        fd.initialize(p);
+
+        assertEq(fd.integratorCollector(), integratorCollectorAddr, "integratorCollector mismatch");
+        assertEq(fd.integratorBps(), 1000, "integratorBps mismatch");
+        assertEq(fd.totalFeeBps(), 10000, "totalFeeBps mismatch");
+        assertEq(
+            token.allowance(address(fd), integratorCollectorAddr),
+            type(uint256).max,
+            "integratorCollector should receive max allowance"
+        );
+    }
+
+    /// @notice The defensive case: collector unwired AND integratorBps == 0 succeeds and skips
+    ///         the conditional approval. Approve(address(0), max) would revert in OZ ERC20, so a
+    ///         successful init proves the conditional branch was honored.
+    function test_Init_ZeroIntegratorBpsAndZeroCollector_AllowsSkippedApproval() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _defaultInitParams();
+        // Default already has integratorBps == 0 and integratorCollector == address(0).
+        assertEq(p.integratorBps, 0, "default integratorBps should be 0");
+        assertEq(p.integratorCollector, address(0), "default integratorCollector should be 0");
+
+        fd.initialize(p);
+
+        assertEq(fd.integratorCollector(), address(0), "integratorCollector should remain unset");
+        assertEq(fd.integratorBps(), 0, "integratorBps should remain 0");
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -588,28 +589,26 @@ contract FeeDistributorTest is Test {
         vm.prank(address(token));
         feeDistributor.onTaxReceived(taxAmount);
 
-        // Expected splits (5000/10000, 2000/10000, 2000/10000, 1000/10000)
         uint256 expectedLpShare = taxAmount * 2000 / 10000; // 2000e18
         uint256 expectedBoardwalkShare = taxAmount * 2000 / 10000; // 2000e18
         uint256 expectedReferrerShare = taxAmount * 1000 / 10000; // 1000e18
-        uint256 expectedIssuerShare = taxAmount - expectedLpShare - expectedBoardwalkShare - expectedReferrerShare; // 5000e18
+        uint256 expectedIssuerShare = taxAmount - expectedLpShare - expectedBoardwalkShare - expectedReferrerShare;
 
         assertEq(lpStaking.totalFeesReceived(), expectedLpShare, "LP share mismatch");
         assertEq(feeCollector.accumulatedFees(address(token)), expectedBoardwalkShare, "Boardwalk share mismatch");
         assertEq(feeDistributor.referrerAccrued(), expectedReferrerShare, "Referrer accrued mismatch");
 
-        // Check issuer accrual (split among 3 recipients: 40%, 30%, 30%)
         (uint256 totalAccrued0,,,) = feeDistributor.issuerClaimStates(0);
         (uint256 totalAccrued1,,,) = feeDistributor.issuerClaimStates(1);
         (uint256 totalAccrued2,,,) = feeDistributor.issuerClaimStates(2);
 
-        assertEq(totalAccrued0, expectedIssuerShare * 4000 / 10000, "Issuer1 accrued mismatch");
-        assertEq(totalAccrued1, expectedIssuerShare * 3000 / 10000, "Issuer2 accrued mismatch");
-        // Issuer3 gets remainder (handles rounding)
         uint256 issuer1Accrued = expectedIssuerShare * 4000 / 10000;
         uint256 issuer2Accrued = expectedIssuerShare * 3000 / 10000;
         uint256 issuer3Accrued = expectedIssuerShare - issuer1Accrued - issuer2Accrued;
-        assertEq(totalAccrued2, issuer3Accrued, "Issuer3 accrued mismatch");
+
+        assertEq(totalAccrued0, issuer1Accrued, "Issuer1 accrued mismatch");
+        assertEq(totalAccrued1, issuer2Accrued, "Issuer2 accrued mismatch");
+        assertEq(totalAccrued2, issuer3Accrued, "Issuer3 accrued (remainder) mismatch");
     }
 
     function test_OnTaxReceived_ForwardsLpShare() public {
@@ -641,10 +640,10 @@ contract FeeDistributorTest is Test {
         vm.prank(address(token));
         feeDistributor.onTaxReceived(taxAmount);
 
-        uint256 issuerShare = taxAmount * 5000 / 10000; // 5000e18
-        uint256 issuer1Accrued = issuerShare * 4000 / 10000; // 2000e18
-        uint256 issuer2Accrued = issuerShare * 3000 / 10000; // 1500e18
-        uint256 issuer3Accrued = issuerShare - issuer1Accrued - issuer2Accrued; // 1500e18
+        uint256 issuerShare = taxAmount * 5000 / 10000;
+        uint256 issuer1Accrued = issuerShare * 4000 / 10000;
+        uint256 issuer2Accrued = issuerShare * 3000 / 10000;
+        uint256 issuer3Accrued = issuerShare - issuer1Accrued - issuer2Accrued;
 
         (uint256 totalAccrued0,,,) = feeDistributor.issuerClaimStates(0);
         (uint256 totalAccrued1,,,) = feeDistributor.issuerClaimStates(1);
@@ -670,7 +669,7 @@ contract FeeDistributorTest is Test {
         FeeDistributor.InitParams memory p = _defaultInitParams();
         p.referrer = address(0);
         p.referrerBps = 0;
-        p.issuerBps = 6000; // Adjust to sum to 10000
+        p.issuerBps = 6000;
         fd.initialize(p);
 
         uint256 taxAmount = 10000e18;
@@ -686,21 +685,18 @@ contract FeeDistributorTest is Test {
         FeeDistributor fd = _deployUninitializedFeeDistributor();
         FeeDistributor.InitParams memory p = _defaultInitParams();
         p.issuerRecipients = _toArray(issuer1, issuer2);
-        p.issuerSplits = _toArray(3333, 6667); // Sums to 10000
+        p.issuerSplits = _toArray(3333, 6667);
         fd.initialize(p);
 
-        // Use amount that causes rounding: 1000e18 * 5000/10000 = 500e18 issuer share
-        // Split: 500e18 * 3333/10000 = 166.65e18 (truncates to 166e18)
-        // Remainder: 500e18 - 166e18 = 334e18 goes to issuer2
         uint256 taxAmount = 1000e18;
         deal(address(token), address(fd), taxAmount);
 
         vm.prank(address(token));
         fd.onTaxReceived(taxAmount);
 
-        uint256 issuerShare = taxAmount * 5000 / 10000; // 500e18
-        uint256 issuer1Accrued = issuerShare * 3333 / 10000; // 166e18 (truncated)
-        uint256 issuer2Accrued = issuerShare - issuer1Accrued; // 334e18 (gets remainder)
+        uint256 issuerShare = taxAmount * 5000 / 10000;
+        uint256 issuer1Accrued = issuerShare * 3333 / 10000;
+        uint256 issuer2Accrued = issuerShare - issuer1Accrued;
 
         (uint256 totalAccrued0,,,) = fd.issuerClaimStates(0);
         (uint256 totalAccrued1,,,) = fd.issuerClaimStates(1);
@@ -721,7 +717,7 @@ contract FeeDistributorTest is Test {
 
         vm.expectEmit(true, true, true, true, address(feeDistributor));
         emit TaxReceived(
-            taxAmount, expectedLpShare, expectedBoardwalkShare, expectedIssuerShare, expectedReferrerShare, 0, 0
+            taxAmount, expectedLpShare, expectedBoardwalkShare, expectedIssuerShare, expectedReferrerShare, 0
         );
 
         vm.prank(address(token));
@@ -739,15 +735,91 @@ contract FeeDistributorTest is Test {
         assertEq(lpStaking.totalFeesReceived(), 4000e18, "LP fees should accumulate");
         assertEq(feeCollector.accumulatedFees(address(token)), 4000e18, "Boardwalk fees should accumulate");
         assertEq(feeDistributor.referrerAccrued(), 2000e18, "Referrer fees should accumulate");
-        // Each call: 10000e18 * 5000/10000 = 5000e18 issuer share
-        // Recipient 0 gets: 5000e18 * 4000/10000 = 2000e18 per call
-        // Total after 2 calls: 4000e18
         (uint256 totalAccrued0,,,) = feeDistributor.issuerClaimStates(0);
         assertEq(totalAccrued0, 4000e18, "Issuer1 fees should accumulate");
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  Issuer WETH Claim
+    //  onTaxReceived — Integrator Collector (post-refactor pull pattern)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /// @notice Happy-path forward: integrator collector pulls via `transferFrom`, receives the
+    ///         expected slice, and the new TaxReceived event carries the integratorShare.
+    function test_OnTaxReceived_ForwardsToIntegratorCollector() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        fd.initialize(p);
+
+        uint256 taxAmount = 10000e18;
+        deal(address(token), address(fd), taxAmount);
+
+        // BPS: issuer=4000, boardwalk=3000, lp=2000, integrator=1000, referrer=0 (total=10000)
+        uint256 expectedLpShare = taxAmount * 2000 / 10000;
+        uint256 expectedBoardwalkShare = taxAmount * 3000 / 10000;
+        uint256 expectedIntegratorShare = taxAmount * 1000 / 10000;
+        uint256 expectedIssuerShare = taxAmount - expectedLpShare - expectedBoardwalkShare - expectedIntegratorShare;
+
+        vm.expectEmit(true, true, true, true, address(fd));
+        emit TaxReceived(
+            taxAmount, expectedLpShare, expectedBoardwalkShare, expectedIssuerShare, 0, expectedIntegratorShare
+        );
+
+        vm.prank(address(token));
+        fd.onTaxReceived(taxAmount);
+
+        assertEq(lpStaking.totalFeesReceived(), expectedLpShare, "LP share mismatch");
+        assertEq(feeCollector.accumulatedFees(address(token)), expectedBoardwalkShare, "Boardwalk share mismatch");
+        assertEq(integratorCollector.callCount(), 1, "Integrator collector should be called once");
+        assertEq(integratorCollector.lastAmount(), expectedIntegratorShare, "Integrator collector lastAmount mismatch");
+        assertEq(integratorCollector.lastToken(), address(token), "Integrator collector lastToken mismatch");
+        assertEq(
+            token.balanceOf(integratorCollectorAddr),
+            expectedIntegratorShare,
+            "Integrator collector should hold pulled tokens"
+        );
+        assertEq(fd.pendingIntegratorFees(), 0, "pendingIntegratorFees should be 0 on happy path");
+
+        (uint256 totalAccrued0,,,) = fd.issuerClaimStates(0);
+        (uint256 totalAccrued1,,,) = fd.issuerClaimStates(1);
+        (uint256 totalAccrued2,,,) = fd.issuerClaimStates(2);
+        assertEq(totalAccrued0 + totalAccrued1 + totalAccrued2, expectedIssuerShare, "Total issuer accrued mismatch");
+    }
+
+    /// @notice A reverting integrator collector must NOT brick the tax callback. The slice is
+    ///         held in `pendingIntegratorFees` and a `FeeForwardFailed("Integrator", amount)`
+    ///         event is emitted — same try/catch pattern as LP/boardwalk forwards.
+    function test_OnTaxReceived_IntegratorCollectorReverts_AccumulatesPending() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        fd.initialize(p);
+
+        integratorCollector.setShouldRevert(true);
+
+        uint256 taxAmount = 10000e18;
+        uint256 expectedIntegratorShare = taxAmount * 1000 / 10000;
+        deal(address(token), address(fd), taxAmount);
+
+        vm.expectEmit(true, true, true, true, address(fd));
+        emit FeeForwardFailed("Integrator", expectedIntegratorShare);
+
+        vm.prank(address(token));
+        fd.onTaxReceived(taxAmount);
+
+        assertEq(
+            fd.pendingIntegratorFees(),
+            expectedIntegratorShare,
+            "Integrator share should accumulate in pendingIntegratorFees"
+        );
+        assertEq(integratorCollector.callCount(), 0, "Integrator receiveFees should not have succeeded");
+        assertEq(token.balanceOf(integratorCollectorAddr), 0, "No tokens should have been pulled");
+
+        // Other downstream forwards still ran on the same call.
+        assertEq(lpStaking.callCount(), 1, "LP forward should still succeed");
+        assertEq(feeCollector.callCount(), 1, "Boardwalk forward should still succeed");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  Issuer Raise-Token Claim
     // ──────────────────────────────────────────────────────────────────────────
 
     function test_ClaimAsWeth_OnlyRecipientCanCall() public {
@@ -762,7 +834,6 @@ contract FeeDistributorTest is Test {
         uint256 totalAccrued = 100000e18;
         _accrueIssuerFees(0, totalAccrued);
 
-        // First claim: can claim 10% = 10000e18
         uint256 claimable = feeDistributor.claimableAmount(0);
         assertEq(claimable, totalAccrued / 10, "First claim should be 10% of total accrued");
 
@@ -777,18 +848,9 @@ contract FeeDistributorTest is Test {
     }
 
     function test_ClaimAsWeth_RateLimit_IndependentPerRecipient() public {
-        // Accrue fees for both recipients
-        // When we call _accrueIssuerFees, it accrues for all recipients proportionally
-        // So we need to accrue enough that each gets the desired amount
-        uint256 desiredAmount0 = 100000e18;
-        uint256 desiredAmount1 = 100000e18;
+        _accrueIssuerFees(0, 100000e18);
+        _accrueIssuerFees(1, 100000e18);
 
-        // Accrue for recipient 0 (this will also accrue for others)
-        _accrueIssuerFees(0, desiredAmount0);
-        // Accrue for recipient 1 (this will also accrue for others)
-        _accrueIssuerFees(1, desiredAmount1);
-
-        // Both recipients should be able to claim independently
         (uint256 totalAccrued0,,,) = feeDistributor.issuerClaimStates(0);
         (uint256 totalAccrued1,,,) = feeDistributor.issuerClaimStates(1);
 
@@ -813,17 +875,14 @@ contract FeeDistributorTest is Test {
         uint256 totalAccrued = 100000e18;
         _accrueIssuerFees(0, totalAccrued);
 
-        // First claim
         uint256 firstClaimable = feeDistributor.claimableAmount(0);
         deal(address(token), address(feeDistributor), firstClaimable);
 
         vm.prank(issuer1);
         feeDistributor.claimAsRaiseToken(0, 0, type(uint256).max);
 
-        // Warp forward 24 hours + 1 second
         vm.warp(block.timestamp + 1 days + 1);
 
-        // Should be able to claim another 10%
         uint256 secondClaimable = feeDistributor.claimableAmount(0);
         assertEq(secondClaimable, totalAccrued / 10, "Should be able to claim another 10% after 24h");
 
@@ -836,25 +895,14 @@ contract FeeDistributorTest is Test {
         uint256 totalAccrued = 100000e18;
         _accrueIssuerFees(0, totalAccrued);
 
-        // First claim: claim half of the 10% limit
         uint256 firstClaimable = feeDistributor.claimableAmount(0);
-        uint256 firstClaim = firstClaimable / 2;
-
-        // We need to manually set the claim state to claim a partial amount
-        // Since we can't directly set state, we'll claim the full amount and then
-        // accrue more to test the same period logic differently
-        // Actually, let's just test that claiming reduces the claimable amount
         deal(address(token), address(feeDistributor), firstClaimable);
 
         vm.prank(issuer1);
         feeDistributor.claimAsRaiseToken(0, 0, block.timestamp + 1 hours);
 
-        // Same period: should be 0 after claiming full period limit
         uint256 remainingClaimable = feeDistributor.claimableAmount(0);
         assertEq(remainingClaimable, 0, "Should be 0 after claiming full period limit");
-
-        // After claiming remaining, should be 0
-        assertEq(feeDistributor.claimableAmount(0), 0, "Should be 0 after claiming full period");
     }
 
     function test_ClaimAsWeth_SlippageProtection() public {
@@ -864,10 +912,9 @@ contract FeeDistributorTest is Test {
         uint256 claimable = feeDistributor.claimableAmount(0);
         deal(address(token), address(feeDistributor), claimable);
 
-        // Set minWethOut higher than what router will return
-        uint256 minRaiseTokenOut = 10000e18; // Unrealistically high
+        uint256 minRaiseTokenOut = 10000e18; // unrealistically high
 
-        vm.expectRevert(); // Router will revert with "Slippage exceeded"
+        vm.expectRevert();
         vm.prank(issuer1);
         feeDistributor.claimAsRaiseToken(0, minRaiseTokenOut, block.timestamp + 1 hours);
     }
@@ -879,10 +926,9 @@ contract FeeDistributorTest is Test {
         uint256 claimable = feeDistributor.claimableAmount(0);
         deal(address(token), address(feeDistributor), claimable);
 
-        // Set deadline in the past
         uint256 pastDeadline = block.timestamp - 1;
 
-        vm.expectRevert(); // Router will revert with "Deadline exceeded"
+        vm.expectRevert();
         vm.prank(issuer1);
         feeDistributor.claimAsRaiseToken(0, 0, pastDeadline);
     }
@@ -894,7 +940,6 @@ contract FeeDistributorTest is Test {
         uint256 claimable = feeDistributor.claimableAmount(0);
         deal(address(token), address(feeDistributor), claimable);
 
-        // Calculate expected WETH output (0.5 WETH per token)
         uint256 expectedWethOut = claimable * 0.5e18 / 1e18;
 
         vm.expectEmit(true, true, true, true, address(feeDistributor));
@@ -905,7 +950,6 @@ contract FeeDistributorTest is Test {
     }
 
     function test_RevertWhen_ClaimAsWeth_NothingToClaim() public {
-        // No fees accrued
         assertEq(feeDistributor.claimableAmount(0), 0, "Should be 0 when nothing accrued");
 
         vm.expectRevert(FeeDistributor.NothingToClaimYet.selector);
@@ -916,8 +960,7 @@ contract FeeDistributorTest is Test {
     function test_RevertWhen_ClaimAsWeth_InvalidRecipientIdx() public {
         _accrueIssuerFees(0, 10000e18);
 
-        // Try to claim with invalid index (out of bounds)
-        vm.expectRevert(); // Array out of bounds
+        vm.expectRevert();
         vm.prank(issuer1);
         feeDistributor.claimAsRaiseToken(999, 0, block.timestamp + 1 hours);
     }
@@ -972,15 +1015,12 @@ contract FeeDistributorTest is Test {
         _accrueReferrerFees(1000e18);
         deal(address(token), address(feeDistributor), 1000e18);
 
-        // First claim: 500e18
         vm.prank(referrer);
         feeDistributor.claimReferrerFees();
 
-        // Accrue more
         _accrueReferrerFees(500e18);
         deal(address(token), address(feeDistributor), 500e18);
 
-        // Second claim: should get remaining 500e18
         uint256 balanceBefore = token.balanceOf(referrer);
         vm.prank(referrer);
         feeDistributor.claimReferrerFees();
@@ -990,7 +1030,7 @@ contract FeeDistributorTest is Test {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  Timelocked Address Changes - Issuer
+    //  Timelocked Address Changes — Issuer
     // ──────────────────────────────────────────────────────────────────────────
 
     function test_SignalChangeIssuerAddress_OnlyCurrentRecipient() public {
@@ -1030,13 +1070,11 @@ contract FeeDistributorTest is Test {
         vm.prank(issuer1);
         feeDistributor.signalChangeIssuerAddress(0, newAddress);
 
-        // Warp past delay
         vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
 
         vm.expectEmit(true, true, true, true, address(feeDistributor));
         emit IssuerAddressChanged(0, issuer1, newAddress);
 
-        // Anyone can execute
         vm.prank(bob);
         feeDistributor.executeChangeIssuerAddress(0, newAddress);
 
@@ -1049,7 +1087,6 @@ contract FeeDistributorTest is Test {
         vm.prank(issuer1);
         feeDistributor.signalChangeIssuerAddress(0, newAddress);
 
-        // Try to execute before delay
         vm.expectRevert(abi.encodeWithSelector(Timelocked.TimelockTooEarly.selector, block.timestamp + TIMELOCK_DELAY));
         feeDistributor.executeChangeIssuerAddress(0, newAddress);
     }
@@ -1064,7 +1101,6 @@ contract FeeDistributorTest is Test {
         uint256 executeTime = signalTime + TIMELOCK_DELAY;
         uint256 expiryTime = executeTime + TIMELOCK_EXPIRY;
 
-        // Warp past delay + expiry
         vm.warp(expiryTime + 1);
 
         vm.expectRevert(abi.encodeWithSelector(Timelocked.TimelockExpired.selector, expiryTime));
@@ -1101,18 +1137,15 @@ contract FeeDistributorTest is Test {
         uint256 totalAccrued = 10000e18;
         _accrueIssuerFees(0, totalAccrued);
 
-        // Signal change
         vm.prank(issuer1);
         feeDistributor.signalChangeIssuerAddress(0, newAddress);
 
-        // Warp past delay but before execution
         vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
 
-        // Old address should still be able to claim
         uint256 claimable = feeDistributor.claimableAmount(0);
         deal(address(token), address(feeDistributor), claimable);
 
-        vm.prank(issuer1); // Old address
+        vm.prank(issuer1); // old address
         feeDistributor.claimAsRaiseToken(0, 0, block.timestamp + 1 hours);
 
         assertGt(weth.balanceOf(issuer1), 0, "Old address should receive WETH");
@@ -1120,7 +1153,7 @@ contract FeeDistributorTest is Test {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  Timelocked Address Changes - Referrer
+    //  Timelocked Address Changes — Referrer
     // ──────────────────────────────────────────────────────────────────────────
 
     function test_SignalChangeReferrerAddress_OnlyCurrentRecipient() public {
@@ -1159,6 +1192,28 @@ contract FeeDistributorTest is Test {
         feeDistributor.cancelChangeReferrerAddress();
     }
 
+    function test_CancelChangeReferrerAddress() public {
+        address newAddr = makeAddr("newReferrer");
+        vm.prank(referrer);
+        feeDistributor.signalChangeReferrerAddress(newAddr);
+
+        vm.prank(referrer);
+        feeDistributor.cancelChangeReferrerAddress();
+
+        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
+        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
+        feeDistributor.executeChangeReferrerAddress(newAddr);
+    }
+
+    function test_RevertWhen_ExecuteChangeReferrerAddress_ZeroAddress() public {
+        vm.prank(referrer);
+        feeDistributor.signalChangeReferrerAddress(address(0));
+
+        vm.warp(block.timestamp + TIMELOCK_DELAY);
+        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
+        feeDistributor.executeChangeReferrerAddress(address(0));
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     //  Generic Timelock Path Blocked
     // ──────────────────────────────────────────────────────────────────────────
@@ -1184,7 +1239,7 @@ contract FeeDistributorTest is Test {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    //  Edge Cases
+    //  Edge Cases — claimableAmount
     // ──────────────────────────────────────────────────────────────────────────
 
     function test_ClaimableAmount_ZeroWhenNothingAccrued() public view {
@@ -1192,11 +1247,9 @@ contract FeeDistributorTest is Test {
     }
 
     function test_ClaimableAmount_SmallAccrued_LessThan10Percent() public {
-        // Accrue less than 10% worth
-        uint256 smallAmount = 100e18; // Less than 10% of any reasonable total
+        uint256 smallAmount = 100e18;
         _accrueIssuerFees(0, smallAmount);
 
-        // Should still be able to claim up to 10% of total accrued
         uint256 claimable = feeDistributor.claimableAmount(0);
         assertEq(claimable, smallAmount / 10, "Should be 10% of small amount");
     }
@@ -1220,14 +1273,45 @@ contract FeeDistributorTest is Test {
         vm.prank(issuer1);
         feeDistributor.claimAsRaiseToken(0, 0, block.timestamp + 1 hours);
 
-        // Same period: should be 0
         assertEq(feeDistributor.claimableAmount(0), 0, "Should be 0 after claiming full period");
 
-        // Warp forward 24h
         vm.warp(block.timestamp + 1 days + 1);
 
-        // Should be able to claim another 10%
         assertEq(feeDistributor.claimableAmount(0), totalAccrued / 10, "Should be claimable after new period");
+    }
+
+    function test_ClaimableAmount_ZeroWhenFullyClaimed() public {
+        uint256 totalAccrued = 1000e18;
+        _accrueIssuerFees(0, totalAccrued);
+
+        uint256 claimable = feeDistributor.claimableAmount(0);
+        deal(address(token), address(feeDistributor), claimable);
+        vm.prank(issuer1);
+        feeDistributor.claimAsRaiseToken(0, 0, type(uint256).max);
+
+        assertEq(feeDistributor.claimableAmount(0), 0, "Should be 0 after claiming period limit");
+    }
+
+    function test_ClaimableAmount_DustEscape_TinyAccrual() public {
+        // 9 wei accrued: maxClaimable = 9/10 = 0 → dust escape returns full unclaimed.
+        _accrueIssuerFees(0, 9);
+        uint256 claimable = feeDistributor.claimableAmount(0);
+        assertEq(claimable, 9, "Dust escape: when maxClaimable rounds to 0, full unclaimed is returned");
+    }
+
+    function test_ClaimableAmount_DustEscape_ReturnsFullUnclaimed() public {
+        _accrueIssuerFees(0, 9);
+        uint256 claimable = feeDistributor.claimableAmount(0);
+        assertEq(claimable, 9, "Dust escape: 9 wei accrued, full unclaimed returned");
+
+        // Top up to 10 wei total → maxClaimable = 1 → normal rate limit applies.
+        _accrueIssuerFees(0, 1);
+
+        (uint256 totalAccrued,,,) = feeDistributor.issuerClaimStates(0);
+        assertEq(totalAccrued, 10, "Total accrued should be 10 after second accrual");
+
+        uint256 claimable2 = feeDistributor.claimableAmount(0);
+        assertEq(claimable2, 1, "Normal rate limit: 10% of 10 = 1 wei (boundary between dust escape and normal)");
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1248,19 +1332,12 @@ contract FeeDistributorTest is Test {
         uint256 referrerShare = taxAmount * 1000 / 10000;
         uint256 issuerShare = taxAmount - lpShare - boardwalkShare - referrerShare;
 
-        // Verify splits sum correctly
         assertEq(lpShare + boardwalkShare + referrerShare + issuerShare, taxAmount, "Splits should sum to total");
 
-        // Verify LP share forwarded
         assertEq(lpStaking.totalFeesReceived(), lpShare, "LP share mismatch");
-
-        // Verify Boardwalk share forwarded
         assertEq(feeCollector.accumulatedFees(address(token)), boardwalkShare, "Boardwalk share mismatch");
-
-        // Verify referrer accrued
         assertEq(feeDistributor.referrerAccrued(), referrerShare, "Referrer share mismatch");
 
-        // Verify issuer share accrued (sum of all recipients)
         (uint256 totalAccrued0,,,) = feeDistributor.issuerClaimStates(0);
         (uint256 totalAccrued1,,,) = feeDistributor.issuerClaimStates(1);
         (uint256 totalAccrued2,,,) = feeDistributor.issuerClaimStates(2);
@@ -1294,7 +1371,6 @@ contract FeeDistributorTest is Test {
         vm.prank(issuer1);
         feeDistributor.claimAsRaiseToken(0, 0, block.timestamp + 1 hours);
 
-        // After claiming, should be 0 in same period
         assertEq(feeDistributor.claimableAmount(0), 0, "Should be 0 after claiming in same period");
     }
 
@@ -1319,7 +1395,6 @@ contract FeeDistributorTest is Test {
     // ──────────────────────────────────────────────────────────────────────────
 
     function test_OnTaxReceived_LPStakingReverts_FallbackAccumulates() public {
-        // Configure mock LPStaking to revert
         lpStaking.setShouldRevert(true);
 
         uint256 taxAmount = 10000e18;
@@ -1327,32 +1402,25 @@ contract FeeDistributorTest is Test {
 
         uint256 expectedLpShare = taxAmount * 2000 / 10000;
 
-        // Expect FeeForwardFailed event for lpStaking
         vm.expectEmit(true, true, true, true, address(feeDistributor));
         emit FeeForwardFailed("LPStaking", expectedLpShare);
 
         vm.prank(address(token));
         feeDistributor.onTaxReceived(taxAmount);
 
-        // LP fees should accumulate in pendingLpFees
         assertEq(feeDistributor.pendingLpFees(), expectedLpShare, "LP fees should accumulate in pending");
-
-        // LPStaking mock should NOT have been called successfully
         assertEq(lpStaking.callCount(), 0, "LPStaking notifyFees should not succeed");
 
-        // Boardwalk fees should still have been forwarded
         assertEq(feeCollector.callCount(), 1, "FeeCollector should still be called");
         uint256 expectedBwShare = taxAmount * 2000 / 10000;
         assertEq(feeCollector.accumulatedFees(address(token)), expectedBwShare, "Boardwalk share should be forwarded");
 
-        // Issuer and referrer should still accrue (storage-only, can't fail)
         (uint256 totalAccrued0,,,) = feeDistributor.issuerClaimStates(0);
         assertGt(totalAccrued0, 0, "Issuer fees should still accrue");
         assertGt(feeDistributor.referrerAccrued(), 0, "Referrer fees should still accrue");
     }
 
     function test_OnTaxReceived_FeeCollectorReverts_FallbackAccumulates() public {
-        // Configure mock FeeCollector to revert
         feeCollector.setShouldRevert(true);
 
         uint256 taxAmount = 10000e18;
@@ -1360,32 +1428,25 @@ contract FeeDistributorTest is Test {
 
         uint256 expectedBwShare = taxAmount * 2000 / 10000;
 
-        // Expect FeeForwardFailed event for feeCollector
         vm.expectEmit(true, true, true, true, address(feeDistributor));
         emit FeeForwardFailed("FeeCollector", expectedBwShare);
 
         vm.prank(address(token));
         feeDistributor.onTaxReceived(taxAmount);
 
-        // Boardwalk fees should accumulate in pendingBoardwalkFees
         assertEq(feeDistributor.pendingBoardwalkFees(), expectedBwShare, "BW fees should accumulate in pending");
-
-        // FeeCollector should NOT have been called successfully
         assertEq(feeCollector.callCount(), 0, "FeeCollector receiveFees should not succeed");
 
-        // LP fees should still have been forwarded
         assertEq(lpStaking.callCount(), 1, "LPStaking should still be called");
         uint256 expectedLpShare = taxAmount * 2000 / 10000;
         assertEq(lpStaking.totalFeesReceived(), expectedLpShare, "LP share should be forwarded");
 
-        // Issuer and referrer should still accrue
         (uint256 totalAccrued0,,,) = feeDistributor.issuerClaimStates(0);
         assertGt(totalAccrued0, 0, "Issuer fees should still accrue");
         assertGt(feeDistributor.referrerAccrued(), 0, "Referrer fees should still accrue");
     }
 
     function test_RetryPendingFees_Success() public {
-        // Step 1: cause fees to accumulate by having both targets revert
         lpStaking.setShouldRevert(true);
         feeCollector.setShouldRevert(true);
 
@@ -1401,23 +1462,19 @@ contract FeeDistributorTest is Test {
         assertEq(feeDistributor.pendingLpFees(), expectedLpShare, "LP fees should be pending");
         assertEq(feeDistributor.pendingBoardwalkFees(), expectedBwShare, "BW fees should be pending");
 
-        // Step 2: fix the mocks so they accept fees
         lpStaking.setShouldRevert(false);
         feeCollector.setShouldRevert(false);
 
-        // Step 3: retry — should forward and zero accumulators
         feeDistributor.retryPendingFees();
 
         assertEq(feeDistributor.pendingLpFees(), 0, "LP pending should be 0 after retry");
         assertEq(feeDistributor.pendingBoardwalkFees(), 0, "BW pending should be 0 after retry");
 
-        // Verify fees were forwarded to mocks
         assertEq(lpStaking.totalFeesReceived(), expectedLpShare, "LP should receive forwarded fees");
         assertEq(feeCollector.accumulatedFees(address(token)), expectedBwShare, "BW should receive forwarded fees");
     }
 
     function test_RetryPendingFees_NothingPending() public {
-        // No pending fees — retryPendingFees should be a no-op
         assertEq(feeDistributor.pendingLpFees(), 0, "No LP fees pending");
         assertEq(feeDistributor.pendingBoardwalkFees(), 0, "No BW fees pending");
 
@@ -1428,7 +1485,6 @@ contract FeeDistributorTest is Test {
     }
 
     function test_RetryPendingFees_PartialRetry() public {
-        // Accumulate both types of pending fees
         lpStaking.setShouldRevert(true);
         feeCollector.setShouldRevert(true);
 
@@ -1443,16 +1499,107 @@ contract FeeDistributorTest is Test {
         assertGt(lpPending, 0, "LP fees should be pending");
         assertGt(bwPending, 0, "BW fees should be pending");
 
-        // Fix LP but keep BW reverting
         lpStaking.setShouldRevert(false);
         // feeCollector still reverts
 
         feeDistributor.retryPendingFees();
 
-        // LP branch succeeds and clears, BW branch fails and remains pending.
         assertEq(feeDistributor.pendingLpFees(), 0, "LP pending should clear after successful retry");
         assertEq(feeDistributor.pendingBoardwalkFees(), bwPending, "BW pending should remain after failed BW retry");
         assertEq(lpStaking.totalFeesReceived(), lpPending, "LP should receive forwarded fees");
+    }
+
+    /// @notice The new pendingIntegratorFees branch of retryPendingFees flushes the integrator
+    ///         bucket once the collector accepts. Mirrors the LP / boardwalk retry semantics.
+    function test_RetryPendingFees_FlushesIntegrator() public {
+        FeeDistributor fd = _deployUninitializedFeeDistributor();
+        FeeDistributor.InitParams memory p = _integratorInitParams();
+        fd.initialize(p);
+
+        // Accumulate via revert.
+        integratorCollector.setShouldRevert(true);
+        uint256 taxAmount = 10000e18;
+        uint256 expectedShare = taxAmount * 1000 / 10000;
+        deal(address(token), address(fd), taxAmount);
+
+        vm.prank(address(token));
+        fd.onTaxReceived(taxAmount);
+
+        assertEq(fd.pendingIntegratorFees(), expectedShare, "Integrator pending should accumulate");
+        assertEq(token.balanceOf(integratorCollectorAddr), 0, "No tokens should have been pulled yet");
+
+        // Make collector accept and flush.
+        integratorCollector.setShouldRevert(false);
+        fd.retryPendingFees();
+
+        assertEq(fd.pendingIntegratorFees(), 0, "Integrator pending should clear after retry");
+        assertEq(integratorCollector.callCount(), 1, "Integrator receiveFees should fire on retry");
+        assertEq(integratorCollector.lastAmount(), expectedShare, "Integrator collector lastAmount mismatch");
+        assertEq(
+            token.balanceOf(integratorCollectorAddr), expectedShare, "Integrator collector should hold pulled tokens"
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    //  setFeeCollector — BoardwalkFeeCollector rotation
+    // ──────────────────────────────────────────────────────────────────────────
+
+    function test_SetFeeCollector_Success() public {
+        address newCollector = makeAddr("newFeeCollector");
+
+        vm.expectEmit(true, true, true, true, address(feeDistributor));
+        emit FeeCollectorChanged(address(feeCollector), newCollector);
+
+        vm.prank(address(feeCollector));
+        feeDistributor.setFeeCollector(newCollector);
+
+        assertEq(feeDistributor.feeCollector(), newCollector, "feeCollector should be updated");
+    }
+
+    function test_RevertWhen_SetFeeCollector_NotFeeCollector() public {
+        address newCollector = makeAddr("newFeeCollector");
+
+        vm.expectRevert(FeeDistributor.OnlyFeeCollector.selector);
+        vm.prank(alice);
+        feeDistributor.setFeeCollector(newCollector);
+    }
+
+    function test_RevertWhen_SetFeeCollector_ZeroAddress() public {
+        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
+        vm.prank(address(feeCollector));
+        feeDistributor.setFeeCollector(address(0));
+    }
+
+    /// @notice Cannot rotate to an address already exempt — boolean-mapping aliasing protection.
+    function test_RevertWhen_SetFeeCollector_DuplicateExempt() public {
+        address candidate = makeAddr("alreadyExempt");
+        token.updateExempt(candidate, true);
+
+        vm.prank(address(feeCollector));
+        vm.expectRevert(FeeDistributor.DuplicateRoleAddress.selector);
+        feeDistributor.setFeeCollector(candidate);
+    }
+
+    function test_SetFeeCollector_ApprovalsRotate() public {
+        address newCollector = makeAddr("newFeeCollector");
+
+        assertEq(
+            token.allowance(address(feeDistributor), address(feeCollector)),
+            type(uint256).max,
+            "old collector should have max approval before"
+        );
+
+        vm.prank(address(feeCollector));
+        feeDistributor.setFeeCollector(newCollector);
+
+        assertEq(
+            token.allowance(address(feeDistributor), address(feeCollector)), 0, "old collector approval should be 0"
+        );
+        assertEq(
+            token.allowance(address(feeDistributor), newCollector),
+            type(uint256).max,
+            "new collector should have max approval"
+        );
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1471,45 +1618,44 @@ contract FeeDistributorTest is Test {
         return fd;
     }
 
+    /// @dev Default params: integrator role disabled (bps == 0, collector unwired). Sums to 10000.
     function _defaultInitParams() internal view returns (FeeDistributor.InitParams memory) {
         return FeeDistributor.InitParams({
             token: address(token),
             lpStaking: address(lpStaking),
             feeCollector: address(feeCollector),
+            integratorCollector: address(0),
             router: address(router),
             raiseToken: address(weth),
             issuerRecipients: _toArray(issuer1, issuer2, issuer3),
-            issuerSplits: _toArray(4000, 3000, 3000), // Sums to 10000
+            issuerSplits: _toArray(4000, 3000, 3000),
             referrer: referrer,
-            integrator: address(0),
-            ancillary: address(0),
             issuerBps: 5000,
             boardwalkBps: 2000,
             lpIncentiveBps: 2000,
             referrerBps: 1000,
-            integratorBps: 0,
-            ancillaryBps: 0
+            integratorBps: 0
         });
     }
 
+    /// @dev Wires the chain-level integrator collector with a non-zero bucket and drops the
+    ///      referrer for clean integrator-share assertions. Sums to 10000.
     function _integratorInitParams() internal view returns (FeeDistributor.InitParams memory) {
         return FeeDistributor.InitParams({
             token: address(token),
             lpStaking: address(lpStaking),
             feeCollector: address(feeCollector),
+            integratorCollector: integratorCollectorAddr,
             router: address(router),
             raiseToken: address(weth),
             issuerRecipients: _toArray(issuer1, issuer2, issuer3),
             issuerSplits: _toArray(4000, 3000, 3000),
             referrer: address(0),
-            integrator: integratorAddr,
-            ancillary: address(0),
             issuerBps: 4000,
             boardwalkBps: 3000,
             lpIncentiveBps: 2000,
             referrerBps: 0,
-            integratorBps: 1000,
-            ancillaryBps: 0
+            integratorBps: 1000
         });
     }
 
@@ -1573,55 +1719,18 @@ contract FeeDistributorTest is Test {
         return arr;
     }
 
-    function _toArray(
-        string memory a
-    ) internal pure returns (string[] memory) {
-        string[] memory arr = new string[](1);
-        arr[0] = a;
-        return arr;
-    }
-
-    function _toArray(
-        string memory a,
-        string memory b
-    ) internal pure returns (string[] memory) {
-        string[] memory arr = new string[](2);
-        arr[0] = a;
-        arr[1] = b;
-        return arr;
-    }
-
-    function _toArray(
-        string memory a,
-        string memory b,
-        string memory c
-    ) internal pure returns (string[] memory) {
-        string[] memory arr = new string[](3);
-        arr[0] = a;
-        arr[1] = b;
-        arr[2] = c;
-        return arr;
-    }
-
+    /// @dev Drives `onTaxReceived` with a tax amount sized to deposit `amount` for
+    ///      `recipientIdx` against the default issuer-split layout (4000/3000/3000).
     function _accrueIssuerFees(
         uint256 recipientIdx,
         uint256 amount
     ) internal {
-        // Calculate tax amount needed to accrue `amount` for recipient at `recipientIdx`
-        // The recipient gets: issuerShare * issuerSplits[recipientIdx] / 10000
-        // issuerShare = taxAmount * issuerBps / totalFeeBps
-        // So: amount = taxAmount * issuerBps / totalFeeBps * issuerSplits[recipientIdx] / 10000
-        // Therefore: taxAmount = amount * totalFeeBps * 10000 / (issuerBps * issuerSplits[recipientIdx])
         uint256 issuerBps = feeDistributor.issuerBps();
         uint256 totalFeeBps = feeDistributor.totalFeeBps();
 
-        // Get the split for this recipient (need to read from storage)
-        // For default setup: recipient 0 gets 4000/10000, recipient 1 gets 3000/10000, recipient 2 gets 3000/10000
         uint256 splitBps;
         if (recipientIdx == 0) {
             splitBps = 4000;
-        } else if (recipientIdx == 1) {
-            splitBps = 3000;
         } else {
             splitBps = 3000;
         }
@@ -1636,8 +1745,6 @@ contract FeeDistributorTest is Test {
     function _accrueReferrerFees(
         uint256 amount
     ) internal {
-        // referrerShare = taxAmount * referrerBps / totalFeeBps
-        // So: taxAmount = referrerShare * totalFeeBps / referrerBps
         uint256 referrerBps = feeDistributor.referrerBps();
         uint256 totalFeeBps = feeDistributor.totalFeeBps();
         uint256 taxAmount = amount * totalFeeBps / referrerBps;
@@ -1645,506 +1752,5 @@ contract FeeDistributorTest is Test {
         deal(address(token), address(feeDistributor), taxAmount);
         vm.prank(address(token));
         feeDistributor.onTaxReceived(taxAmount);
-    }
-
-    // ================================================================
-    //  COVERAGE GAP TESTS
-    // ================================================================
-
-    function test_CancelChangeReferrerAddress() public {
-        address newAddr = makeAddr("newReferrer");
-        vm.prank(referrer);
-        feeDistributor.signalChangeReferrerAddress(newAddr);
-
-        vm.prank(referrer);
-        feeDistributor.cancelChangeReferrerAddress();
-
-        // Verify cancel succeeded: execute should revert with TimelockNotSignaled
-        vm.warp(block.timestamp + TIMELOCK_DELAY + 1);
-        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
-        feeDistributor.executeChangeReferrerAddress(newAddr);
-    }
-
-    function test_ClaimableAmount_ZeroWhenFullyClaimed() public {
-        uint256 totalAccrued = 1000e18;
-        _accrueIssuerFees(0, totalAccrued);
-
-        // Claim the max (10%)
-        uint256 claimable = feeDistributor.claimableAmount(0);
-        deal(address(token), address(feeDistributor), claimable);
-        vm.prank(issuer1);
-        feeDistributor.claimAsRaiseToken(0, 0, type(uint256).max);
-
-        // Same period: claimable should be 0
-        assertEq(feeDistributor.claimableAmount(0), 0, "Should be 0 after claiming period limit");
-    }
-
-    function test_ClaimableAmount_DustEscape_TinyAccrual() public {
-        // Accrue 9 wei for recipient 0: maxClaimable = 9/10 = 0, dust escape returns full unclaimed
-        _accrueIssuerFees(0, 9);
-        uint256 claimable = feeDistributor.claimableAmount(0);
-        assertEq(claimable, 9, "Dust escape: when maxClaimable rounds to 0, full unclaimed is returned");
-    }
-
-    function test_ClaimableAmount_DustEscape_ReturnsFullUnclaimed() public {
-        // Step 1: Accrue exactly 9 wei for recipient 0
-        // maxClaimable = 9/10 = 0 → dust escape returns full unclaimed = 9
-        _accrueIssuerFees(0, 9);
-        uint256 claimable = feeDistributor.claimableAmount(0);
-        assertEq(claimable, 9, "Dust escape: 9 wei accrued, full unclaimed returned");
-
-        // Step 2: Accrue 1 more wei (total accrued = 10)
-        // maxClaimable = 10/10 = 1 → normal rate limit applies, returns min(1, 10) = 1
-        _accrueIssuerFees(0, 1);
-
-        (uint256 totalAccrued,,,) = feeDistributor.issuerClaimStates(0);
-        assertEq(totalAccrued, 10, "Total accrued should be 10 after second accrual");
-
-        uint256 claimable2 = feeDistributor.claimableAmount(0);
-        assertEq(claimable2, 1, "Normal rate limit: 10% of 10 = 1 wei (boundary between dust escape and normal)");
-    }
-
-    function test_RevertWhen_ExecuteChangeReferrerAddress_ZeroAddress() public {
-        vm.prank(referrer);
-        feeDistributor.signalChangeReferrerAddress(address(0));
-
-        vm.warp(block.timestamp + TIMELOCK_DELAY);
-        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
-        feeDistributor.executeChangeReferrerAddress(address(0));
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    //  setFeeCollector
-    // ──────────────────────────────────────────────────────────────────────────
-
-    function test_SetFeeCollector_Success() public {
-        address newCollector = makeAddr("newFeeCollector");
-
-        vm.expectEmit(true, true, true, true, address(feeDistributor));
-        emit FeeCollectorChanged(address(feeCollector), newCollector);
-
-        vm.prank(address(feeCollector));
-        feeDistributor.setFeeCollector(newCollector);
-
-        assertEq(feeDistributor.feeCollector(), newCollector, "feeCollector should be updated");
-    }
-
-    function test_RevertWhen_SetFeeCollector_NotFeeCollector() public {
-        address newCollector = makeAddr("newFeeCollector");
-
-        vm.expectRevert(FeeDistributor.OnlyFeeCollector.selector);
-        vm.prank(alice);
-        feeDistributor.setFeeCollector(newCollector);
-    }
-
-    function test_RevertWhen_SetFeeCollector_ZeroAddress() public {
-        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
-        vm.prank(address(feeCollector));
-        feeDistributor.setFeeCollector(address(0));
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    //  Integrator
-    // ──────────────────────────────────────────────────────────────────────────
-
-    function test_Init_WithIntegrator() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        assertEq(fd.integrator(), integratorAddr, "integrator mismatch");
-        assertEq(fd.integratorBps(), 1000, "integratorBps mismatch");
-        assertEq(fd.referrer(), address(0), "referrer should be zero");
-        assertEq(fd.referrerBps(), 0, "referrerBps should be 0");
-        assertEq(fd.totalFeeBps(), 10000, "totalFeeBps mismatch");
-    }
-
-    function test_OnTaxReceived_WithIntegrator_SplitsCorrectly() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        uint256 taxAmount = 10000e18;
-        deal(address(token), address(fd), taxAmount);
-
-        vm.prank(address(token));
-        fd.onTaxReceived(taxAmount);
-
-        // BPS: issuer=4000, boardwalk=3000, lp=2000, integrator=1000, referrer=0 (total=10000)
-        uint256 expectedLpShare = taxAmount * 2000 / 10000;
-        uint256 expectedBoardwalkShare = taxAmount * 3000 / 10000;
-        uint256 expectedIntegratorShare = taxAmount * 1000 / 10000;
-        uint256 expectedIssuerShare = taxAmount - expectedLpShare - expectedBoardwalkShare - expectedIntegratorShare;
-
-        assertEq(lpStaking.totalFeesReceived(), expectedLpShare, "LP share mismatch");
-        assertEq(feeCollector.accumulatedFees(address(token)), expectedBoardwalkShare, "Boardwalk share mismatch");
-        // Push model: integrator receives tokens directly via safeTransfer.
-        assertEq(token.balanceOf(integratorAddr), expectedIntegratorShare, "Integrator should receive push transfer");
-        assertEq(fd.referrerAccrued(), 0, "Referrer accrued should be 0");
-
-        (uint256 totalAccrued0,,,) = fd.issuerClaimStates(0);
-        (uint256 totalAccrued1,,,) = fd.issuerClaimStates(1);
-        (uint256 totalAccrued2,,,) = fd.issuerClaimStates(2);
-        assertEq(totalAccrued0 + totalAccrued1 + totalAccrued2, expectedIssuerShare, "Total issuer accrued mismatch");
-    }
-
-    function test_OnTaxReceived_IntegratorPushOnly() public {
-        // Push model replaces the old accrue/claim flow: integrator receives tokens directly.
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        uint256 taxAmount = 10000e18;
-        deal(address(token), address(fd), taxAmount);
-
-        uint256 expectedIntegratorShare = taxAmount * 1000 / 10000;
-        uint256 balanceBefore = token.balanceOf(integratorAddr);
-
-        vm.prank(address(token));
-        fd.onTaxReceived(taxAmount);
-
-        uint256 balanceAfter = token.balanceOf(integratorAddr);
-        assertEq(balanceAfter - balanceBefore, expectedIntegratorShare, "Integrator should receive push transfer");
-        // No allowance is granted to partner-controlled collectors in push mode.
-        assertEq(token.allowance(address(fd), integratorAddr), 0, "No allowance should be granted to integrator");
-    }
-
-    function test_OnTaxReceived_NoIntegrator_NoPush() public {
-        uint256 taxAmount = 10000e18;
-        deal(address(token), address(feeDistributor), taxAmount);
-
-        uint256 integratorBalanceBefore = token.balanceOf(integratorAddr);
-
-        vm.prank(address(token));
-        feeDistributor.onTaxReceived(taxAmount);
-
-        // Integrator address is zero in default init, so no push happens.
-        assertEq(token.balanceOf(integratorAddr), integratorBalanceBefore, "No push when integrator is zero");
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    //  Push+Notify hardening — adversarial recipient regression
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /// @notice A reverting integrator collector must NOT brick the tax callback.
-    function test_ForwardThirdParty_RevertingNotify_ParentSurvives() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        mockIntegratorCollector.setShouldRevert(true);
-
-        uint256 taxAmount = 10000e18;
-        uint256 expectedShare = taxAmount * 1000 / 10000;
-        deal(address(token), address(fd), taxAmount);
-
-        vm.expectEmit(true, true, true, true, address(fd));
-        emit FeeForwardFailed("Notify", expectedShare);
-
-        vm.prank(address(token));
-        fd.onTaxReceived(taxAmount);
-
-        // Push-side `safeTransfer` always lands even when notifyFees reverts.
-        assertEq(
-            token.balanceOf(integratorAddr), expectedShare, "Integrator should still receive the safeTransfer"
-        );
-        // notifyFees never succeeded → no state on the mock.
-        assertEq(mockIntegratorCollector.callCount(), 0, "notifyFees should not have succeeded");
-        assertEq(mockIntegratorCollector.lastAmount(), 0, "lastAmount should remain unset");
-    }
-
-    /// @notice A gas-griefing integrator collector (consumes its full forwarded budget) must
-    ///         NOT brick the tax callback. The `{gas: NOTIFY_GAS_LIMIT}` cap bounds adversarial
-    ///         consumption to a known constant per forward, preserving SPEC's "tax delivery
-    ///         never reverts a transfer" invariant.
-    function test_ForwardThirdParty_GasGriefingNotify_ParentSurvives() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        mockIntegratorCollector.setShouldBurnGas(true);
-
-        uint256 taxAmount = 10000e18;
-        uint256 expectedShare = taxAmount * 1000 / 10000;
-        deal(address(token), address(fd), taxAmount);
-
-        vm.expectEmit(true, true, true, true, address(fd));
-        emit FeeForwardFailed("Notify", expectedShare);
-
-        // Wallet-default 200K user budget would survive but we use 1M as a conservative test
-        // budget. The cap means parent only loses ~NOTIFY_GAS_LIMIT, not gasleft() * 63/64.
-        vm.prank(address(token));
-        fd.onTaxReceived{gas: 1_000_000}(taxAmount);
-
-        // Tokens still landed; downstream forwards still ran.
-        assertEq(token.balanceOf(integratorAddr), expectedShare, "Integrator should still receive safeTransfer");
-        assertEq(lpStaking.callCount(), 1, "LP forward should still succeed");
-        assertEq(feeCollector.callCount(), 1, "Boardwalk forward should still succeed");
-    }
-
-    /// @notice A return-bomb integrator collector must NOT brick the tax callback. The void
-    ///         return type plus bare `catch {}` mean Solidity emits no RETURNDATACOPY, and the
-    ///         `{gas: NOTIFY_GAS_LIMIT}` cap prevents the callee from amplifying memory cost
-    ///         beyond what the parent can absorb.
-    function test_ForwardThirdParty_ReturnBombNotify_ParentSurvives() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        fd.initialize(p);
-
-        // 1MB return bomb: callee tries to set up a 1MB return buffer (mem expansion in
-        // callee = ~2M gas), which exceeds the 100K gas cap → callee OOGs → catch fires.
-        mockIntegratorCollector.setReturnBomb(true, 1_000_000);
-
-        uint256 taxAmount = 10000e18;
-        uint256 expectedShare = taxAmount * 1000 / 10000;
-        deal(address(token), address(fd), taxAmount);
-
-        vm.expectEmit(true, true, true, true, address(fd));
-        emit FeeForwardFailed("Notify", expectedShare);
-
-        vm.prank(address(token));
-        fd.onTaxReceived(taxAmount);
-
-        assertEq(token.balanceOf(integratorAddr), expectedShare, "Integrator should still receive safeTransfer");
-    }
-
-    /// @notice Both integrator AND ancillary malicious — the worst-case Base/Katana/Fraxtal
-    ///         scenario. Each gas-griefer can consume up to NOTIFY_GAS_LIMIT, so total parent
-    ///         loss is bounded by 2× NOTIFY_GAS_LIMIT. The transfer still completes.
-    function test_ForwardThirdParty_DualGasGrief_ParentSurvives() public {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        // Add ancillary as well — split BPS to keep total at 10000.
-        p.ancillary = address(mockAncillaryCollector);
-        p.integratorBps = 500;
-        p.ancillaryBps = 500;
-        // issuer 4000 + boardwalk 3000 + lp 2000 + integrator 500 + ancillary 500 = 10000.
-        fd.initialize(p);
-
-        // Both partners malicious — each burns its forwarded budget.
-        mockIntegratorCollector.setShouldBurnGas(true);
-        mockAncillaryCollector.setShouldBurnGas(true);
-
-        uint256 taxAmount = 10000e18;
-        deal(address(token), address(fd), taxAmount);
-
-        // 1M gas budget — well above the 200K minimum the cap design targets.
-        vm.prank(address(token));
-        fd.onTaxReceived{gas: 1_000_000}(taxAmount);
-
-        // safeTransfers still landed. Both forwards emitted FeeForwardFailed, but the caller
-        // survives.
-        assertEq(token.balanceOf(integratorAddr), taxAmount * 500 / 10000, "Integrator share landed");
-        assertEq(token.balanceOf(ancillaryAddr), taxAmount * 500 / 10000, "Ancillary share landed");
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    //  Self-Sovereign Integrator/Ancillary Rotation (per-clone)
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /// @dev Deploys a fresh FeeDistributor seeded with both integrator AND ancillary so the
-    ///      rotation flows can be exercised without the default-init zero-address shortcut.
-    function _deployFeeDistributorWithRoles() internal returns (FeeDistributor) {
-        FeeDistributor fd = _deployUninitializedFeeDistributor();
-        FeeDistributor.InitParams memory p = _integratorInitParams();
-        p.ancillary = address(mockAncillaryCollector);
-        p.ancillaryBps = 500;
-        p.integratorBps = 500;
-        // issuer 4000 + boardwalk 3000 + lp 2000 + integrator 500 + ancillary 500 = 10000.
-        fd.initialize(p);
-        return fd;
-    }
-
-    /// @dev Per-clone rotation timelock for integrator/ancillary is 14 days, hardcoded in FD.
-    uint256 internal constant ROLE_ROTATION_DELAY = 14 days;
-
-    function test_SignalChangeIntegratorAddress_OnlyCurrentIntegrator() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        vm.expectRevert(FeeDistributor.NotIntegrator.selector);
-        vm.prank(alice);
-        fd.signalChangeIntegratorAddress(makeAddr("newIntegrator"));
-    }
-
-    function test_ExecuteChangeIntegratorAddress_AfterDelay() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        address newIntegrator = makeAddr("newIntegrator");
-
-        vm.prank(integratorAddr);
-        fd.signalChangeIntegratorAddress(newIntegrator);
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
-        fd.executeChangeIntegratorAddress(newIntegrator);
-
-        assertEq(fd.integrator(), newIntegrator, "integrator should be rotated");
-        assertFalse(token.isExempt(integratorAddr), "old integrator should no longer be exempt");
-        assertTrue(token.isExempt(newIntegrator), "new integrator should be exempt");
-    }
-
-    /// @notice Per-clone delay is 14 days — strictly longer than the codebase's default 7d.
-    function test_RotationDelay_Is14Days() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        address newIntegrator = makeAddr("newIntegrator");
-
-        vm.prank(integratorAddr);
-        fd.signalChangeIntegratorAddress(newIntegrator);
-
-        // At 7 days, executing should still revert.
-        vm.warp(block.timestamp + 7 days);
-        vm.expectRevert();
-        fd.executeChangeIntegratorAddress(newIntegrator);
-    }
-
-    function test_RevertWhen_ExecuteChangeIntegratorAddress_ZeroAddress() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        vm.prank(integratorAddr);
-        fd.signalChangeIntegratorAddress(address(0));
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
-        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
-        fd.executeChangeIntegratorAddress(address(0));
-    }
-
-    /// @notice Cannot rotate to an address already exempt — boolean-mapping aliasing protection.
-    function test_RevertWhen_ExecuteChangeIntegratorAddress_DuplicateExempt() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        token.updateExempt(address(mockAncillaryCollector), true);
-
-        vm.prank(integratorAddr);
-        fd.signalChangeIntegratorAddress(address(mockAncillaryCollector));
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
-        vm.expectRevert(FeeDistributor.DuplicateRoleAddress.selector);
-        fd.executeChangeIntegratorAddress(address(mockAncillaryCollector));
-    }
-
-    function test_CancelChangeIntegratorAddress_OnlyCurrentIntegrator() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        vm.prank(integratorAddr);
-        fd.signalChangeIntegratorAddress(makeAddr("newIntegrator"));
-
-        vm.expectRevert(FeeDistributor.NotIntegrator.selector);
-        vm.prank(alice);
-        fd.cancelChangeIntegratorAddress();
-    }
-
-    function test_CancelChangeIntegratorAddress_ClearsPendingChange() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        address newIntegrator = makeAddr("newIntegrator");
-
-        vm.prank(integratorAddr);
-        fd.signalChangeIntegratorAddress(newIntegrator);
-
-        vm.prank(integratorAddr);
-        fd.cancelChangeIntegratorAddress();
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY + 1);
-        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
-        fd.executeChangeIntegratorAddress(newIntegrator);
-    }
-
-    function test_SignalChangeAncillaryAddress_OnlyCurrentAncillary() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        vm.expectRevert(FeeDistributor.NotAncillary.selector);
-        vm.prank(alice);
-        fd.signalChangeAncillaryAddress(makeAddr("newAncillary"));
-    }
-
-    function test_ExecuteChangeAncillaryAddress_AfterDelay() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        address newAncillary = makeAddr("newAncillary");
-
-        vm.prank(ancillaryAddr);
-        fd.signalChangeAncillaryAddress(newAncillary);
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
-        fd.executeChangeAncillaryAddress(newAncillary);
-
-        assertEq(fd.ancillary(), newAncillary, "ancillary should be rotated");
-        assertFalse(token.isExempt(ancillaryAddr), "old ancillary should no longer be exempt");
-        assertTrue(token.isExempt(newAncillary), "new ancillary should be exempt");
-    }
-
-    function test_RevertWhen_ExecuteChangeAncillaryAddress_ZeroAddress() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        vm.prank(ancillaryAddr);
-        fd.signalChangeAncillaryAddress(address(0));
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
-        vm.expectRevert(FeeDistributor.ZeroAddress.selector);
-        fd.executeChangeAncillaryAddress(address(0));
-    }
-
-    function test_RevertWhen_ExecuteChangeAncillaryAddress_DuplicateExempt() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        token.updateExempt(address(mockIntegratorCollector), true);
-
-        vm.prank(ancillaryAddr);
-        fd.signalChangeAncillaryAddress(address(mockIntegratorCollector));
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY);
-        vm.expectRevert(FeeDistributor.DuplicateRoleAddress.selector);
-        fd.executeChangeAncillaryAddress(address(mockIntegratorCollector));
-    }
-
-    function test_CancelChangeAncillaryAddress_OnlyCurrentAncillary() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        vm.prank(ancillaryAddr);
-        fd.signalChangeAncillaryAddress(makeAddr("newAncillary"));
-
-        vm.expectRevert(FeeDistributor.NotAncillary.selector);
-        vm.prank(alice);
-        fd.cancelChangeAncillaryAddress();
-    }
-
-    function test_CancelChangeAncillaryAddress_ClearsPendingChange() public {
-        FeeDistributor fd = _deployFeeDistributorWithRoles();
-        address newAncillary = makeAddr("newAncillary");
-
-        vm.prank(ancillaryAddr);
-        fd.signalChangeAncillaryAddress(newAncillary);
-
-        vm.prank(ancillaryAddr);
-        fd.cancelChangeAncillaryAddress();
-
-        vm.warp(block.timestamp + ROLE_ROTATION_DELAY + 1);
-        vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
-        fd.executeChangeAncillaryAddress(newAncillary);
-    }
-
-    /// @notice `setFeeCollector` should reject a new collector that is already exempt (catches
-    ///         collisions with FeeDistributor itself, presale, lpStaking, lpManager, integrator,
-    ///         ancillary, or vesting in one boolean read).
-    function test_RevertWhen_SetFeeCollector_DuplicateExempt() public {
-        // The current collector calls setFeeCollector. The new candidate is the integrator
-        // address, which is already exempt at clone init.
-        token.updateExempt(integratorAddr, true);
-
-        vm.prank(address(feeCollector));
-        vm.expectRevert(FeeDistributor.DuplicateRoleAddress.selector);
-        feeDistributor.setFeeCollector(integratorAddr);
-    }
-
-    function test_SetFeeCollector_ApprovalsRotate() public {
-        address newCollector = makeAddr("newFeeCollector");
-
-        // Before: old collector has max approval
-        assertEq(
-            token.allowance(address(feeDistributor), address(feeCollector)),
-            type(uint256).max,
-            "old collector should have max approval before"
-        );
-
-        vm.prank(address(feeCollector));
-        feeDistributor.setFeeCollector(newCollector);
-
-        // After: old collector approval revoked, new collector has max
-        assertEq(
-            token.allowance(address(feeDistributor), address(feeCollector)), 0, "old collector approval should be 0"
-        );
-        assertEq(
-            token.allowance(address(feeDistributor), newCollector),
-            type(uint256).max,
-            "new collector should have max approval"
-        );
     }
 }

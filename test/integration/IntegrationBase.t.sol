@@ -13,7 +13,7 @@ import {PresaleManager} from "src/core/PresaleManager.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
-import {FeeRecipientCollector} from "src/core/FeeRecipientCollector.sol";
+import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 
 // Interfaces
 import {IFeeDistributor} from "src/interfaces/IFeeDistributor.sol";
@@ -277,7 +277,10 @@ abstract contract IntegrationBase is Test {
     LaunchFactory internal factory;
     BoardwalkLPManager internal lpManager;
     BoardwalkFeeCollector internal feeCollector;
-    FeeRecipientCollector internal ancillaryCollector;
+    IntegratorFeeCollector internal integratorCollector;
+
+    // Single integrator slot for tests; receives 100% of the integrator bucket.
+    address internal integrator;
 
     // Templates (for cloning)
     BoardwalkToken internal tokenTemplate;
@@ -325,6 +328,7 @@ abstract contract IntegrationBase is Test {
         feeRecipient2 = makeAddr("feeRecipient2");
         vestingRecipient1 = makeAddr("vestingRecipient1");
         vestingRecipient2 = makeAddr("vestingRecipient2");
+        integrator = makeAddr("integrator");
         alice = makeAddr("alice");
         bob = makeAddr("bob");
         charlie = makeAddr("charlie");
@@ -347,23 +351,30 @@ abstract contract IntegrationBase is Test {
         // Deploy singletons
         feeCollector = new BoardwalkFeeCollector(owner, address(weth), address(router), treasury, keeper);
 
-        // Fee defaults: referrer is carve-out from boardwalk
-        // total = issuer + boardwalk + incentive + integrator + ancillary (referrer excluded)
+        // Fee defaults: referrer is carve-out from boardwalk. Integrator BPS is now an immutable
+        // on the factory (passed via DeployParams.integratorBps) — it does NOT live in this struct.
+        // total = issuer + boardwalk + incentive + INTEGRATOR_BPS (referrer excluded).
         defaultFeeBps = LaunchFactory.FeeBpsDefaults({
             issuer: 40, // 0.40%
             boardwalk: 45, // 0.45%
             incentive: 28, // 0.28%
             referrer: 5, // 0.05% (carved from boardwalk)
-            integrator: 0,
-            ancillary: 2, // 0.02%
-            total: 115 // 1.15% = 40+45+28+0+2
+            total: 115 // 1.15% = 40+45+28+ 2 (integrator immutable)
         });
 
         // Deploy factory (needs LPManager address, deploy placeholder first)
         lpManager = new BoardwalkLPManager(address(dexFactory), address(router), address(weth));
 
-        // Deploy ancillary collector (owned by deployer/owner for tests)
-        ancillaryCollector = new FeeRecipientCollector(owner);
+        // Deploy IntegratorFeeCollector with single test integrator (100% to `integrator`).
+        // Owner is `owner`; deployer (this test contract) calls setFactory below since the test
+        // contract is the deployer. We transferOwnership to `owner` afterwards if needed by tests.
+        address[] memory integratorAddresses = new address[](1);
+        integratorAddresses[0] = integrator;
+        uint256[] memory integratorSplits = new uint256[](1);
+        integratorSplits[0] = 10_000;
+        integratorCollector = new IntegratorFeeCollector(
+            address(this), address(weth), address(router), integratorAddresses, integratorSplits
+        );
 
         factory = new LaunchFactory(
             owner,
@@ -379,8 +390,8 @@ abstract contract IntegrationBase is Test {
                 boardwalkDexFactory: address(dexFactory),
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
-                integrator: address(0),
-                ancillary: address(ancillaryCollector),
+                integratorCollector: address(integratorCollector),
+                integratorBps: 2,
                 bmxBurnAmount: DEFAULT_BMX_BURN,
                 graduationExpress: GRADUATION_THRESHOLD,
                 graduationAdvanced: GRADUATION_THRESHOLD,
@@ -393,6 +404,9 @@ abstract contract IntegrationBase is Test {
                 memberLaunchDiscountBps: 0
             })
         );
+
+        // One-shot factory wiring on the integrator collector.
+        integratorCollector.setFactory(address(factory));
     }
 
     // ============ Helpers ============

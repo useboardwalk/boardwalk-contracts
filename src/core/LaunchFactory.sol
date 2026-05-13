@@ -57,8 +57,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         uint256 boardwalk;
         uint256 incentive;
         uint256 referrer;
-        uint256 integrator;
-        uint256 ancillary;
         uint256 total;
     }
 
@@ -79,7 +77,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     uint256 private constant MAX_INCENTIVE_BPS = 50;
     uint256 private constant MAX_REFERRER_BPS = 10;
     uint256 private constant MAX_INTEGRATOR_BPS = 50;
-    uint256 private constant MAX_ANCILLARY_BPS = 10;
 
     uint256 private constant MIN_ANTI_WHALE_TAX_BPS = 500;
     uint256 private constant MAX_ANTI_WHALE_TAX_BPS = 4000;
@@ -96,8 +93,6 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     bytes32 public constant ACTION_SET_FEE_DEFAULTS = keccak256("SET_FEE_DEFAULTS");
     bytes32 public constant ACTION_SET_PRESALE_RANGE = keccak256("SET_PRESALE_RANGE");
     bytes32 public constant ACTION_SET_FEE_COLLECTOR = keccak256("SET_FEE_COLLECTOR");
-    bytes32 public constant ACTION_SET_INTEGRATOR = keccak256("SET_INTEGRATOR");
-    bytes32 public constant ACTION_SET_ANCILLARY = keccak256("SET_ANCILLARY");
     bytes32 public constant ACTION_SET_MEMBER_LAUNCH_DISCOUNT = keccak256("SET_MEMBER_LAUNCH_DISCOUNT");
     bytes32 public constant ACTION_SET_ANTI_WHALE = keccak256("SET_ANTI_WHALE");
 
@@ -111,10 +106,10 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     address public immutable BOARDWALK_ROUTER;
     address public immutable BOARDWALK_DEX_FACTORY;
     address public immutable BOARDWALK_LP_MANAGER;
+    address public immutable INTEGRATOR_COLLECTOR;
+    uint256 public immutable INTEGRATOR_BPS;
 
     address public boardwalkFeeCollector;
-    address public integrator;
-    address public ancillary;
 
     uint256 public bmxBurnAmount;
 
@@ -154,9 +149,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     error ZeroGraduation();
     error IssuerVestingRecipientsRequired();
     error MemberDiscountOutOfRange(uint256 bps);
-    error NotIntegrator();
-    error NotAncillary();
-    error OwnerCannotRotateRole();
+    error IntegratorCollectorMismatch();
     error DuplicateRoleAddress();
 
     event LaunchCreated(
@@ -173,13 +166,9 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     event BmxBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
     event GraduationThresholdChanged(LaunchPath path, uint256 oldThreshold, uint256 newThreshold);
     event PresaleDurationChanged(LaunchPath path, uint256 oldDuration, uint256 newDuration);
-    event FeeDefaultsChanged(
-        uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer, uint256 integrator, uint256 ancillary
-    );
+    event FeeDefaultsChanged(uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer);
     event PresaleRangeChanged(uint256 oldMin, uint256 oldMax, uint256 newMin, uint256 newMax);
     event FeeCollectorChanged(address oldCollector, address newCollector);
-    event IntegratorChanged(address oldIntegrator, address newIntegrator);
-    event AncillaryChanged(address oldAncillary, address newAncillary);
     event MemberLaunchDiscountChanged(uint256 oldDiscount, uint256 newDiscount);
     event AntiWhaleConfigChanged(uint256 oldTaxBps, uint256 oldDuration, uint256 newTaxBps, uint256 newDuration);
 
@@ -195,8 +184,8 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         address boardwalkDexFactory;
         address boardwalkLpManager;
         address boardwalkFeeCollector;
-        address integrator;
-        address ancillary;
+        address integratorCollector;
+        uint256 integratorBps;
         uint256 bmxBurnAmount;
         uint256 graduationExpress;
         uint256 graduationAdvanced;
@@ -236,6 +225,11 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         expressDuration = p.expressDuration;
         advancedDuration = p.advancedDuration;
 
+        if (p.integratorBps > MAX_INTEGRATOR_BPS) revert InvalidFeeDefaults();
+        if ((p.integratorBps > 0) != (p.integratorCollector != address(0))) revert IntegratorCollectorMismatch();
+        INTEGRATOR_BPS = p.integratorBps;
+        INTEGRATOR_COLLECTOR = p.integratorCollector;
+
         _validateFeeDefaults(p.feeBps);
         _feeBpsDefaults = p.feeBps;
 
@@ -243,13 +237,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         antiWhaleTaxBps = p.antiWhaleTaxBps;
         antiWhaleDuration = p.antiWhaleDuration;
 
-        if (p.feeBps.integrator > 0 && p.integrator == address(0)) revert ZeroAddress();
-        if (p.feeBps.ancillary > 0 && p.ancillary == address(0)) revert ZeroAddress();
-
-        _validateDistinctRoles(p.integrator, p.ancillary, p.boardwalkFeeCollector, p.boardwalkLpManager);
-
-        integrator = p.integrator;
-        ancillary = p.ancillary;
+        _validateDistinctRoles(p.integratorCollector, p.boardwalkFeeCollector, p.boardwalkLpManager);
 
         if (p.memberLaunchDiscountBps > MAX_DISCOUNT_BPS) revert MemberDiscountOutOfRange(p.memberLaunchDiscountBps);
         memberLaunchDiscountBps = p.memberLaunchDiscountBps;
@@ -266,12 +254,11 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
             uint256 incentive,
             uint256 referrer,
             uint256 integratorBps,
-            uint256 ancillaryBps,
             uint256 total
         )
     {
         FeeBpsDefaults memory d = _feeBpsDefaults;
-        return (d.issuer, d.boardwalk, d.incentive, d.referrer, d.integrator, d.ancillary, d.total);
+        return (d.issuer, d.boardwalk, d.incentive, d.referrer, INTEGRATOR_BPS, d.total);
     }
 
     function launchCount() external view returns (uint256) {
@@ -335,19 +322,17 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
                     token: tokenAddr,
                     lpStaking: lpStakingAddr,
                     feeCollector: boardwalkFeeCollector,
+                    integratorCollector: INTEGRATOR_COLLECTOR,
                     router: BOARDWALK_ROUTER,
                     raiseToken: RAISE_TOKEN,
                     issuerRecipients: config.issuerFeeRecipients,
                     issuerSplits: config.issuerFeeSplits,
                     referrer: config.referrer,
-                    integrator: integrator,
-                    ancillary: ancillary,
                     issuerBps: feeBps.issuer,
                     boardwalkBps: effectiveBoardwalkBps,
                     lpIncentiveBps: feeBps.incentive,
                     referrerBps: effectiveReferrerBps,
-                    integratorBps: feeBps.integrator,
-                    ancillaryBps: feeBps.ancillary
+                    integratorBps: INTEGRATOR_BPS
                 })
             );
 
@@ -427,19 +412,16 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     }
 
     /// @dev Per-clone exempt set. FeeDistributor itself is added by `BoardwalkToken.initialize`.
-    ///      Vesting / integrator / ancillary are optional.
     function _buildExemptList(
         address presaleAddr,
         address lpStakingAddr,
         address vestingAddr
     ) internal view returns (address[] memory exemptAddresses) {
-        address integratorAddr = integrator;
-        address ancillaryAddr = ancillary;
+        bool hasIntegrator = INTEGRATOR_BPS > 0;
 
         uint256 count = 4;
         if (vestingAddr != address(0)) count++;
-        if (integratorAddr != address(0)) count++;
-        if (ancillaryAddr != address(0)) count++;
+        if (hasIntegrator) count++;
 
         exemptAddresses = new address[](count);
         exemptAddresses[0] = presaleAddr;
@@ -448,8 +430,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         exemptAddresses[3] = boardwalkFeeCollector;
         uint256 idx = 4;
         if (vestingAddr != address(0)) exemptAddresses[idx++] = vestingAddr;
-        if (integratorAddr != address(0)) exemptAddresses[idx++] = integratorAddr;
-        if (ancillaryAddr != address(0)) exemptAddresses[idx++] = ancillaryAddr;
+        if (hasIntegrator) exemptAddresses[idx++] = INTEGRATOR_COLLECTOR;
     }
 
     function _validateConfig(
@@ -512,19 +493,9 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     }
 
     function _authAdmin(
-        bytes32 action
-    ) internal override {
-        if (action == ACTION_SET_INTEGRATOR || action == ACTION_SET_ANCILLARY) revert OwnerCannotRotateRole();
+        bytes32
+    ) internal view override {
         _checkOwner();
-    }
-
-    function _actionDelay(
-        bytes32 action
-    ) internal pure override returns (uint256) {
-        if (action == ACTION_SET_INTEGRATOR || action == ACTION_SET_ANCILLARY) {
-            return 14 days;
-        }
-        return TIMELOCK_DELAY;
     }
 
     function executeSetBmxBurn(
@@ -574,17 +545,8 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     ) external {
         _execute(ACTION_SET_FEE_DEFAULTS, keccak256(abi.encode(_feeBps)));
         _validateFeeDefaults(_feeBps);
-        if (_feeBps.integrator > 0 && integrator == address(0)) revert ZeroAddress();
-        if (_feeBps.ancillary > 0 && ancillary == address(0)) revert ZeroAddress();
         _feeBpsDefaults = _feeBps;
-        emit FeeDefaultsChanged(
-            _feeBps.issuer,
-            _feeBps.boardwalk,
-            _feeBps.incentive,
-            _feeBps.referrer,
-            _feeBps.integrator,
-            _feeBps.ancillary
-        );
+        emit FeeDefaultsChanged(_feeBps.issuer, _feeBps.boardwalk, _feeBps.incentive, _feeBps.referrer);
     }
 
     function executeSetPresaleRange(
@@ -603,59 +565,11 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     ) external {
         _execute(ACTION_SET_FEE_COLLECTOR, keccak256(abi.encode(_collector)));
         if (_collector == address(0)) revert ZeroAddress();
-        if (_collector == integrator || _collector == ancillary || _collector == BOARDWALK_LP_MANAGER) {
+        if (_collector == INTEGRATOR_COLLECTOR || _collector == BOARDWALK_LP_MANAGER) {
             revert DuplicateRoleAddress();
         }
         emit FeeCollectorChanged(boardwalkFeeCollector, _collector);
         boardwalkFeeCollector = _collector;
-    }
-
-    function signalChangeIntegratorAddress(
-        address newAddress
-    ) external {
-        if (msg.sender != integrator) revert NotIntegrator();
-        _signal(ACTION_SET_INTEGRATOR, keccak256(abi.encode(newAddress)), _actionDelay(ACTION_SET_INTEGRATOR));
-    }
-
-    function executeChangeIntegratorAddress(
-        address newAddress
-    ) external {
-        _execute(ACTION_SET_INTEGRATOR, keccak256(abi.encode(newAddress)));
-        if (newAddress == address(0)) revert ZeroAddress();
-        if (newAddress == ancillary || newAddress == boardwalkFeeCollector || newAddress == BOARDWALK_LP_MANAGER) {
-            revert DuplicateRoleAddress();
-        }
-        emit IntegratorChanged(integrator, newAddress);
-        integrator = newAddress;
-    }
-
-    function cancelChangeIntegratorAddress() external {
-        if (msg.sender != integrator) revert NotIntegrator();
-        _cancel(ACTION_SET_INTEGRATOR);
-    }
-
-    function signalChangeAncillaryAddress(
-        address newAddress
-    ) external {
-        if (msg.sender != ancillary) revert NotAncillary();
-        _signal(ACTION_SET_ANCILLARY, keccak256(abi.encode(newAddress)), _actionDelay(ACTION_SET_ANCILLARY));
-    }
-
-    function executeChangeAncillaryAddress(
-        address newAddress
-    ) external {
-        _execute(ACTION_SET_ANCILLARY, keccak256(abi.encode(newAddress)));
-        if (newAddress == address(0)) revert ZeroAddress();
-        if (newAddress == integrator || newAddress == boardwalkFeeCollector || newAddress == BOARDWALK_LP_MANAGER) {
-            revert DuplicateRoleAddress();
-        }
-        emit AncillaryChanged(ancillary, newAddress);
-        ancillary = newAddress;
-    }
-
-    function cancelChangeAncillaryAddress() external {
-        if (msg.sender != ancillary) revert NotAncillary();
-        _cancel(ACTION_SET_ANCILLARY);
     }
 
     function executeSetNftCollection(
@@ -685,18 +599,16 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         antiWhaleDuration = _duration;
     }
 
-    /// @dev total must equal issuer + boardwalk + incentive + integrator + ancillary. Referrer is
-    ///      carved from boardwalk, not added on top. Integrator and referrer can coexist.
+    /// @dev Total must equal issuer + boardwalk + incentive + integrator.
+    ///      Referrer is carved from boardwalk.
     function _validateFeeDefaults(
         FeeBpsDefaults memory d
-    ) internal pure {
-        if (d.total != d.issuer + d.boardwalk + d.incentive + d.integrator + d.ancillary) revert InvalidFeeDefaults();
+    ) internal view {
+        if (d.total != d.issuer + d.boardwalk + d.incentive + INTEGRATOR_BPS) revert InvalidFeeDefaults();
         if (d.issuer < MIN_ISSUER_BPS || d.issuer > MAX_ISSUER_BPS) revert InvalidFeeDefaults();
         if (d.boardwalk < MIN_BOARDWALK_BPS || d.boardwalk > MAX_BOARDWALK_BPS) revert InvalidFeeDefaults();
         if (d.incentive > MAX_INCENTIVE_BPS) revert InvalidFeeDefaults();
         if (d.referrer > MAX_REFERRER_BPS) revert InvalidFeeDefaults();
-        if (d.integrator > MAX_INTEGRATOR_BPS) revert InvalidFeeDefaults();
-        if (d.ancillary > MAX_ANCILLARY_BPS) revert InvalidFeeDefaults();
         if (d.referrer > d.boardwalk) revert InvalidFeeDefaults();
     }
 
@@ -709,21 +621,16 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     }
 
     function _validateDistinctRoles(
-        address integratorAddr,
-        address ancillaryAddr,
+        address integratorCollectorAddr,
         address feeCollectorAddr,
         address lpManagerAddr
     ) internal pure {
-        if (integratorAddr != address(0)) {
-            if (
-                integratorAddr == ancillaryAddr || integratorAddr == feeCollectorAddr || integratorAddr == lpManagerAddr
-            ) revert DuplicateRoleAddress();
-        }
-        if (ancillaryAddr != address(0)) {
-            if (ancillaryAddr == feeCollectorAddr || ancillaryAddr == lpManagerAddr) {
+        if (integratorCollectorAddr != address(0)) {
+            if (integratorCollectorAddr == feeCollectorAddr || integratorCollectorAddr == lpManagerAddr) {
                 revert DuplicateRoleAddress();
             }
         }
+        if (feeCollectorAddr == lpManagerAddr) revert DuplicateRoleAddress();
     }
 
     function _validatePresaleRange(

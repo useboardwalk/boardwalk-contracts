@@ -122,8 +122,7 @@ contract BoardwalkToken is ERC20, Initializable {
     }
 
     /// @notice FeeDistributor-only. The exempt set is otherwise immutable post-init; this exists
-    ///         exclusively to rotate the fee-collector / integrator / ancillary exemption during a
-    ///         migration.
+    ///         exclusively to rotate the BoardwalkFeeCollector exemption during a migration.
     function updateExempt(
         address account,
         bool exempt

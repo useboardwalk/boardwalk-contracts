@@ -10,7 +10,7 @@ import {VestingStream} from "src/core/VestingStream.sol";
 import {LPStaking} from "src/core/LPStaking.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
-import {FeeRecipientCollector} from "src/core/FeeRecipientCollector.sol";
+import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
@@ -65,16 +65,21 @@ contract DryRunAll is Script {
         BoardwalkFeeCollector feeCollector = new BoardwalkFeeCollector(owner, weth, dexRouter, treasury, keeper);
         console.log("BoardwalkFeeCollector:", address(feeCollector));
 
-        FeeRecipientCollector ancillaryCollector = new FeeRecipientCollector(owner);
-        console.log("AncillaryFeeRecipientCollector:", address(ancillaryCollector));
+        // Single-integrator chain config: 100% to `owner`. Constructor validates the arrays.
+        address[] memory integratorAddresses = new address[](1);
+        integratorAddresses[0] = owner;
+        uint256[] memory integratorSplits = new uint256[](1);
+        integratorSplits[0] = 10_000;
+
+        IntegratorFeeCollector integratorCollector =
+            new IntegratorFeeCollector(owner, weth, dexRouter, integratorAddresses, integratorSplits);
+        console.log("IntegratorFeeCollector:", address(integratorCollector));
 
         LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
-            issuer: 40,
-            boardwalk: 45,
-            incentive: 28,
+            issuer: 30,
+            boardwalk: 35,
+            incentive: 23,
             referrer: 5,
-            integrator: 0,
-            ancillary: 2,
             total: 115
         });
 
@@ -92,8 +97,8 @@ contract DryRunAll is Script {
                 boardwalkDexFactory: dexFactory,
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
-                integrator: address(0),
-                ancillary: address(ancillaryCollector),
+                integratorCollector: address(integratorCollector),
+                integratorBps: 27,
                 bmxBurnAmount: 100e18,
                 graduationExpress: 10 ether,
                 graduationAdvanced: 10 ether,
@@ -107,6 +112,11 @@ contract DryRunAll is Script {
             })
         );
         console.log("LaunchFactory:", address(factory));
+
+        // Wire factory into integrator collector (one-shot, owner-gated).
+        if (deployer == owner) {
+            integratorCollector.setFactory(address(factory));
+        }
 
         // Verify factory wiring
         require(factory.TOKEN_IMPL() == address(tokenImpl), "tokenImpl mismatch");

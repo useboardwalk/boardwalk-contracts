@@ -12,7 +12,8 @@ import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 /// @title BoardwalkFeeCollector
 /// @notice Singleton aggregator for the boardwalk share of every launch's tax. Keeper batch-swaps
 ///         to raise token and forwards to treasury. When `governanceVault` is set, raise-token
-///         output is split 30% treasury / 70% governanceVault (Base only).
+///         output is split 30% treasury / 70% governanceVault (Base only). Raise-token revenue
+///         bridged in from non-Base chains is forwarded by the keeper-only `forwardRevenue`.
 contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     using SafeERC20 for IERC20;
 
@@ -42,6 +43,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
 
     event FeesReceived(address indexed token, uint256 amount);
     event FeesSwapped(address indexed token, uint256 tokenAmount, uint256 raiseTokenAmount);
+    event RevenueForwarded(uint256 totalAmount, uint256 governanceAmount, uint256 treasuryAmount);
     event TreasuryUpdated(address indexed newTreasury);
     event KeeperUpdated(address indexed newKeeper);
     event CollectorMigrated(address newCollector, uint256 distributorCount);
@@ -86,13 +88,19 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         if (tokens.length == 0) revert NoTokensToSwap();
         if (tokens.length != minAmountsOut.length) revert ArrayLengthMismatch();
 
-        uint256 totalTokenReceived;
-
         address[] memory path = new address[](2);
         path[1] = RAISE_TOKEN;
 
         for (uint256 i = 0; i < tokens.length;) {
             address token = tokens[i];
+
+            if (token == RAISE_TOKEN) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
+
             uint256 balance = IERC20(token).balanceOf(address(this));
 
             if (balance == 0) {
@@ -113,10 +121,8 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
                 .swapExactTokensForTokens(balance, minAmountsOut[i], path, address(this), deadline) returns (
                 uint256[] memory amounts
             ) {
-                uint256 tokenReceived = amounts[1];
-                totalTokenReceived += tokenReceived;
                 accumulatedFees[token] = 0;
-                emit FeesSwapped(token, balance, tokenReceived);
+                emit FeesSwapped(token, balance, amounts[1]);
             } catch {
                 revert SwapFailed(token);
             }
@@ -125,20 +131,44 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
             }
         }
 
-        if (totalTokenReceived > 0) {
-            address _governanceVault = governanceVault;
-            if (_governanceVault != address(0)) {
-                uint256 governanceAmount = totalTokenReceived * GOVERNANCE_BPS / BPS_DENOMINATOR;
-                uint256 treasuryAmount = totalTokenReceived - governanceAmount;
-                IERC20(RAISE_TOKEN).safeTransfer(treasury, treasuryAmount);
-                if (IERC20(RAISE_TOKEN).allowance(address(this), _governanceVault) < governanceAmount) {
-                    IERC20(RAISE_TOKEN).forceApprove(_governanceVault, type(uint256).max);
-                }
-                IGovernanceVoter(_governanceVault).depositRevenue(governanceAmount);
-            } else {
-                IERC20(RAISE_TOKEN).safeTransfer(treasury, totalTokenReceived);
-            }
+        // We use balance here to include potentially bridged revenue added as WETH.
+        uint256 toForward = IERC20(RAISE_TOKEN).balanceOf(address(this));
+        if (toForward > 0) {
+            _forwardToTreasuryAndGovernance(toForward);
         }
+    }
+
+    /// @notice Keeper-only. Forwards the contract's raise-token balance to treasury (and governance
+    ///         vault, if set) using the same 30/70 split as `swapToRaiseToken`.
+    function forwardRevenue() external {
+        if (msg.sender != keeper) revert NotKeeper();
+        uint256 amount = IERC20(RAISE_TOKEN).balanceOf(address(this));
+        if (amount == 0) return;
+        accumulatedFees[RAISE_TOKEN] = 0;
+        _forwardToTreasuryAndGovernance(amount);
+    }
+
+    function _forwardToTreasuryAndGovernance(
+        uint256 amount
+    ) internal {
+        address _governanceVault = governanceVault;
+        uint256 governanceAmount;
+        uint256 treasuryAmount;
+
+        if (_governanceVault != address(0)) {
+            governanceAmount = amount * GOVERNANCE_BPS / BPS_DENOMINATOR;
+            treasuryAmount = amount - governanceAmount;
+            IERC20(RAISE_TOKEN).safeTransfer(treasury, treasuryAmount);
+            if (IERC20(RAISE_TOKEN).allowance(address(this), _governanceVault) < governanceAmount) {
+                IERC20(RAISE_TOKEN).forceApprove(_governanceVault, type(uint256).max);
+            }
+            IGovernanceVoter(_governanceVault).depositRevenue(governanceAmount);
+        } else {
+            treasuryAmount = amount;
+            IERC20(RAISE_TOKEN).safeTransfer(treasury, treasuryAmount);
+        }
+
+        emit RevenueForwarded(amount, governanceAmount, treasuryAmount);
     }
 
     function _authAdmin(

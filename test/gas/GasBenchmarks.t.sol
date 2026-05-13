@@ -14,6 +14,7 @@ import {BoardwalkToken} from "src/core/BoardwalkToken.sol";
 import {LPStaking} from "src/core/LPStaking.sol";
 import {VestingStream} from "src/core/VestingStream.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
+import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title GasBenchmarks
@@ -417,6 +418,37 @@ contract GasBenchmarks is IntegrationBase {
         feeCollector.receiveFees(tkn, 1000e18);
         vm.snapshotGasLastCall("feeCollector_ReceiveFees");
         vm.stopPrank();
+    }
+
+    // ========================================================================
+    //  INTEGRATOR FEE COLLECTOR
+    // ========================================================================
+
+    /// forge-config: default.isolate = true
+    /// @dev Benchmarks `claimBatch` with the 1 slot configured by `IntegrationBase` and 1 token
+    ///      that has accrued some integrator share. Establishes a per-token gas baseline; multiply
+    ///      by tokens.length for batches.
+    function test_gas_integratorCollector_ClaimBatch_OneToken() public {
+        _setupSeededExpress();
+        vm.warp(seedTime + 7 days + 1);
+
+        // Trigger one taxed transfer to accrue integrator share on the integrator slot.
+        vm.prank(alice);
+        PresaleManager(expressInfo.presaleManager).claimTokens();
+        uint256 amount = IERC20(expressToken).balanceOf(alice) / 4;
+        vm.warp(seedTime + 91 minutes);
+        vm.prank(alice);
+        IERC20(expressToken).transfer(bob, amount);
+
+        // Build the single-token claim args.
+        address[] memory tokens = new address[](1);
+        tokens[0] = expressToken;
+        uint256[] memory minOuts = new uint256[](1);
+        minOuts[0] = 0;
+
+        vm.prank(integrator);
+        integratorCollector.claimBatch(tokens, minOuts, block.timestamp + 1 hours);
+        vm.snapshotGasLastCall("integratorCollector_ClaimBatch_OneToken");
     }
 
     // ========================================================================

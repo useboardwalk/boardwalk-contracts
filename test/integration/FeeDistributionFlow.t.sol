@@ -10,11 +10,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title FeeDistributionFlowTest
 /// @notice Integration tests for the complete fee distribution flow:
-///         Transfer → Tax → FeeDistributor.onTaxReceived → LPStaking + FeeCollector + issuer accrual
+///         Transfer → Tax → FeeDistributor.onTaxReceived → LPStaking + FeeCollector + IntegratorFeeCollector + issuer accrual.
 ///         Covers plan edge cases: #16, #33, #36, #39, #41
 contract FeeDistributionFlowTest is IntegrationBase {
     address internal tokenAddr;
     LaunchFactory.LaunchInfo internal info;
+
+    address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
     function setUp() public override {
         super.setUp();
@@ -48,10 +50,7 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 bobReceived = IERC20(tokenAddr).balanceOf(bob);
         // Bob should receive less than transferred (tax deducted)
         assertLt(bobReceived, transferAmount, "Wallet transfer should be taxed");
-        // Tax amount should be approximately 1.15% of transferAmount
-        uint256 expectedTax = transferAmount * 115 / 10000;
         uint256 actualTax = transferAmount - bobReceived;
-        // Allow some tolerance for anti-whale if still in effect
         assertGt(actualTax, 0, "Tax should be > 0");
     }
 
@@ -70,7 +69,7 @@ contract FeeDistributionFlowTest is IntegrationBase {
         // So FeeDistributor balance may be 0 if all was forwarded, or have issuer share remaining
         uint256 feeDistAfter = IERC20(tokenAddr).balanceOf(info.feeDistributor);
         // The issuer+referrer shares stay in FeeDistributor (accrued, not forwarded)
-        // LP and boardwalk shares are forwarded
+        // LP, boardwalk, and integrator shares are forwarded
         // So FeeDistributor balance should increase by at least issuer share
         assertGe(feeDistAfter, feeDistBefore, "FeeDistributor should hold accrued issuer fees");
     }
@@ -81,14 +80,15 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 aliceBalance = IERC20(tokenAddr).balanceOf(alice);
         uint256 transferAmount = aliceBalance / 4;
 
-        // Record balances before. the LP-incentive share goes from FeeDistributor
-        // through LPStaking; with zero stakers LPStaking forwards it to DEAD. The integration
-        // test fixture has no stakers, so we must track DEAD too for the accounting to balance.
+        // Record balances before. The LP-incentive share goes from FeeDistributor through
+        // LPStaking; with zero stakers LPStaking forwards it to DEAD (post-audit-fix). The
+        // integration test fixture has no stakers, so we must track DEAD too for the accounting
+        // to balance.
         uint256 feeDistBefore = IERC20(tokenAddr).balanceOf(info.feeDistributor);
         uint256 lpStakingBefore = IERC20(tokenAddr).balanceOf(info.lpStaking);
         uint256 feeCollectorBefore = IERC20(tokenAddr).balanceOf(address(feeCollector));
-        uint256 ancillaryBefore = IERC20(tokenAddr).balanceOf(address(ancillaryCollector));
-        uint256 deadBefore = IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD);
+        uint256 integratorCollectorBefore = IERC20(tokenAddr).balanceOf(address(integratorCollector));
+        uint256 deadBefore = IERC20(tokenAddr).balanceOf(DEAD);
 
         vm.prank(alice);
         IERC20(tokenAddr).transfer(bob, transferAmount);
@@ -99,11 +99,11 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 feeDistDelta = IERC20(tokenAddr).balanceOf(info.feeDistributor) - feeDistBefore;
         uint256 lpStakingDelta = IERC20(tokenAddr).balanceOf(info.lpStaking) - lpStakingBefore;
         uint256 feeCollectorDelta = IERC20(tokenAddr).balanceOf(address(feeCollector)) - feeCollectorBefore;
-        uint256 ancillaryDelta = IERC20(tokenAddr).balanceOf(address(ancillaryCollector)) - ancillaryBefore;
-        uint256 deadDelta = IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD) - deadBefore;
+        uint256 integratorDelta = IERC20(tokenAddr).balanceOf(address(integratorCollector)) - integratorCollectorBefore;
+        uint256 deadDelta = IERC20(tokenAddr).balanceOf(DEAD) - deadBefore;
 
-        uint256 accountedFor = feeDistDelta + lpStakingDelta + feeCollectorDelta + ancillaryDelta + deadDelta;
-        assertApproxEqAbs(accountedFor, totalTax, 1, "All tax should be accounted for (LPStaking + DEAD)");
+        uint256 accountedFor = feeDistDelta + lpStakingDelta + feeCollectorDelta + integratorDelta + deadDelta;
+        assertApproxEqAbs(accountedFor, totalTax, 1, "All tax should be accounted for (LPStaking + DEAD + collectors)");
     }
 
     // ============ Edge Case #39: onTaxReceived Callback Fires ============
@@ -113,16 +113,16 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 transferAmount = aliceBalance / 4;
 
         uint256 lpStakingBefore = IERC20(tokenAddr).balanceOf(info.lpStaking);
-        uint256 deadBefore = IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD);
+        uint256 deadBefore = IERC20(tokenAddr).balanceOf(DEAD);
 
         vm.prank(alice);
         IERC20(tokenAddr).transfer(bob, transferAmount);
 
         // The LP-incentive share moves FROM FeeDistributor and lands EITHER at LPStaking
-        // (when totalWeight > 0) OR at DEAD (zero-staker burn). The integration
-        // fixture has no stakers, so the DEAD branch is taken.
+        // (when totalWeight > 0) OR at DEAD (zero-staker burn). The integration fixture has no
+        // stakers, so the DEAD branch is taken.
         uint256 lpStakingAfter = IERC20(tokenAddr).balanceOf(info.lpStaking);
-        uint256 deadAfter = IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD);
+        uint256 deadAfter = IERC20(tokenAddr).balanceOf(DEAD);
         assertGt(
             (lpStakingAfter - lpStakingBefore) + (deadAfter - deadBefore),
             0,
@@ -156,8 +156,8 @@ contract FeeDistributionFlowTest is IntegrationBase {
 
         uint256 lpStakingBefore = IERC20(tokenAddr).balanceOf(info.lpStaking);
         uint256 feeCollectorBefore = IERC20(tokenAddr).balanceOf(address(feeCollector));
-        uint256 ancillaryBefore = IERC20(tokenAddr).balanceOf(address(ancillaryCollector));
-        uint256 deadBefore = IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD);
+        uint256 integratorCollectorBefore = IERC20(tokenAddr).balanceOf(address(integratorCollector));
+        uint256 deadBefore = IERC20(tokenAddr).balanceOf(DEAD);
 
         vm.prank(alice);
         IERC20(tokenAddr).transfer(bob, transferAmount);
@@ -166,29 +166,36 @@ contract FeeDistributionFlowTest is IntegrationBase {
         uint256 totalTax = transferAmount - bobReceived;
 
         // Verify exact BPS splits (Express path, ETH-mainnet schedule):
-        // issuer=40, boardwalk=45, incentive=28, ancillary=2, no referrer/integrator
-        // totalFeeBps = 40 + 45 + 28 + 0 + 2 = 115
+        // issuer=40, boardwalk=45, incentive=28, integrator=2, no referrer
+        // totalFeeBps = 40 + 45 + 28 + 2 = 115
         uint256 expectedLP = totalTax * 28 / 115;
         uint256 expectedBoardwalk = totalTax * 45 / 115;
-        uint256 expectedAncillary = totalTax * 2 / 115;
+        uint256 expectedIntegrator = totalTax * 2 / 115;
         // Issuer share = remainder
 
-        // the LP-incentive share lands at LPStaking (with stakers) or DEAD (zero
-        // stakers). The fixture has no stakers, so LPStaking -> DEAD; combine both deltas.
+        // The LP-incentive share lands at LPStaking (with stakers) or DEAD (zero stakers). The
+        // fixture has no stakers, so LPStaking → DEAD; combine both deltas.
         uint256 lpDelta = (IERC20(tokenAddr).balanceOf(info.lpStaking) - lpStakingBefore)
-            + (IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD) - deadBefore);
+            + (IERC20(tokenAddr).balanceOf(DEAD) - deadBefore);
         uint256 bwDelta = IERC20(tokenAddr).balanceOf(address(feeCollector)) - feeCollectorBefore;
-        uint256 ancDelta = IERC20(tokenAddr).balanceOf(address(ancillaryCollector)) - ancillaryBefore;
+        uint256 intDelta = IERC20(tokenAddr).balanceOf(address(integratorCollector)) - integratorCollectorBefore;
 
         assertApproxEqAbs(lpDelta, expectedLP, 1, "LP incentive share should match 28/115 BPS");
         assertApproxEqAbs(bwDelta, expectedBoardwalk, 1, "Boardwalk share should match 45/115 BPS");
-        assertApproxEqAbs(ancDelta, expectedAncillary, 1, "Ancillary share should match 2/115 BPS");
+        assertApproxEqAbs(intDelta, expectedIntegrator, 1, "Integrator share should match 2/115 BPS");
     }
 
     // ============ LPManager Exemption Verified ============
 
     function test_LPManager_IsExempt() public {
         assertTrue(BoardwalkToken(tokenAddr).isExempt(address(lpManager)), "LPManager should be in exempt list");
+    }
+
+    function test_IntegratorCollector_IsExempt() public {
+        assertTrue(
+            BoardwalkToken(tokenAddr).isExempt(address(integratorCollector)),
+            "IntegratorFeeCollector should be in exempt list"
+        );
     }
 
     // ============ Token Supply Cap After Seed ============
@@ -201,8 +208,7 @@ contract FeeDistributionFlowTest is IntegrationBase {
 
     function test_BaseTaxRate_Exact() public {
         // We're past anti-whale (7 day warp in setUp), so tax should be exactly 1.15%
-        uint256 aliceBalance = IERC20(tokenAddr).balanceOf(alice);
-        uint256 transferAmount = 1_000_000e18; // Use a round number
+        uint256 transferAmount = 1_000_000e18;
 
         // Give alice exact amount to avoid rounding from her existing balance
         deal(tokenAddr, alice, transferAmount);
@@ -242,6 +248,8 @@ contract FeeDistributionAdvancedPathTest is IntegrationBase {
     address internal tokenAddr;
     LaunchFactory.LaunchInfo internal info;
 
+    address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
+
     function setUp() public override {
         super.setUp();
 
@@ -270,14 +278,14 @@ contract FeeDistributionAdvancedPathTest is IntegrationBase {
 
     function test_AdvancedPath_ReferrerCarveOut_SplitsCorrectly() public {
         // Advanced with referrer (ETH-mainnet schedule):
-        // issuer=40, boardwalk=45-5=40, incentive=28, referrer=5, integrator=0, ancillary=2
+        // issuer=40, boardwalk=45-5=40, incentive=28, referrer=5, integrator=2
         // totalFeeBps = 40 + 40 + 28 + 5 + 2 = 115 (matches token baseTaxBps)
         FeeDistributor fd = FeeDistributor(info.feeDistributor);
         assertEq(fd.issuerBps(), 40, "Issuer BPS should be 40");
         assertEq(fd.boardwalkBps(), 40, "Boardwalk BPS should be 40 (45 - 5 referrer)");
         assertEq(fd.lpIncentiveBps(), 28, "LP incentive BPS should be 28");
         assertEq(fd.referrerBps(), 5, "Referrer BPS should be 5");
-        assertEq(fd.ancillaryBps(), 2, "Ancillary BPS should be 2");
+        assertEq(fd.integratorBps(), 2, "Integrator BPS should be 2");
         assertEq(fd.totalFeeBps(), 115, "Total fee BPS should be 115");
     }
 
@@ -314,13 +322,13 @@ contract FeeDistributionAdvancedPathTest is IntegrationBase {
         uint256 transferAmount = 1_000_000e18;
         deal(tokenAddr, alice, transferAmount);
 
-        // LP-incentive share goes to DEAD when there are no stakers. The fixture
-        // has none, so combine the LPStaking + DEAD deltas to recover the full LP destination.
+        // LP-incentive share goes to DEAD when there are no stakers. The fixture has none, so
+        // combine the LPStaking + DEAD deltas to recover the full LP destination.
         uint256 feeDistBefore = IERC20(tokenAddr).balanceOf(info.feeDistributor);
         uint256 lpStakingBefore = IERC20(tokenAddr).balanceOf(info.lpStaking);
         uint256 feeCollectorBefore = IERC20(tokenAddr).balanceOf(address(feeCollector));
-        uint256 ancillaryBefore = IERC20(tokenAddr).balanceOf(address(ancillaryCollector));
-        uint256 deadBefore = IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD);
+        uint256 integratorCollectorBefore = IERC20(tokenAddr).balanceOf(address(integratorCollector));
+        uint256 deadBefore = IERC20(tokenAddr).balanceOf(DEAD);
 
         vm.prank(alice);
         IERC20(tokenAddr).transfer(bob, transferAmount);
@@ -330,24 +338,24 @@ contract FeeDistributionAdvancedPathTest is IntegrationBase {
 
         uint256 feeDistDelta = IERC20(tokenAddr).balanceOf(info.feeDistributor) - feeDistBefore;
         uint256 lpDelta = (IERC20(tokenAddr).balanceOf(info.lpStaking) - lpStakingBefore)
-            + (IERC20(tokenAddr).balanceOf(0x000000000000000000000000000000000000dEaD) - deadBefore);
+            + (IERC20(tokenAddr).balanceOf(DEAD) - deadBefore);
         uint256 bwDelta = IERC20(tokenAddr).balanceOf(address(feeCollector)) - feeCollectorBefore;
-        uint256 ancDelta = IERC20(tokenAddr).balanceOf(address(ancillaryCollector)) - ancillaryBefore;
+        uint256 intDelta = IERC20(tokenAddr).balanceOf(address(integratorCollector)) - integratorCollectorBefore;
 
         // feeDistDelta = issuer share + referrer share (accrued, not forwarded)
         // lpDelta = LP incentive share (forwarded via notifyFees, then to DEAD when no stakers)
         // bwDelta = boardwalk share (forwarded via receiveFees)
-        // ancDelta = ancillary share (push+notify)
-        uint256 accountedFor = feeDistDelta + lpDelta + bwDelta + ancDelta;
+        // intDelta = integrator share (forwarded via IntegratorFeeCollector.receiveFees)
+        uint256 accountedFor = feeDistDelta + lpDelta + bwDelta + intDelta;
         assertApproxEqAbs(accountedFor, totalTax, 1, "All tax should be accounted for with referrer");
 
-        // Verify individual splits (incentive=28/115, boardwalk=40/115 after referrer carve, ancillary=2/115)
+        // Verify individual splits (incentive=28/115, boardwalk=40/115 after referrer carve, integrator=2/115)
         uint256 expectedLP = totalTax * 28 / 115;
         uint256 expectedBW = totalTax * 40 / 115;
-        uint256 expectedAnc = totalTax * 2 / 115;
+        uint256 expectedInt = totalTax * 2 / 115;
         assertApproxEqAbs(lpDelta, expectedLP, 1, "LP share: 28/115");
         assertApproxEqAbs(bwDelta, expectedBW, 1, "Boardwalk share: 40/115 (carved by referrer)");
-        assertApproxEqAbs(ancDelta, expectedAnc, 1, "Ancillary share: 2/115");
+        assertApproxEqAbs(intDelta, expectedInt, 1, "Integrator share: 2/115");
     }
 
     function test_AdvancedPath_Referrer_IsSet() public {

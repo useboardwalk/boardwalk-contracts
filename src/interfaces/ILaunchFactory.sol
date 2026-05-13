@@ -39,8 +39,6 @@ interface ILaunchFactory {
         uint256 boardwalk;
         uint256 incentive;
         uint256 referrer;
-        uint256 integrator;
-        uint256 ancillary;
         uint256 total;
     }
 
@@ -61,9 +59,7 @@ interface ILaunchFactory {
     error ZeroGraduation();
     error IssuerVestingRecipientsRequired();
     error MemberDiscountOutOfRange(uint256 bps);
-    error NotIntegrator();
-    error NotAncillary();
-    error OwnerCannotRotateRole();
+    error IntegratorCollectorMismatch();
     error DuplicateRoleAddress();
 
     event LaunchCreated(
@@ -80,13 +76,9 @@ interface ILaunchFactory {
     event BmxBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
     event GraduationThresholdChanged(LaunchPath path, uint256 oldThreshold, uint256 newThreshold);
     event PresaleDurationChanged(LaunchPath path, uint256 oldDuration, uint256 newDuration);
-    event FeeDefaultsChanged(
-        uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer, uint256 integrator, uint256 ancillary
-    );
+    event FeeDefaultsChanged(uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer);
     event PresaleRangeChanged(uint256 oldMin, uint256 oldMax, uint256 newMin, uint256 newMax);
     event FeeCollectorChanged(address oldCollector, address newCollector);
-    event IntegratorChanged(address oldIntegrator, address newIntegrator);
-    event AncillaryChanged(address oldAncillary, address newAncillary);
     event NftCollectionChanged(address oldCollection, address newCollection);
     event MemberLaunchDiscountChanged(uint256 oldDiscount, uint256 newDiscount);
     event AntiWhaleConfigChanged(uint256 oldTaxBps, uint256 oldDuration, uint256 newTaxBps, uint256 newDuration);
@@ -103,8 +95,8 @@ interface ILaunchFactory {
     function graduationExpress() external view returns (uint256);
     function graduationAdvanced() external view returns (uint256);
     function boardwalkFeeCollector() external view returns (address);
-    function integrator() external view returns (address);
-    function ancillary() external view returns (address);
+    function INTEGRATOR_COLLECTOR() external view returns (address);
+    function INTEGRATOR_BPS() external view returns (uint256);
     function antiWhaleTaxBps() external view returns (uint256);
     function antiWhaleDuration() external view returns (uint256);
     function isLaunchToken(
@@ -112,20 +104,4 @@ interface ILaunchFactory {
     ) external view returns (bool);
     function nftCollection() external view returns (address);
     function memberLaunchDiscountBps() external view returns (uint256);
-
-    function signalChangeIntegratorAddress(
-        address newAddress
-    ) external;
-    function executeChangeIntegratorAddress(
-        address newAddress
-    ) external;
-    function cancelChangeIntegratorAddress() external;
-
-    function signalChangeAncillaryAddress(
-        address newAddress
-    ) external;
-    function executeChangeAncillaryAddress(
-        address newAddress
-    ) external;
-    function cancelChangeAncillaryAddress() external;
 }

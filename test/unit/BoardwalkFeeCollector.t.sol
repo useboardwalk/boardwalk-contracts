@@ -1029,4 +1029,121 @@ contract BoardwalkFeeCollectorTest is Test {
 
         assertEq(weth.balanceOf(treasury), amount);
     }
+
+    // ============ forwardRevenue / bridged WETH ============
+
+    /// @notice Bridged WETH lands directly on the collector (no swap step). `forwardRevenue` sweeps
+    ///         it to treasury when no governance vault is set.
+    function test_ForwardRevenue_BridgedWeth_NoVault() public {
+        uint256 bridged = 500e18;
+        deal(address(weth), address(feeCollector), bridged);
+
+        vm.prank(keeper);
+        feeCollector.forwardRevenue();
+
+        assertEq(weth.balanceOf(treasury), bridged, "treasury receives full bridged amount");
+        assertEq(weth.balanceOf(address(feeCollector)), 0, "collector drained");
+    }
+
+    /// @notice Bridged WETH split 30/70 to treasury/governance when the vault is set.
+    function test_ForwardRevenue_BridgedWeth_SplitsWhenVaultSet() public {
+        address vault = makeAddr("vault");
+        vm.mockCall(vault, abi.encodeWithSignature("WETH()"), abi.encode(address(weth)));
+        vm.mockCall(vault, abi.encodeWithSignature("depositRevenue(uint256)"), "");
+
+        vm.prank(owner);
+        feeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(vault)));
+        vm.warp(block.timestamp + TIMELOCK_DELAY);
+        feeCollector.executeSetGovernanceVault(vault);
+
+        uint256 bridged = 1000e18;
+        deal(address(weth), address(feeCollector), bridged);
+
+        uint256 governanceExpected = bridged * 7000 / 10000;
+        uint256 treasuryExpected = bridged - governanceExpected;
+
+        vm.prank(keeper);
+        feeCollector.forwardRevenue();
+
+        assertEq(weth.balanceOf(treasury), treasuryExpected, "treasury portion routed");
+        // Vault is mocked → its `depositRevenue` ignores the pull, so the governance share remains
+        // sitting on the collector with a standing max-allowance to the vault.
+        assertEq(weth.balanceOf(address(feeCollector)), governanceExpected, "governance share held pending pull");
+        assertEq(
+            weth.allowance(address(feeCollector), vault), type(uint256).max, "vault approved to max"
+        );
+    }
+
+    /// @notice With a zero balance, `forwardRevenue` is a silent no-op so a periodic keeper cron
+    ///         does not revert when there is nothing to forward.
+    function test_ForwardRevenue_NoOpOnZeroBalance() public {
+        assertEq(weth.balanceOf(address(feeCollector)), 0);
+        vm.prank(keeper);
+        feeCollector.forwardRevenue();
+        assertEq(weth.balanceOf(treasury), 0);
+    }
+
+    function test_RevertWhen_ForwardRevenue_NotKeeper() public {
+        deal(address(weth), address(feeCollector), 100e18);
+        vm.expectRevert(BoardwalkFeeCollector.NotKeeper.selector);
+        vm.prank(alice);
+        feeCollector.forwardRevenue();
+    }
+
+    /// @notice Calling `receiveFees(WETH, n)` with bridged WETH sets `accumulatedFees[WETH] = n`.
+    ///         A subsequent `forwardRevenue` clears it back to zero so observers are not misled.
+    function test_ForwardRevenue_ClearsAccumulatedRaiseToken() public {
+        uint256 bridged = 100e18;
+        deal(address(weth), alice, bridged);
+        vm.startPrank(alice);
+        weth.approve(address(feeCollector), bridged);
+        feeCollector.receiveFees(address(weth), bridged);
+        vm.stopPrank();
+
+        assertEq(feeCollector.accumulatedFees(address(weth)), bridged, "registered");
+
+        vm.prank(keeper);
+        feeCollector.forwardRevenue();
+
+        assertEq(feeCollector.accumulatedFees(address(weth)), 0, "cleared");
+        assertEq(weth.balanceOf(treasury), bridged);
+    }
+
+    /// @notice `swapToRaiseToken` now sweeps any pre-existing raise-token balance (e.g. bridged in
+    ///         out-of-band) alongside the swap output, so a single keeper tx drains both.
+    function test_SwapToRaiseToken_SweepsBridgedRaiseToken() public {
+        uint256 swapAmount = 1000e18;
+        uint256 bridged = 333e18;
+        token1.mint(address(feeCollector), swapAmount);
+        deal(address(weth), address(feeCollector), bridged);
+        router.setExchangeRate(address(token1), address(weth), 1e18);
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(token1);
+        uint256[] memory mins = new uint256[](1);
+        mins[0] = 0;
+
+        vm.prank(keeper);
+        feeCollector.swapToRaiseToken(tokens, mins, block.timestamp);
+
+        assertEq(weth.balanceOf(treasury), swapAmount + bridged, "treasury receives swap output + bridged");
+        assertEq(weth.balanceOf(address(feeCollector)), 0, "collector drained");
+    }
+
+    /// @notice Passing RAISE_TOKEN inside `tokens[]` is silently skipped (an `[X, X]` swap path
+    ///         would revert the router); the trailing balance sweep still picks the WETH up.
+    function test_SwapToRaiseToken_SkipsRaiseTokenEntry() public {
+        uint256 bridged = 500e18;
+        deal(address(weth), address(feeCollector), bridged);
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(weth);
+        uint256[] memory mins = new uint256[](1);
+        mins[0] = 0;
+
+        vm.prank(keeper);
+        feeCollector.swapToRaiseToken(tokens, mins, block.timestamp);
+
+        assertEq(weth.balanceOf(treasury), bridged, "swept by trailing forward despite RAISE_TOKEN entry");
+    }
 }

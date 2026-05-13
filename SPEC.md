@@ -79,71 +79,55 @@ The DEX layer is a forked Uniswap V2 with a 0.1% (10 BPS) pair fee that flows to
 | `LPStaking`                          | Reward distribution and fee inflows are tax-free                    |
 | `BoardwalkLPManager`                 | Tax-exempt LP add/remove wrapper                                    |
 | `BoardwalkFeeCollector`              | Keeper batch-swaps to raise token are tax-free                      |
-| `IntegratorFeeRecipientCollector`*   | Receives integrator share via `safeTransfer`; `batchClaim` to owner is tax-free |
-| `AncillaryFeeRecipientCollector`*    | Receives ancillary share via `safeTransfer`; `batchClaim` to owner is tax-free |
+| `IntegratorFeeCollector`*            | Receives integrator share via `receiveFees`; per-slot `claim` / `claimBatch` swaps are tax-free |
 
-*Conditional on the chain having a non-zero BPS for that role (e.g. ETH mainnet has no integrator).
+*Conditional on the chain having a non-zero `integratorBps`.
 
-Post-init mutations of the exempt set are restricted to `feeDistributor`-only and limited to **three** self-sovereign rotation flows: `setFeeCollector` (boardwalk migration), `executeChangeIntegratorAddress`, and `executeChangeAncillaryAddress`. Each rotates exemption atomically with the role address.
+Post-init mutations of the exempt set are restricted to `feeDistributor`-only and limited to a **single** self-sovereign rotation flow: `setFeeCollector` (boardwalk migration). It rotates exemption atomically with the role address; `IBoardwalkToken.isExempt(newAddress) == false` is enforced to prevent exempt-list aliasing. The chain-level `IntegratorFeeCollector` is **immutable** — its exempt status cannot be re-pointed by anyone.
 
 ---
 
 ## Fee distribution
 
-The split is **frozen per launch** at `FeeDistributor.initialize`. Chain-specific defaults (set at `LaunchFactory` deployment, applied to future launches):
+The split is **frozen per launch** at `FeeDistributor.initialize`. Defaults are set at `LaunchFactory` deployment and apply to future launches; chain-specific BPS values live in the public protocol docs.
 
-**Base / Katana / Fraxtal** — both integrator and ancillary collectors:
+| Bucket | Source field | Tunable post-deploy | Bound | Routing |
+| ------ | ------------ | ------------------- | ----- | ------- |
+| Issuer | `_feeBpsDefaults.issuer` | yes (`executeSetFeeDefaults`) | 10–80 BPS | Accrues per recipient; claim as raise token via `claimAsRaiseToken` (10%-of-accrued / 24h rate limit) |
+| Boardwalk | `_feeBpsDefaults.boardwalk` | yes | 10–50 BPS | Forwarded to `BoardwalkFeeCollector.receiveFees` (try/catch + `pendingBoardwalkFees` retry) |
+| LP staking | `_feeBpsDefaults.incentive` | yes | ≤ 50 BPS | Forwarded to `LPStaking.notifyFees` (try/catch + `pendingLpFees` retry) |
+| Referrer | `_feeBpsDefaults.referrer` | yes | ≤ 10 BPS, ≤ boardwalk | Optional Advanced-only role. Carved from boardwalk when set; otherwise the slot stays in boardwalk |
+| Integrator | `INTEGRATOR_BPS` | **no** (immutable on factory) | ≤ 50 BPS | Forwarded as a single bucket to the chain-level `IntegratorFeeCollector.receiveFees` (try/catch + `pendingIntegratorFees` retry); collector splits internally per its frozen `integratorSplits[]` |
+| **Total** | `_feeBpsDefaults.total` | n/a (validated to equal `issuer + boardwalk + incentive + INTEGRATOR_BPS`) | n/a | Per-transfer `baseTaxBps` |
 
-| Recipient    | BPS | Notes                                                            |
-| ------------ | --- | ---------------------------------------------------------------- |
-| Issuer       | 30  | Claim as raise token, 10%-of-accrued / 24h limit                 |
-| Boardwalk    | 35  | Forwarded to `BoardwalkFeeCollector` via `receiveFees` (try/catch) |
-| LP staking   | 23  | Forwarded to `LPStaking.notifyFees` (try/catch)                  |
-| Referrer     | 5   | **Carved out of boardwalk** (not additive); accrues for pull claim |
-| Integrator   | 25  | Pushed to integrator collector via `safeTransfer` + `notifyFees` |
-| Ancillary    | 2   | Pushed to ancillary collector via `safeTransfer` + `notifyFees`  |
-| **Total**    | **115** |                                                              |
+`_validateFeeDefaults` enforces the bounds and the `total` invariant on every `executeSetFeeDefaults`. The `INTEGRATOR_BPS` immutable can never be tuned post-deployment; changing it requires a new factory deployment.
 
-**Ethereum mainnet** — ancillary only (no integrator):
-
-| Recipient    | BPS | Notes                                                            |
-| ------------ | --- | ---------------------------------------------------------------- |
-| Issuer       | 40  |                                                                  |
-| Boardwalk    | 45  |                                                                  |
-| LP staking   | 28  |                                                                  |
-| Referrer     | 5   | Carved from boardwalk                                            |
-| Integrator   | 0   | Not configured on ETH mainnet                                    |
-| Ancillary    | 2   |                                                                  |
-| **Total**    | **115** |                                                              |
-
-Referrer carve-out: when a referrer is set, `boardwalkEffective = boardwalk - referrer`. Total tax stays 115 BPS regardless. Integrator and referrer are NOT mutually exclusive on Base/Katana/Fraxtal — both can coexist on Advanced launches.
+Referrer carve-out: when a referrer is set, `boardwalkEffective = boardwalk - referrer`. Total tax stays at the configured BPS regardless. Integrator and referrer can coexist on Advanced launches.
 
 **Per-transfer routing in `onTaxReceived`:**
-1. Compute `lp/boardwalk/issuer/referrer/integrator/ancillary` shares (proportional by frozen BPS).
+1. Compute `lp/boardwalk/issuer/referrer/integrator` shares (proportional by frozen BPS).
 2. `try LPStaking.notifyFees(lpShare)` — on revert, `pendingLpFees += lpShare`, emit `FeeForwardFailed`.
 3. `try FeeCollector.receiveFees(token, boardwalkShare)` — on revert, `pendingBoardwalkFees += boardwalkShare`.
-4. **Push integrator/ancillary** via `_forwardThirdParty(addr, share)`: `safeTransfer(addr, share)` (always lands; both endpoints are exempt) followed by best-effort `try notifyFees(token, share) {} catch { emit FeeForwardFailed("Notify", _) }`. **No allowance is granted** to partner-controlled collectors and **no `pending*` queue** is added — the residual failure surface is too small to justify the extra storage / retry path.
+4. `try IntegratorFeeCollector.receiveFees(token, integratorShare)` — on revert, `pendingIntegratorFees += integratorShare`, emit `FeeForwardFailed("Integrator", _)`. The collector is protocol-deployed and immutable (no rotation, no partner control), so `FeeDistributor` grants it max allowance at init and uses the pull-receive pattern for atomic accrual + token transfer.
 5. Distribute issuer share across recipients by frozen splits; last recipient gets the remainder to absorb rounding dust.
 6. Increment `referrerAccrued`.
 
-`retryPendingFees()` is permissionless and flushes any accumulated failed LP/Boardwalk forwards. Steps 1–6 never revert as a unit, so transfers cannot be bricked by a downstream contract.
+`retryPendingFees()` is permissionless and flushes any accumulated failed LP/Boardwalk/Integrator forwards. Steps 1–6 never revert as a unit, so transfers cannot be bricked by a downstream contract.
 
 **Issuer claim** (`claimAsRaiseToken`): rate-limited to 10% of `totalAccrued` per recipient per 24h, swapped via the standard router (`FeeDistributor` is exempt). Dust escape: if `totalAccrued / 10 == 0`, the full unclaimed amount is claimable in one call. Caller supplies `minRaiseTokenOut` and `deadline`.
 
-**Integrator/ancillary claim** lives on the recipient `FeeRecipientCollector`, not on `FeeDistributor`: the collector tracks tokens via `EnumerableSet` (gated by `IBoardwalkToken(token).feeDistributor() == msg.sender`) and exposes `batchClaim(uint256 limit)` to its owner — claim amount is `IERC20(token).balanceOf(address(this))` per token (no accrual mapping). The collector is partner-controlled (`Ownable2Step`); rescue paths `claimToken(token)` and `removeTrackedToken(token)` cover untracked balances and junk-token grief.
+**Integrator claim** lives on the chain-level `IntegratorFeeCollector` (singleton per chain). The collector holds frozen `integrators[]` and `integratorSplits[]` arrays set at construction; `receiveFees(token, amount)` allocates each inbound bucket across slots by frozen BPS. Each integrator slot tracks per-token accrual in `claimStates[slot][token]` (mirrors the issuer `ClaimState` shape) and is rate-limited to **25% of `totalAccrued` per token per 24h** (mirrors issuer logic with `/4` instead of `/10`, including dust escape). Claims always swap to the raise token via the standard router (`IntegratorFeeCollector` is exempt). Two claim modes: `claim(token, minOut, deadline)` (one token) and `claimBatch(tokens[], minAmountsOut[], deadline)` (caller-supplied token list and per-token min-outs). For batch, each per-token attempt is wrapped in a self-call `try this._claimOneToken(...) catch { emit ClaimFailed(...) }` so a single bad token never bricks the batch and rate-limit state is untouched on failure. Tokens with `claimableAmount == 0` (rate-limit window not elapsed) are skipped silently. Companion off-chain views: `quote(integrator, token, slippageBps)` and `quoteBatch(integrator, tokens[], slippageBps)` compute `minAmountsOut[]` from `IDEXRouter.getAmountsOut` for caller convenience.
 
-**Per-recipient address changes**: only the current recipient can `signal` and `cancel`; anyone can `execute` after the delay. Claims continue to flow to the OLD address until execute. Non-zero address validated in execute. Integrator/ancillary execute paths additionally rotate the BoardwalkToken exemption (`updateExempt(old, false)`; `updateExempt(new, true)`) and enforce `IBoardwalkToken(token).isExempt(newAddress) == false` to prevent exempt-list aliasing. Delay differs per role:
+**Per-recipient address changes**:
 
-- Issuer / referrer: **7 days** (default).
-- Integrator / ancillary: **14 days** (per-clone enforced inside `FeeDistributor` via `_actionDelay` override). The longer window is a hard protocol-level minimum; no role-holder can rotate faster regardless of how its own controller is structured.
+- **Issuer / referrer**: only the current recipient can `signal` and `cancel`; anyone can `execute` after the **7-day delay**. Claims continue to flow to the OLD address until execute. Non-zero address validated in execute.
+- **Integrator (slot rotation)**: lives on `IntegratorFeeCollector`, not `FeeDistributor`. Only the current slot address can `signal`/`cancel`; anyone can `executeChangeAddress(slotIdx, newAddress)` after the **14-day delay**. The execute path rejects `address(0)` and rejects `newAddress` that is already an integrator on another slot (preserves reverse-map injectivity). Storage-side state (`claimStates`, `_trackedTokens`) is slot-keyed and stable across rotation; only the `address ↔ slot` reverse map flips. The slot's accrual continues uninterrupted.
 
 **Fee collector rotation** (`FeeDistributor.setFeeCollector`, called by the current `feeCollector` only): atomically (a) `updateExempt(old, false)` then `updateExempt(new, true)` on the token, (b) revoke approval to old, grant max approval to new. Same `isExempt` distinct-address invariant applies. No timelock — `BoardwalkFeeCollector`'s own `MIGRATE_COLLECTOR` action provides the delay at the singleton level.
 
-`FeeDistributor` blocks the generic `signalAction` path (`_authAdmin` always reverts); only the typed issuer/referrer/integrator/ancillary flows mutate state.
+`FeeDistributor` blocks the generic `signalAction` path (`_authAdmin` always reverts); only the typed issuer/referrer flows mutate state. The integrator collector address is **frozen at init** and has no rotation path on `FeeDistributor`.
 
-**Factory-level integrator/ancillary rotation** (`LaunchFactory.signalChangeIntegratorAddress` / `…AncillaryAddress`): same self-sovereign pattern, `msg.sender == role`, **14-day delay**. Affects future launches only — past clones retain their frozen role addresses. `LaunchFactory._authAdmin` reverts for `ACTION_SET_INTEGRATOR` / `ACTION_SET_ANCILLARY` so the owner cannot rotate via the generic timelock path.
-
-**Cross-clone migration UX** — the default `FeeRecipientCollector` exposes batched typed helpers so a partner can rotate the role across many clones in 2 transactions instead of 2N: `signalChangeOnDistributors(distributors[], newAddress)` (owner-only, loops the per-FD typed signal), `executeChangeOnDistributors(distributors[], newAddress)` (permissionless, mirrors FD's permissionless execute), `cancelChangeOnDistributors(distributors[])` (owner-only). Each helper auto-detects whether the collector currently holds the integrator OR ancillary role per FD. Factory-side rotation goes through the parallel `signalChangeOnFactory(factory, newAddress)` / `cancelChangeOnFactory(factory)`. The FD's per-clone 14-day timelock applies regardless — the helpers are pure UX glue.
+`IntegratorFeeCollector` blocks its generic `signalAction` path (`_authAdmin` always reverts); only the typed slot-rotation flows mutate state. Splits are immutable.
 
 ---
 
@@ -233,7 +217,7 @@ Claims revert before `cliffEnd`. Vesting amounts, schedule, and labels are immut
 ERC20 + Initializable. Constructor calls `_disableInitializers()`. `name()` / `symbol()` overridden to return clone-specific values. Custom `TokenInitialized` event avoids collision with OZ `Initialized(uint64)`. No owner; the only mutator beyond `initialize` is `feeDistributor` calling `updateExempt` during collector rotation.
 
 ### FeeDistributor (clone)
-Inherits `Timelocked` + `Initializable`, but `_authAdmin` always reverts so the generic signal path is dead. Typed issuer/referrer/integrator/ancillary signal/cancel/execute flows are the only state-mutating admin paths. Burns are intentionally not exposed (recipient-controlled changes are self-sovereign). `pendingLpFees / pendingBoardwalkFees` accumulate when downstream forwards revert; `retryPendingFees()` flushes them. Integrator and ancillary use **push+notify** (`safeTransfer` + best-effort `notifyFees`) — no allowance, no pending queue, no claim function on FeeDistributor.
+Inherits `Timelocked` + `Initializable`, but `_authAdmin` always reverts so the generic signal path is dead. Typed issuer/referrer signal/cancel/execute flows are the only state-mutating admin paths. Burns are intentionally not exposed (recipient-controlled changes are self-sovereign). `pendingLpFees / pendingBoardwalkFees / pendingIntegratorFees` accumulate when downstream forwards revert; `retryPendingFees()` flushes all three. The integrator share is forwarded as a single bucket to the immutable chain-level `IntegratorFeeCollector` via `receiveFees(token, amount)` (pull pattern, max allowance granted at init); the collector splits the bucket across its frozen integrator slots internally. The collector address is frozen per clone at `initialize` — no setter, no rotation.
 
 ### PresaleManager (clone)
 Initializable. `setVestingConfig` is a one-shot factory-only call. After `seedLiquidity`, the only ongoing function is `claimTokens` (or `refund` if failed). No admin.
@@ -245,16 +229,33 @@ ReentrancyGuardTransient + Initializable. Two-step initialiser lock (`setInitial
 Timelocked + Initializable. Two-step initialiser lock with `issuer` set at the same time. Issuer-only timelocked recipient changes (described above).
 
 ### LaunchFactory (singleton)
-Ownable2Step + Timelocked + MembershipDiscount. Holds implementation addresses (immutable), DEX/router/LPManager addresses (immutable), raise-token address (immutable), per-chain graduation thresholds (mutable, timelocked), fee BPS defaults (timelocked, frozen at clone init), presale range, durations, BMX burn amount, NFT collection, member discount BPS, **integrator and ancillary collector addresses (constructor-set, self-sovereign rotation)**, **anti-whale tax/duration (timelocked, applied to future clones)**. On `createLaunch`: validates config (including distinct-address invariant against immutable exempt singletons), burns `_effectiveCost(bmxBurnAmount, memberLaunchDiscountBps, msg.sender)` BMX from issuer to dead, deploys clones, locks LPStaking/VestingStream initialisers, initialises Token (with anti-whale config) / FeeDistributor (with all six fee buckets and integrator/ancillary collector addresses) / PresaleManager. Stores `LaunchInfo`, emits `LaunchCreated` (with labels for indexers).
+Ownable2Step + Timelocked + MembershipDiscount. Holds implementation addresses (immutable), DEX/router/LPManager addresses (immutable), raise-token address (immutable), per-chain graduation thresholds (mutable, timelocked), the four MUTABLE fee BPS defaults (timelocked, frozen at clone init), presale range, durations, BMX burn amount, NFT collection, member discount BPS, **`INTEGRATOR_COLLECTOR` address and `INTEGRATOR_BPS` (both immutable, set in constructor; no rotation, no admin adjustment)**, **anti-whale tax/duration (timelocked, applied to future clones)**. Constructor enforces `INTEGRATOR_BPS > 0 ⇒ INTEGRATOR_COLLECTOR != address(0)` and `INTEGRATOR_BPS <= MAX_INTEGRATOR_BPS (50)`. The integrator BPS is the only fee bucket that is permanently frozen at deployment — the admin's `executeSetFeeDefaults` can only tune issuer/boardwalk/incentive/referrer (with `total` required to stay coherent: `total == issuer + boardwalk + incentive + INTEGRATOR_BPS`). On `createLaunch`: validates config (including distinct-address invariant against immutable exempt singletons), burns `_effectiveCost(bmxBurnAmount, memberLaunchDiscountBps, msg.sender)` BMX from issuer to dead, deploys clones, locks LPStaking/VestingStream initialisers, initialises Token (with anti-whale config + `INTEGRATOR_COLLECTOR` in the exempt list when non-zero) / FeeDistributor (with five fee buckets and the integrator collector address; `integratorBps` wired from the immutable) / PresaleManager. Stores `LaunchInfo`, emits `LaunchCreated` (with labels for indexers).
 
 ### BoardwalkLPManager (singleton)
 Immutable after deploy. `addLiquidity / removeLiquidity` restricted to pairs containing `RAISE_TOKEN`. LP mint/burn through this wrapper is tax-free by design (the wrapper is in every launch token's exempt list).
 
 ### BoardwalkFeeCollector (singleton)
-Ownable2Step + Timelocked. Aggregates inbound boardwalk-share tokens from all FeeDistributors. `swapToRaiseToken(tokens[], minAmountsOut[])` is keeper-only and uses standard `swapExactTokensForTokens` (the collector is exempt). Approves the router lazily with `forceApprove(ROUTER, type(uint256).max)` once per token. Output raise token is forwarded to `treasury` (and on Base, split 30/70 to treasury/`GovernanceVoter` — see below). Migration (`executeMigrateCollector(newCollector, distributors[])`) commits both arguments in the signal hash so partial execution is impossible.
+Ownable2Step + Timelocked. Aggregates inbound boardwalk-share tokens from all FeeDistributors. `swapToRaiseToken(tokens[], minAmountsOut[])` is keeper-only and uses standard `swapExactTokensForTokens` (the collector is exempt). Approves the router lazily with `forceApprove(ROUTER, type(uint256).max)` once per token. After the swap loop, the collector's **full** raise-token balance is forwarded — the swap output AND any pre-existing balance (e.g. revenue bridged in from non-Base chains, or stuck residue) are drained in the same tx. Forwarding goes to `treasury` (and on Base, split 30/70 to treasury/`GovernanceVoter` — see below). For the bridge-only case (no swaps to perform), `forwardRevenue()` (keeper-only) sweeps the raise-token balance through the same path; silent no-op on a zero balance. Passing `RAISE_TOKEN` itself in `tokens[]` is silently skipped to avoid an `[X, X]` router revert. Migration (`executeMigrateCollector(newCollector, distributors[])`) commits both arguments in the signal hash so partial execution is impossible.
 
-### FeeRecipientCollector (singleton-per-role)
-Ownable2Step. Per-role aggregator (integrator OR ancillary) for fees pushed via `safeTransfer` from every launch's FeeDistributor; a best-effort `notifyFees(token, amount)` registers the token in an `EnumerableSet` (gated by `IBoardwalkToken(token).feeDistributor() == msg.sender` to bound junk-token grief). Owner self-services `batchClaim(uint256 limit)` to drain accumulated balances — claim amount is `IERC20(token).balanceOf(address(this))` per token (no accrual mapping; handles late-arriving and donation balances). `batchClaim` iterates downward against a snapshot of the original set length and wraps each per-token transfer in `try/catch` via `_safeClaimTo`, so a malicious tracked token cannot brick the batch or starve other entries via reentry-readd; failed tokens are removed from the set and emit `ClaimFailed`. Owner-only rescue: `claimToken(token)` for untracked balances, `removeTrackedToken(token)` to delist junk. Cross-clone rotation helpers (`signalChangeOnDistributors` / `executeChangeOnDistributors` / `cancelChangeOnDistributors`) batch the per-FD typed signal/execute/cancel paths so an N-clone migration takes 2 owner transactions; each auto-detects the collector's role per FD. Factory-side helpers (`signalChangeOnFactory` / `cancelChangeOnFactory`) cover rotation on the singleton. Trust model: partner-controlled (NOT protocol-controlled like `BoardwalkFeeCollector`) — no allowance is granted by `FeeDistributor` to the collector, narrowing the trust surface to the collector's own balance. The 14-day rotation delay is enforced inside `FeeDistributor` and `LaunchFactory`, not here, so EOA / non-Timelocked role-holders cannot shortcut it.
+### IntegratorFeeCollector (singleton per chain)
+Ownable2Step + Timelocked. Owner-minimal: deployer is the initial owner, the only `onlyOwner` function is one-shot `setFactory(address)`, and the owner can `renounceOwnership()` after wiring to permanently lock the contract. The factory address is required for the `receiveFees` gate (`ILaunchFactory(factory).isLaunchToken(token)`) and is set post-construction to break the chicken-and-egg with `LaunchFactory.INTEGRATOR_COLLECTOR` immutable.
+
+Constructor freezes `integrators[]` and `integratorSplits[]` (both same length, splits sum to 10000 BPS, all integrators non-zero and distinct, all splits > 0). A reverse `address → slotIdx` mapping (`_slotPlusOne`, sentinel-encoded) lets every auth-gated path resolve the slot from `msg.sender` instead of taking an explicit index parameter.
+
+`receiveFees(token, totalAmount)` is gated by `ILaunchFactory(factory).isLaunchToken(token) && IBoardwalkToken(token).feeDistributor() == msg.sender`. Pulls the bucket via `safeTransferFrom` and allocates across slots by frozen `integratorSplits` (last slot absorbs rounding dust). Per-slot per-token accrual lives in `claimStates[slot][token]` and tracked tokens live in `_trackedTokens[slot]` (an `EnumerableSet`).
+
+Claims swap to the raise token via the standard router (collector is exempt) with caller-supplied `minOut` for slippage protection:
+
+- `claim(token, minOut, deadline)` — auto-derives `slot = _slotOf(msg.sender)`; reverts `NothingToClaimYet` if rate-limit window or fully claimed.
+- `claimBatch(tokens[], minAmountsOut[], deadline)` — caller-supplied parallel arrays; each per-token attempt wrapped in `try this._claimOneToken(slot, token, minOut, deadline) catch { emit ClaimFailed(...) }`. A token whose `claimableAmount == 0` (rate-limit window not elapsed) is skipped silently. On successful claim, the token is removed from `_trackedTokens[slot]` IFF `totalClaimed == totalAccrued` (re-added on next `receiveFees` allocation).
+
+Rate limit math mirrors issuer with `/4`: `maxClaimable = totalAccrued / 4`, dust escape when `totalAccrued < 4`, per-window `claimedInCurrentPeriod` reset on `block.timestamp >= lastClaimTime + 1 days`. State updates only on successful swap (failed claims do NOT consume the window).
+
+Off-chain helpers: `trackedTokens(integrator) → address[]` (full set), `quote(integrator, token, slippageBps) → (amountIn, minOut)`, `quoteBatch(integrator, tokens[], slippageBps) → (tokens_[], amountsIn[], minAmountsOut[])`. `quote` returns `(0, 0)` when nothing claimable and reverts `QuoteFailed` on a router error with a non-zero bucket. `quoteBatch` returns the filtered subset of `tokens` that are claimable right now (non-zero bucket AND router quote succeeds), so the caller can pass `tokens_` and `minAmountsOut` straight into `claimBatch`.
+
+Slot rotation: typed `signalChangeAddress(newAddress)` (caller = current slot address), `executeChangeAddress(slotIdx, newAddress)` (permissionless after 14d, slot taken explicitly because msg.sender is not the integrator at that point), `cancelChangeAddress()` (caller = current slot). Execute rejects `address(0)` and `newAddress` already taken by another slot. Splits are immutable; only addresses rotate.
+
+Trust model: protocol-controlled (immutable singleton in the token's exempt list). `FeeDistributor` grants max allowance for the pull pattern. The 14-day rotation delay is hardcoded as `ROTATION_DELAY` and committed into the pending change via the explicit-delay `_signal(action, dataHash, ROTATION_DELAY)` overload — the per-slot action key `keccak256(abi.encode(ACTION_CHANGE_ADDRESS, slotIdx))` is deliberately not picked up by an `_actionDelay` override (which only sees the bare action constant).
 
 ### BoostBurn (singleton)
 Ownable2Step + Timelocked + MembershipDiscount. Maps `int256 scores[token]`. Each `(wallet, token, epoch)` can boost or deboost once. Cost is `_effectiveCost(bmxCost, memberBoostDiscountBps, msg.sender)` BMX, burned to dead. `epoch = (block.timestamp - EPOCH_ZERO) / 30 days` (epoch duration immutable). No factory validation — accepts any token address.
@@ -275,7 +276,7 @@ Generic `signalAction(action, dataHash) / cancelAction(action) / typed execute*`
 3. Deploy clones (token, feeDistributor, presale, lpStaking; vesting if Advanced + needs vesting).
 4. Lock `LPStaking.initAuthorizer = presale`. Lock `VestingStream.initAuthorizer = presale, issuer = issuer`.
 5. Initialise token (name, ticker, baseTaxBps, antiWhaleTaxBps, antiWhaleDuration, feeDistributor, presale, exempt addresses).
-6. Initialise feeDistributor (token, lpStaking, feeCollector, router, raiseToken, issuerRecipients[], issuerSplits[], referrer, integrator, ancillary, all six bucket BPS).
+6. Initialise feeDistributor (token, lpStaking, feeCollector, integratorCollector, router, raiseToken, issuerRecipients[], issuerSplits[], referrer, all five bucket BPS).
 7. Initialise presale (all clone addresses, raiseToken, duration, presalePercent, graduationThreshold, startDelay flag).
 8. If Advanced + needs vesting: call `presale.setVestingConfig(recipients, amounts)`.
 9. Store `LaunchInfo`, emit `LaunchCreated`.
@@ -289,10 +290,10 @@ Generic `signalAction(action, dataHash) / cancelAction(action) / typed execute*`
 ### 3. Transfer → tax → distribution
 1. Non-exempt sender transfers — `BoardwalkToken._update` checks both endpoints against `isExempt`.
 2. Tax computed (anti-whale or base), debited from amount, transferred to FeeDistributor.
-3. `FeeDistributor.onTaxReceived(tax)`: split, try-forward LP and boardwalk shares, push integrator and ancillary shares (`safeTransfer` + best-effort `notifyFees{gas:150_000}`), accrue issuer and referrer shares.
+3. `FeeDistributor.onTaxReceived(tax)`: split into `lp / boardwalk / issuer / referrer / integrator` shares; try-forward `lp` (LPStaking), `boardwalk` (BoardwalkFeeCollector), and `integrator` (IntegratorFeeCollector) via their respective `notifyFees`/`receiveFees` calls (each wrapped in `try/catch` with a per-bucket `pending*Fees` retry queue); accrue issuer and referrer shares.
 4. (LP path) `LPStaking.notifyFees(lp)` → `_updateAllRewards()` (which may advance the epoch) → if `totalWeight > 0`: `pendingEpochFees += lp`; if `totalWeight == 0`: **the amount is burned to `DEAD_ADDRESS` and `FeesLost(lp)` is emitted** so a first staker after a dormancy window cannot harvest fees that arrived while there were no stakers.
 5. (Boardwalk path) `FeeCollector.receiveFees(token, share)` → `accumulatedFees[token] += share`.
-6. (Integrator/ancillary path) `FeeRecipientCollector.notifyFees(token, share)` registers the token in the collector's `EnumerableSet`. The preceding `safeTransfer` already landed value; owner drains via `batchClaim`.
+6. (Integrator path) `IntegratorFeeCollector.receiveFees(token, share)` pulls the bucket via `safeTransferFrom`, allocates across slots by frozen splits, and marks the token as tracked per slot. Each integrator independently calls `claim` / `claimBatch` to swap their accrued share to the raise token.
 
 ### 4. Stake / withdraw / claim
 - **Stake**: `_updateAllRewards()` → settle pending with OLD weight → `_updateUserMp(user)` (accrues MP) → pull LP → update `lpStaked`, `totalWeight`, `rewardDebt`.
@@ -300,9 +301,9 @@ Generic `signalAction(action, dataHash) / cancelAction(action) / typed execute*`
 - **Claim**: `_updateAllRewards()` → compute pending with STORED weight → push reward token → `_updateUserMp(user)` → recalc debt.
 
 ### 5. Keeper batch swap
-1. Keeper calls `BoardwalkFeeCollector.swapToRaiseToken(tokens[], minAmountsOut[])`.
-2. For each token: read balance, lazy `forceApprove(router, max)` if undersized allowance, swap, clear `accumulatedFees[token]`.
-3. Forward all output raise token to `treasury` (or split 30/70 with `GovernanceVoter` on Base).
+1. Keeper calls `BoardwalkFeeCollector.swapToRaiseToken(tokens[], minAmountsOut[])`. (For bridge-only revenue with no swaps to perform, the keeper calls `forwardRevenue()` instead.)
+2. For each token: read balance, lazy `forceApprove(router, max)` if undersized allowance, swap, clear `accumulatedFees[token]`. `RAISE_TOKEN` entries are silently skipped.
+3. Forward the collector's full raise-token balance — swap output PLUS any pre-existing balance (bridged revenue, residual) — to `treasury` (or split 30/70 with `GovernanceVoter` on Base).
 
 ### 6. Governance vote → finalize → execute (Base only)
 See *Governance* section below.
@@ -319,12 +320,10 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 | LaunchFactory | `SET_GRADUATION_EXPRESS / _ADVANCED` | 7d | > 0 |
 | LaunchFactory | `SET_EXPRESS_DURATION` | 7d | > 0 |
 | LaunchFactory | `SET_ADVANCED_DURATION` | 7d | 2–14 days |
-| LaunchFactory | `SET_FEE_DEFAULTS` | 7d | issuer 10–80, boardwalk 10–50, incentive 0–50, referrer 0–10, integrator 0–50, ancillary 0–10, referrer ≤ boardwalk; future launches only |
+| LaunchFactory | `SET_FEE_DEFAULTS` | 7d | issuer 10–80, boardwalk 10–50, incentive 0–50, referrer 0–10, referrer ≤ boardwalk; tunes the four mutable buckets only; integrator BPS is `INTEGRATOR_BPS` (immutable, set once at deploy) and CANNOT be adjusted here; new `total` MUST equal `issuer + boardwalk + incentive + INTEGRATOR_BPS`; future launches only |
 | LaunchFactory | `SET_ANTI_WHALE` | 7d | tax 500–4000 BPS, duration 5–90 min; future launches only |
 | LaunchFactory | `SET_PRESALE_RANGE` | 7d | 500–5000 BPS, divisible by 500 |
-| LaunchFactory | `SET_FEE_COLLECTOR` | 7d | non-zero, distinct from integrator/ancillary/lpManager; future launches only |
-| LaunchFactory | `SET_INTEGRATOR` | **14d** | **self-sovereign** (`msg.sender == integrator`); non-zero in execute; distinct from other exempt addresses; not burnable; future launches only |
-| LaunchFactory | `SET_ANCILLARY` | **14d** | **self-sovereign** (`msg.sender == ancillary`); non-zero in execute; distinct from other exempt addresses; not burnable; future launches only |
+| LaunchFactory | `SET_FEE_COLLECTOR` | 7d | non-zero, distinct from `INTEGRATOR_COLLECTOR` and `BOARDWALK_LP_MANAGER`; future launches only |
 | LaunchFactory | `SET_NFT_COLLECTION` | 7d | `address(0)` disables discounts |
 | LaunchFactory | `SET_MEMBER_LAUNCH_DISCOUNT` | 7d | ≤ 10000 BPS |
 | BoardwalkFeeCollector | `SET_TREASURY / _KEEPER` | 7d | non-zero |
@@ -333,7 +332,7 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 | BoostBurn | `SET_BMX_COST` | 7d | 0–1 BMX |
 | BoostBurn | `SET_NFT_COLLECTION / _MEMBER_BOOST_DISCOUNT` | 7d | as LaunchFactory analogues |
 | FeeDistributor | `CHANGE_ISSUER(idx) / CHANGE_REFERRER` | 7d | per-recipient self-signal; non-zero in execute; not burnable |
-| FeeDistributor | `CHANGE_INTEGRATOR / CHANGE_ANCILLARY` | **14d** | per-clone self-signal (`msg.sender == role`); execute rotates exemption + enforces `isExempt(newAddress) == false`; not burnable |
+| IntegratorFeeCollector | `CHANGE_ADDRESS(slotIdx)` | **14d** | per-slot self-signal (`msg.sender == integrators[slotIdx]`); execute permissionless with explicit `slotIdx`; rejects zero address and addresses already taken by another slot; not burnable |
 | VestingStream | `CHANGE_RECIPIENT(idx)` | 7d | issuer-signal; non-zero; auto-claims for outgoing; per-allocation burnable |
 | GovernanceVoter | `SET_TREASURY / _KEEPER` | 7d | non-zero |
 | GovernanceVoter | `SET_FEE_COLLECTOR` | 7d | non-zero; pair with `BoardwalkFeeCollector.MIGRATE_COLLECTOR` |
@@ -411,29 +410,3 @@ Uniswap v4 pools on Base use native ETH (`address(0)`), not WETH. `GovernanceVot
 - `validationCursor[epoch]` advances per batch; a single `finalize(N)` call can complete in N batches.
 - `finalizingEpoch` prevents one-shot bleed-over to the next epoch.
 - `accountedBudget` is the running sum of finalized-but-not-executed budgets. Incremented from `e.budget = epochRevenue[epoch]` in finalize and decremented in execute / `forceMarkExecuted`. Never derived from a balance-of read, so direct WETH transfers to the voter do not affect the accounting.
-
----
-
-## Threat model and accepted tradeoffs
-
-- **Zero-staker reward loss**: vesting and fee rewards during `totalWeight == 0` are permanently lost. Intentional — prevents unbounded carryover.
-- **Lazy MP crystallization**: MP is only updated on user interactions. Active users effectively earn slightly faster than passive ones for the same staked LP.
-- **Issuer rate-limit dust escape**: when total accrued < 10 wei of the fee token, the rate limit is bypassed (otherwise no claim would ever clear). Below the threshold the dust loss to mis-timed claims is negligible.
-- **Failed downstream forwarding**: tax delivery never reverts a transfer; bad downstreams accumulate to `pending*Fees` and are flushed by `retryPendingFees`. Loss-of-availability is the worst case, not loss-of-funds.
-- **Anti-whale start tax (40% default)**: high enough to deter snipers but creates a steep cost for legitimate early traders. Configurable per future launch via `LaunchFactory.executeSetAntiWhale` within `[500, 4000]` BPS / `[5 min, 90 min]` bounds; frozen per clone at init.
-- **`liquiditySeedTime == 0` sentinel**: rejected explicitly (reverts on `setLiquiditySeedTime(0)`); future timestamps also rejected. Prevents tax bypass via post-seed reset.
-- **LP burn is unconditional**: failed launches do not seed; successful launches send 100% of LP tokens to dead. There is no path to recover liquidity.
-- **Governance keeper liveness**: if neither keeper nor owner finalizes/executes, `forceMarkExecuted` after 14 days routes funds to `fallbackTreasury`. The owner can always re-acquire control.
-- **Permissionless seeding**: anyone can call `seedLiquidity()` after the delay, preventing issuer griefing but requiring the issuer (or any participant) to publish the call.
-- **No price oracle**: graduation threshold is denominated in raise token units. Volatility of the raise token vs. USD is the issuer's problem to size around.
-- **`updateExempt` mutability**: post-init mutation of the exempt set exists exclusively for collector rotation and is restricted to `feeDistributor`. The migration on `BoardwalkFeeCollector` commits both `newCollector` and the FeeDistributor list in the signal hash to prevent partial-state attacks.
-- **ParticipationDistributor rounding dust**: per-user allocation is `totalBmx * uv.weight / totalWeight`, rounded down by integer division. Per epoch, at most `numVoters - 1` wei of BMX is left undistributed and stays in `ParticipationDistributor` permanently. Accepted as bounded dust loss.
-- **PresaleManager `claimTokens` rounding dust**: per-user `weightedContributed * presaleTokens / totalWeightedRaise` rounds down with the same `numContributors - 1` wei worst case per launch. Accepted on the same reasoning as above.
-
----
-
-## Notes on tax-exempt contract addresses
-
-Every tax-exempt contract is an immediate counterparty in tax flows. Adding new exempt addresses post-launch is impossible by design — the only post-init mutation is the `feeCollector` swap during a migration. Auditors should treat the exemption list as part of the trust boundary: a compromise of any exempt contract bypasses the tax entirely for tokens transferred through it.
-
-The `BoardwalkLPManager.RAISE_TOKEN` restriction on `addLiquidity / removeLiquidity` is the only structural defence against using exempt contracts as transfer tunnels.

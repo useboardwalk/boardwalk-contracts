@@ -11,7 +11,7 @@ import {VestingStream} from "src/core/VestingStream.sol";
 import {LPStaking} from "src/core/LPStaking.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
-import {FeeRecipientCollector} from "src/core/FeeRecipientCollector.sol";
+import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
 
 contract TestDeployScript is BaseTestScript {
@@ -79,16 +79,21 @@ contract TestDeployScript is BaseTestScript {
         BoardwalkFeeCollector feeCollector = new BoardwalkFeeCollector(owner, raiseToken, dexRouter, treasury, keeper);
         _recordTx("Deploy BoardwalkFeeCollector");
 
-        FeeRecipientCollector ancillaryCollector = new FeeRecipientCollector(owner);
-        _recordTx("Deploy AncillaryFeeRecipientCollector");
+        // Single-integrator chain config: 100% to `owner`. Constructor validates the arrays.
+        address[] memory integratorAddresses = new address[](1);
+        integratorAddresses[0] = owner;
+        uint256[] memory integratorSplits = new uint256[](1);
+        integratorSplits[0] = 10_000;
+
+        IntegratorFeeCollector integratorCollector =
+            new IntegratorFeeCollector(owner, raiseToken, dexRouter, integratorAddresses, integratorSplits);
+        _recordTx("Deploy IntegratorFeeCollector");
 
         LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
-            issuer: 40,
-            boardwalk: 45,
-            incentive: 28,
+            issuer: 30,
+            boardwalk: 35,
+            incentive: 23,
             referrer: 5,
-            integrator: 0,
-            ancillary: 2,
             total: 115
         });
 
@@ -106,8 +111,8 @@ contract TestDeployScript is BaseTestScript {
                 boardwalkDexFactory: dexFactory,
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
-                integrator: address(0),
-                ancillary: address(ancillaryCollector),
+                integratorCollector: address(integratorCollector),
+                integratorBps: 27,
                 bmxBurnAmount: bmxBurnTarget,
                 graduationExpress: graduationExpress,
                 graduationAdvanced: graduationAdvanced,
@@ -122,6 +127,12 @@ contract TestDeployScript is BaseTestScript {
         );
         _recordTx("Deploy LaunchFactory");
 
+        // Wire the factory into the collector when deployer == owner; otherwise owner must do it.
+        if (deployer == owner) {
+            integratorCollector.setFactory(address(factory));
+            _recordTx("IntegratorFeeCollector.setFactory");
+        }
+
         vm.stopBroadcast();
 
         console.log("=== TEST DEPLOYMENT ADDRESSES ===");
@@ -134,7 +145,7 @@ contract TestDeployScript is BaseTestScript {
         console.log("LP_STAKING_TEMPLATE:", address(lpStakingImpl));
         console.log("LP_MANAGER:", address(lpManager));
         console.log("FEE_COLLECTOR:", address(feeCollector));
-        console.log("ANCILLARY_COLLECTOR:", address(ancillaryCollector));
+        console.log("INTEGRATOR_COLLECTOR:", address(integratorCollector));
         console.log("LAUNCH_FACTORY:", address(factory));
         console.log("BMX_BURN_AMOUNT:", factory.bmxBurnAmount());
 
