@@ -105,7 +105,11 @@ The exempt set is otherwise immutable post-init. The only rotation flow is `FeeD
 
 ## Fee distribution
 
-The split is frozen per launch at `FeeDistributor.initialize`. Defaults are set at `LaunchFactory` deployment and apply to future launches; per-chain BPS values live in the public protocol docs.
+The split is frozen per launch at `FeeDistributor.initialize`. Defaults are set at `LaunchFactory` deployment and apply to future launches.
+
+**Default fee total:** 115 BPS token tax (`baseTaxBps` = `_feeBpsDefaults.total`) plus 10 BPS on the forked V2 pair (0.1% swap fee to LPs) ≈ **1.25%** effective on swaps. Future chains may use different schedules.
+
+**Factory storage vs launch path:** The factory stores one `FeeBpsDefaults` per chain. `boardwalk` is the **Express** Boardwalk rate; `referrer` (5 BPS) is carved from boardwalk on **Advanced** launches when a referrer address is set (`boardwalkEffective = boardwalk - referrer`). Express forbids a referrer (`ReferrerNotAllowedOnExpressPath`). Advanced without a referrer keeps the full boardwalk bucket (the referrer slice defaults to Boardwalk).
 
 | Bucket | Source field | Tunable post-deploy | Bound | Routing |
 | ------ | ------------ | ------------------- | ----- | ------- |
@@ -119,6 +123,25 @@ The split is frozen per launch at `FeeDistributor.initialize`. Defaults are set 
 `_validateFeeDefaults` enforces bounds and the `total` invariant on every `executeSetFeeDefaults`. `INTEGRATOR_BPS` can never be tuned post-deployment; changing it requires a new factory.
 
 Referrer carve-out: when a referrer is set, `boardwalkEffective = boardwalk - referrer`. Total tax stays at the configured BPS regardless. Integrator and referrer can coexist on Advanced launches.
+
+### Default fee schedules (BPS)
+
+Factory parameters (`issuer + boardwalk + incentive + INTEGRATOR_BPS` = `total` = 115; `referrer` not in `total`):
+
+| Chain | `issuer` | `boardwalk` | `referrer` | `incentive` | `integrators` |
+| ----- | -------- | ----------- | ---------- | ----------- | ---------------- |
+| Base (8453), Katana (747474) | 30 | 35 | 5 | 23 | 27 |
+| Fraxtal (252) | 30 | 35 | 5 | 25 | 25 |
+| Ethereum (1) | 35 | 35 | 5 | 25 | 20 |
+
+**Effective splits at launch** (add 0.1% DEX fee on swaps):
+
+| Path | Base / Katana | Fraxtal | Ethereum |
+| ---- | ------------- | ------- | -------- |
+| **Advanced** (referrer set) | 0.30% issuer, 0.30% Boardwalk, 0.05% referrer, 0.23% LP incentives, 0.27% integrators | 0.30% issuer, 0.30% Boardwalk, 0.05% referrer, 0.25% LP incentives, 0.25% integrators | 0.35% issuer, 0.30% Boardwalk, 0.05% referrer, 0.25% LP incentives, 0.20% integrators |
+| **Express** (no referrer) | 0.30% issuer, 0.35% Boardwalk, 0.23% LP incentives, 0.27% integrators | 0.30% issuer, 0.35% Boardwalk, 0.25% LP incentives, 0.25% integrators | 0.35% issuer, 0.35% Boardwalk, 0.25% LP incentives, 0.20% integrators |
+
+`INTEGRATOR_BPS` is immutable in the factory; changing it requires a new factory deployment. Other buckets can be updated via timelocked `executeSetFeeDefaults` for **future** launches only.
 
 **Per-transfer routing in `onTaxReceived`:**
 

@@ -12,6 +12,7 @@ import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
+import {FeeSchedules} from "script/FeeSchedules.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
@@ -75,13 +76,7 @@ contract DryRunAll is Script {
             new IntegratorFeeCollector(owner, weth, dexRouter, integratorAddresses, integratorSplits);
         console.log("IntegratorFeeCollector:", address(integratorCollector));
 
-        LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
-            issuer: 30,
-            boardwalk: 35,
-            incentive: 23,
-            referrer: 5,
-            total: 115
-        });
+        (LaunchFactory.FeeBpsDefaults memory feeBps, uint256 integratorBps) = FeeSchedules.resolve(block.chainid);
 
         LaunchFactory factory = new LaunchFactory(
             owner,
@@ -98,7 +93,7 @@ contract DryRunAll is Script {
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
                 integratorCollector: address(integratorCollector),
-                integratorBps: 27,
+                integratorBps: integratorBps,
                 bmxBurnAmount: 100e18,
                 graduationExpress: 10 ether,
                 graduationAdvanced: 10 ether,

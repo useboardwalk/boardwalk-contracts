@@ -11,6 +11,7 @@ import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
+import {FeeSchedules} from "script/FeeSchedules.sol";
 
 /// @title DeployFactory
 /// @notice Deploys all Boardwalk singleton contracts and implementation templates.
@@ -89,35 +90,9 @@ contract DeployFactory is Script {
         console.log("BoardwalkFeeCollector:", address(feeCollector));
 
         // 4. Per-chain fee defaults + integrator collector deployment.
-        //    Conservative chain-id dispatch: unsupported chains revert rather than silently
-        //    defaulting to either schedule. Integrator BPS is set as an immutable on the factory
-        //    (not in `feeBps`) and CANNOT be adjusted post-deployment. Total stays 115 BPS.
-        LaunchFactory.FeeBpsDefaults memory feeBps;
-        uint256 integratorBps;
-        uint256 cid = block.chainid;
-        if (cid == 1) {
-            // Ethereum mainnet
-            feeBps = LaunchFactory.FeeBpsDefaults({
-                issuer: 35,
-                boardwalk: 40,
-                incentive: 25,
-                referrer: 5,
-                total: 115
-            });
-            integratorBps = 15;
-        } else if (cid == 8453 || cid == 252 || cid == 2522) {
-            // Base (8453), Fraxtal (252), Fraxtal Holesky (2522). Katana chain id TBD.
-            feeBps = LaunchFactory.FeeBpsDefaults({
-                issuer: 30,
-                boardwalk: 35,
-                incentive: 23,
-                referrer: 5,
-                total: 115
-            });
-            integratorBps = 27;
-        } else {
-            revert("Unsupported chain id - configure fee schedule explicitly");
-        }
+        //    See FeeSchedules.sol and SPEC.md "Default fee schedules". Integrator BPS is immutable
+        //    on the factory (not in `feeBps`) and cannot be adjusted post-deployment.
+        (LaunchFactory.FeeBpsDefaults memory feeBps, uint256 integratorBps) = FeeSchedules.resolve(block.chainid);
 
         // 5. Deploy IntegratorFeeCollector (singleton — owner is `owner`; setFactory called below).
         //    The constructor itself validates the integrator/split arrays.

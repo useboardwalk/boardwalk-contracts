@@ -13,6 +13,7 @@ import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
+import {FeeSchedules} from "script/FeeSchedules.sol";
 
 contract TestDeployScript is BaseTestScript {
     address internal constant BASE_WETH = 0x4200000000000000000000000000000000000006;
@@ -34,9 +35,11 @@ contract TestDeployScript is BaseTestScript {
 
         uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(0.0001 ether));
         uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(0.0001 ether));
-        uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(24 hours));
-        uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(7 days));
+        uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(1 hours));
+        uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(3 hours));
         uint256 bmxBurnTarget = vm.envOr("BMX_BURN_AMOUNT", uint256(1e18));
+        address nftCollection = vm.envOr("NFT_COLLECTION", address(0));
+        uint256 memberLaunchDiscountBps = vm.envOr("MEMBER_LAUNCH_DISCOUNT_BPS", uint256(5000));
 
         require(owner != address(0), "OWNER required");
         require(bmx != address(0), "BMX_ADDRESS required");
@@ -89,13 +92,7 @@ contract TestDeployScript is BaseTestScript {
             new IntegratorFeeCollector(owner, raiseToken, dexRouter, integratorAddresses, integratorSplits);
         _recordTx("Deploy IntegratorFeeCollector");
 
-        LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
-            issuer: 30,
-            boardwalk: 35,
-            incentive: 23,
-            referrer: 5,
-            total: 115
-        });
+        (LaunchFactory.FeeBpsDefaults memory feeBps, uint256 integratorBps) = FeeSchedules.resolve(block.chainid);
 
         LaunchFactory factory = new LaunchFactory(
             owner,
@@ -112,7 +109,7 @@ contract TestDeployScript is BaseTestScript {
                 boardwalkLpManager: address(lpManager),
                 boardwalkFeeCollector: address(feeCollector),
                 integratorCollector: address(integratorCollector),
-                integratorBps: 27,
+                integratorBps: integratorBps,
                 bmxBurnAmount: bmxBurnTarget,
                 graduationExpress: graduationExpress,
                 graduationAdvanced: graduationAdvanced,
@@ -121,8 +118,8 @@ contract TestDeployScript is BaseTestScript {
                 antiWhaleTaxBps: 4000,
                 antiWhaleDuration: 90 minutes,
                 feeBps: feeBps,
-                nftCollection: address(0),
-                memberLaunchDiscountBps: 0
+                nftCollection: nftCollection,
+                memberLaunchDiscountBps: memberLaunchDiscountBps
             })
         );
         _recordTx("Deploy LaunchFactory");
@@ -148,6 +145,8 @@ contract TestDeployScript is BaseTestScript {
         console.log("INTEGRATOR_COLLECTOR:", address(integratorCollector));
         console.log("LAUNCH_FACTORY:", address(factory));
         console.log("BMX_BURN_AMOUNT:", factory.bmxBurnAmount());
+        console.log("NFT_COLLECTION:", nftCollection);
+        console.log("MEMBER_LAUNCH_DISCOUNT_BPS:", memberLaunchDiscountBps);
 
         _printTxSummary();
     }
