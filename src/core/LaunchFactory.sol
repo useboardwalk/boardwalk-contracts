@@ -148,6 +148,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     error InvalidPresaleRange(uint256 min, uint256 max);
     error ZeroGraduation();
     error IssuerVestingRecipientsRequired();
+    error VestingNotAllowedAtFullPresale();
     error MemberDiscountOutOfRange(uint256 bps);
     error IntegratorCollectorMismatch();
     error DuplicateRoleAddress();
@@ -471,9 +472,12 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
             }
             if (pp % PRESALE_STEP != 0) revert PresalePercentNotDivisibleBy5();
 
-            // Advanced with <50% presale must define vesting — otherwise the issuer bucket isn't minted.
+            // Advanced with <50% presale must define vesting; otherwise the issuer bucket isn't minted.
             if (pp < 5000 && config.vestingRecipients.length == 0) {
                 revert IssuerVestingRecipientsRequired();
+            }
+            if (pp == 5000 && config.vestingRecipients.length > 0) {
+                revert VestingNotAllowedAtFullPresale();
             }
 
             if (config.vestingRecipients.length > MAX_VESTING_RECIPIENTS) {

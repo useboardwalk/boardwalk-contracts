@@ -58,6 +58,7 @@ interface ILaunchFactory {
     error InvalidPresaleRange(uint256 min, uint256 max);
     error ZeroGraduation();
     error IssuerVestingRecipientsRequired();
+    error VestingNotAllowedAtFullPresale();
     error MemberDiscountOutOfRange(uint256 bps);
     error IntegratorCollectorMismatch();
     error DuplicateRoleAddress();

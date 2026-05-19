@@ -520,6 +520,8 @@ contract LaunchFactoryTest is Test {
         bmx.approve(address(factory), DEFAULT_BMX_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
+        // pp < 5000 to satisfy the vesting-allowed branch.
+        config.presalePercent = 4500;
         config.vestingRecipients = new address[](2);
         config.vestingRecipients[0] = vestingRecipient1;
         config.vestingRecipients[1] = vestingRecipient2;
@@ -711,6 +713,28 @@ contract LaunchFactoryTest is Test {
         factory.createLaunch(config);
     }
 
+    /// @notice Advanced launches at `pp == 5000` have a zero issuer-vesting bucket; vesting
+    ///         recipients must be rejected to avoid deploying an uninitializable VestingStream.
+    function test_RevertWhen_CreateLaunch_AdvancedPath_FullPresaleWithVestingRecipients() public {
+        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        vm.prank(issuer);
+        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+
+        LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
+        config.presalePercent = 5000;
+        address[] memory vr = new address[](1);
+        vr[0] = vestingRecipient1;
+        config.vestingRecipients = vr;
+        uint256[] memory vp = new uint256[](1);
+        vp[0] = BPS_DENOMINATOR;
+        config.vestingPercents = vp;
+        config.vestingLabels = new string[](1);
+
+        vm.prank(issuer);
+        vm.expectRevert(LaunchFactory.VestingNotAllowedAtFullPresale.selector);
+        factory.createLaunch(config);
+    }
+
     function test_CreateLaunch_AdvancedPath_PresalePercentDivisibleBy500() public {
         bmx.mint(issuer, DEFAULT_BMX_BURN);
         vm.prank(issuer);
@@ -740,6 +764,8 @@ contract LaunchFactoryTest is Test {
         bmx.approve(address(factory), DEFAULT_BMX_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
+        // pp < 5000 to satisfy the vesting-allowed branch.
+        config.presalePercent = 4500;
         uint256 count = 6;
         config.vestingRecipients = new address[](count);
         config.vestingPercents = new uint256[](count);
@@ -986,6 +1012,8 @@ contract LaunchFactoryTest is Test {
         bmx.approve(address(factory), DEFAULT_BMX_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
+        // pp < 5000 to satisfy the vesting-allowed branch.
+        config.presalePercent = 4500;
         config.vestingRecipients = new address[](2);
         config.vestingRecipients[0] = vestingRecipient1;
         config.vestingRecipients[1] = vestingRecipient2;
