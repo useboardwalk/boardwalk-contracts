@@ -134,6 +134,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
         // We use balance here to include potentially bridged revenue added as WETH.
         uint256 toForward = IERC20(RAISE_TOKEN).balanceOf(address(this));
         if (toForward > 0) {
+            accumulatedFees[RAISE_TOKEN] = 0;
             _forwardToTreasuryAndGovernance(toForward);
         }
     }
@@ -142,9 +143,9 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     ///         vault, if set) using the same 30/70 split as `swapToRaiseToken`.
     function forwardRevenue() external {
         if (msg.sender != keeper) revert NotKeeper();
+        accumulatedFees[RAISE_TOKEN] = 0;
         uint256 amount = IERC20(RAISE_TOKEN).balanceOf(address(this));
         if (amount == 0) return;
-        accumulatedFees[RAISE_TOKEN] = 0;
         _forwardToTreasuryAndGovernance(amount);
     }
 

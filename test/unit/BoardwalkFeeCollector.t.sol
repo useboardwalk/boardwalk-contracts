@@ -1146,4 +1146,58 @@ contract BoardwalkFeeCollectorTest is Test {
 
         assertEq(weth.balanceOf(treasury), bridged, "swept by trailing forward despite RAISE_TOKEN entry");
     }
+
+    /// @notice `receiveFees(RAISE_TOKEN, n)` registers `accumulatedFees[RAISE_TOKEN] = n`.
+    ///         `swapToRaiseToken` must clear the mapping when it forwards the live balance,
+    ///         otherwise the entry stays stale once the balance is drained.
+    function test_SwapToRaiseToken_ClearsAccumulatedRaiseToken() public {
+        uint256 registered = 100e18;
+        deal(address(weth), alice, registered);
+        vm.startPrank(alice);
+        weth.approve(address(feeCollector), registered);
+        feeCollector.receiveFees(address(weth), registered);
+        vm.stopPrank();
+
+        assertEq(feeCollector.accumulatedFees(address(weth)), registered, "registered before swap");
+
+        // Add a token that the swap path can drain to keep the loop non-empty.
+        uint256 swapAmount = 1000e18;
+        token1.mint(address(feeCollector), swapAmount);
+        router.setExchangeRate(address(token1), address(weth), 1e18);
+
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(token1);
+        uint256[] memory mins = new uint256[](1);
+        mins[0] = 0;
+
+        vm.prank(keeper);
+        feeCollector.swapToRaiseToken(tokens, mins, block.timestamp);
+
+        assertEq(feeCollector.accumulatedFees(address(weth)), 0, "raise-token mapping cleared by swap path");
+        assertEq(weth.balanceOf(address(feeCollector)), 0, "collector drained");
+        assertEq(weth.balanceOf(treasury), registered + swapAmount, "treasury receives both");
+    }
+
+    /// @notice `forwardRevenue` clears `accumulatedFees[RAISE_TOKEN]` even on a zero-balance
+    ///         no-op so the mapping cannot remain stale after an external balance drain.
+    function test_ForwardRevenue_ClearsMappingEvenOnZeroBalance() public {
+        uint256 registered = 100e18;
+        deal(address(weth), alice, registered);
+        vm.startPrank(alice);
+        weth.approve(address(feeCollector), registered);
+        feeCollector.receiveFees(address(weth), registered);
+        vm.stopPrank();
+
+        // Externally drain the WETH balance (simulating an out-of-band sweep).
+        vm.prank(address(feeCollector));
+        IERC20(weth).transfer(treasury, registered);
+        assertEq(weth.balanceOf(address(feeCollector)), 0, "balance externally drained");
+        assertEq(feeCollector.accumulatedFees(address(weth)), registered, "mapping still records old amount");
+
+        // forwardRevenue must clear the stale mapping even though it has nothing to forward.
+        vm.prank(keeper);
+        feeCollector.forwardRevenue();
+
+        assertEq(feeCollector.accumulatedFees(address(weth)), 0, "mapping cleared on no-op call");
+    }
 }
