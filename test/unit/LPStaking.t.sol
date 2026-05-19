@@ -838,6 +838,67 @@ contract LPStakingTest is Test {
         assertEq(lpStaking.pendingRewards(alice), 0, "first staker harvests nothing");
     }
 
+    /// @notice Epoch-N fee inflows accumulate in `pendingEpochFees` and stream pro-rata against
+    ///         the live `totalWeight` during epoch N+1, including stakers who join at the
+    ///         rollover trigger. Locks in this attribution as a positive invariant.
+    /// @dev Uses a fresh LPStaking with `vestingAllocation = 0` so vesting rewards do not pollute
+    ///      the fee-attribution assertion. With one solo staker for the first 8 days, vesting
+    ///      would otherwise dominate the claim and obscure the 50/50 fee split.
+    function test_FeeAttribution_LateStakerSharesPromotedBucket() public {
+        LPStaking feeOnly = _deployUninitializedLPStaking();
+        feeOnly.initialize(address(lpToken), address(rewardToken), feeDistributor, seedTime, 0);
+
+        uint256 stakeAmount = 1000e18;
+        deal(address(lpToken), alice, stakeAmount);
+        deal(address(lpToken), bob, stakeAmount);
+
+        // Alice solo-stakes during epoch 1.
+        vm.warp(seedTime + VESTING_DELAY);
+        vm.startPrank(alice);
+        lpToken.approve(address(feeOnly), stakeAmount);
+        feeOnly.stake(stakeAmount);
+        vm.stopPrank();
+
+        // Fees arrive during epoch 1 -> routed to pendingEpochFees.
+        uint256 epochFees = 700e18;
+        vm.warp(block.timestamp + 1 days);
+        rewardToken.mint(feeDistributor, epochFees);
+        vm.prank(feeDistributor);
+        rewardToken.approve(address(feeOnly), epochFees);
+        vm.prank(feeDistributor);
+        feeOnly.notifyFees(epochFees);
+
+        assertEq(feeOnly.pendingEpochFees(), epochFees, "fees parked in pending");
+        assertEq(feeOnly.currentEpochFees(), 0, "not yet promoted");
+
+        // Epoch 1 ends with no interactions; Bob's stake at t > epoch-end triggers the rollover.
+        vm.warp(seedTime + EPOCH_DURATION + 2 days);
+
+        vm.startPrank(bob);
+        lpToken.approve(address(feeOnly), stakeAmount);
+        feeOnly.stake(stakeAmount);
+        vm.stopPrank();
+
+        assertEq(feeOnly.currentEpochFees(), epochFees, "bucket promoted at rollover");
+        assertEq(feeOnly.pendingEpochFees(), 0, "pending drained");
+
+        // Stream the entire epoch 2 to completion.
+        vm.warp(block.timestamp + EPOCH_DURATION + 1);
+
+        vm.prank(alice);
+        uint256 aliceClaimed = feeOnly.claim();
+        vm.prank(bob);
+        uint256 bobClaimed = feeOnly.claim();
+
+        assertGt(bobClaimed, 0, "bob received nothing");
+        assertGt(aliceClaimed, 0, "alice received nothing");
+
+        // Equal LP + a small MP edge to alice. Tolerance covers MP drift, integer rounding from
+        // `feeRewardRate / EPOCH_DURATION`, and the 1-second rollover offset.
+        assertApproxEqRel(bobClaimed, aliceClaimed, 0.05e18, "fees split ~50/50");
+        assertLe(aliceClaimed + bobClaimed, epochFees, "total claimed within promoted bucket");
+    }
+
     // ============ Multiplier Points ============
 
     function test_MultiplierPoints_100PercentAPR() public {

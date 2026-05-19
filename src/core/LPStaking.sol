@@ -36,6 +36,7 @@ contract LPStaking is ReentrancyGuardTransient, Initializable {
 
     uint256 public currentEpochStart;
     uint256 public currentEpochFees;
+    /// @notice Fees accumulated during the current epoch N for streaming in the next epoch N+1.
     uint256 public pendingEpochFees;
     uint256 public feeRewardRate;
 
@@ -164,7 +165,7 @@ contract LPStaking is ReentrancyGuardTransient, Initializable {
     }
 
     /// @notice Called by FeeDistributor on every taxed transfer. Triggers epoch advance and accrues
-    ///         the new amount into `pendingEpochFees` (released when the next epoch advances).
+    ///         the new amount into `pendingEpochFees`, which is streamed during the next epoch.
     function notifyFees(
         uint256 amount
     ) external {
