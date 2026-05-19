@@ -280,9 +280,9 @@ contract IntegratorFeeCollectorFuzzTest is Test {
 
     // ============ Rate limit math ============
 
-    /// @notice Property: `claimableAmount() <= totalAccrued / 4` for any state reached via valid
-    ///         actions. We exclude the dust-escape regime (totalAccrued < 4) from this check,
-    ///         since `_claimableBySlot` deliberately bypasses the cap there.
+    /// @notice Property: `claimableAmount() <= unclaimed / 4` for any state reached via valid
+    ///         actions, except in the dust-escape regime (`unclaimed < 4`) where the full
+    ///         residue is returned.
     function testFuzz_ClaimableAmount_NeverExceedsCap(
         uint256 totalAccrued,
         uint8 numClaims,
@@ -304,7 +304,14 @@ contract IntegratorFeeCollectorFuzzTest is Test {
         }
 
         uint256 finalClaimable = c1Slot.claimableAmount(alice, address(launchToken));
-        assertLe(finalClaimable, totalAccrued / 4, "claimable exceeds 25% cap");
+        (, uint256 totalClaimedSoFar,,) = c1Slot.claimStates(0, address(launchToken));
+        uint256 unclaimed = totalAccrued - totalClaimedSoFar;
+        // Dust escape: when `unclaimed < 4`, claimable equals the full residue.
+        if (unclaimed < 4) {
+            assertEq(finalClaimable, unclaimed, "dust escape returns full residue");
+        } else {
+            assertLe(finalClaimable, unclaimed / 4, "claimable exceeds 25% of live unclaimed");
+        }
     }
 
     /// @notice When `totalAccrued < 4` (cap rounds to 0), `claimableAmount` returns the full
@@ -331,23 +338,29 @@ contract IntegratorFeeCollectorFuzzTest is Test {
     }
 
     /// @notice Across multiple claim windows (each separated by 1 day + 1 second), totalClaimed
-    ///         never exceeds totalAccrued, and each per-window draw is bounded by the cap.
+    ///         never exceeds totalAccrued, and each per-window draw is bounded by the live
+    ///         `unclaimed / 4` cap (or the full residue inside the dust-escape regime).
     function testFuzz_RateLimit_RespectedAcrossWindows(
         uint256 totalAccrued,
         uint8 numClaims
     ) public {
-        // Skip the dust-escape regime so the cap is meaningful.
+        // Skip the dust-escape regime at the start so the cap is meaningful.
         totalAccrued = bound(totalAccrued, 100, 1e30);
         numClaims = uint8(bound(numClaims, 1, 10));
 
         _receiveFees(c1Slot, launchToken, totalAccrued);
-        uint256 cap = totalAccrued / 4;
 
         uint256 totalClaimed;
         for (uint256 i = 0; i < numClaims; i++) {
             uint256 claimable = c1Slot.claimableAmount(alice, address(launchToken));
-            // Cap holds at the start of every window (claimedInCurrentPeriod == 0 after warp).
-            assertLe(claimable, cap, "per-window claimable exceeds cap");
+            // Per-iteration cap is `unclaimed / 4`; inside the dust-escape regime it's the
+            // full residue.
+            uint256 unclaimed = totalAccrued - totalClaimed;
+            if (unclaimed < 4) {
+                assertEq(claimable, unclaimed, "dust escape returns full residue");
+            } else {
+                assertLe(claimable, unclaimed / 4, "per-window claimable exceeds 25% of live unclaimed");
+            }
 
             if (claimable > 0) {
                 vm.prank(alice);
@@ -374,10 +387,13 @@ contract IntegratorFeeCollectorFuzzTest is Test {
         uint8 slotToRotateSeed
     ) public {
         uint8 slotToRotate = uint8(bound(slotToRotateSeed, 0, 2));
-        // Filter newAddress: not zero, not an existing integrator, not the collector.
+        // Filter newAddress: not zero, not an existing integrator, not the collector itself,
+        // and not router/raiseToken (rejected by `_validateIntegratorAddress`).
         vm.assume(newAddress != address(0));
         vm.assume(newAddress != alice && newAddress != bob && newAddress != carol);
         vm.assume(newAddress != address(c3Slot));
+        vm.assume(newAddress != address(router));
+        vm.assume(newAddress != address(raiseToken));
 
         address oldAddr = c3Slot.integrators(slotToRotate);
         vm.prank(oldAddr);

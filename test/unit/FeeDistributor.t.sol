@@ -883,8 +883,11 @@ contract FeeDistributorTest is Test {
 
         vm.warp(block.timestamp + 1 days + 1);
 
+        // Cap = unclaimed / 10. First claim took 10% of totalAccrued, so the next window's cap
+        // is (totalAccrued - firstClaimable) / 10.
+        uint256 unclaimedAfterFirst = totalAccrued - firstClaimable;
         uint256 secondClaimable = feeDistributor.claimableAmount(0);
-        assertEq(secondClaimable, totalAccrued / 10, "Should be able to claim another 10% after 24h");
+        assertEq(secondClaimable, unclaimedAfterFirst / 10, "Cap is 10% of live unclaimed in new period");
 
         deal(address(token), address(feeDistributor), secondClaimable);
         vm.prank(issuer1);
@@ -1277,7 +1280,10 @@ contract FeeDistributorTest is Test {
 
         vm.warp(block.timestamp + 1 days + 1);
 
-        assertEq(feeDistributor.claimableAmount(0), totalAccrued / 10, "Should be claimable after new period");
+        // Cap = unclaimed / 10. First claim took 10% of totalAccrued, so the new-period cap
+        // is (totalAccrued - claimable) / 10.
+        uint256 unclaimedAfterFirst = totalAccrued - claimable;
+        assertEq(feeDistributor.claimableAmount(0), unclaimedAfterFirst / 10, "10% of live unclaimed in new period");
     }
 
     function test_ClaimableAmount_ZeroWhenFullyClaimed() public {
@@ -1312,6 +1318,44 @@ contract FeeDistributorTest is Test {
 
         uint256 claimable2 = feeDistributor.claimableAmount(0);
         assertEq(claimable2, 1, "Normal rate limit: 10% of 10 = 1 wei (boundary between dust escape and normal)");
+    }
+
+    /// @notice Under steady recurring accruals the cap stays bounded by `unclaimed / 10` and
+    ///         does not inflate from the lifetime totalAccrued history.
+    function test_ClaimableAmount_SteadyInflow_DoesNotInflateWithHistory() public {
+        uint256 dailyAccrual = 1000e18;
+
+        uint256 startTime = block.timestamp;
+        uint256 totalClaimed;
+        uint256 maxCapEver;
+
+        for (uint256 i = 0; i < 30; i++) {
+            vm.warp(startTime + i * (1 days + 1));
+            _accrueIssuerFees(0, dailyAccrual);
+
+            (uint256 totalAccrued, uint256 claimedSoFar,,) = feeDistributor.issuerClaimStates(0);
+            uint256 unclaimed = totalAccrued - claimedSoFar;
+            uint256 cap = feeDistributor.claimableAmount(0);
+
+            if (unclaimed >= 10) {
+                assertLe(cap, unclaimed / 10, "cap exceeds live unclaimed/10");
+            }
+            assertLe(cap, unclaimed, "cap exceeds unclaimed");
+
+            if (cap > maxCapEver) maxCapEver = cap;
+
+            if (cap > 0) {
+                deal(address(token), address(feeDistributor), cap);
+                vm.prank(issuer1);
+                feeDistributor.claimAsRaiseToken(0, 0, type(uint256).max);
+                totalClaimed += cap;
+            }
+        }
+
+        // After 30 days at 1000e18/day, lifetime totalAccrued = 30000e18. A `totalAccrued / 10`
+        // cap would read 3000e18, well above the 1000e18/day inflow. Live `unclaimed / 10`
+        // keeps the cap bounded by the rolling backlog (~10 * dailyAccrual at equilibrium).
+        assertLt(maxCapEver, 2000e18, "cap inflated with history");
     }
 
     // ──────────────────────────────────────────────────────────────────────────

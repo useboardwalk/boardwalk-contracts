@@ -222,7 +222,7 @@ contract FeeDistributor is Timelocked, Initializable {
     }
 
     /// @notice Issuer recipient claims accrued fees swapped to raise token. Rate limit: 10% of
-    ///         `totalAccrued` per recipient per 24h.
+    ///         unclaimed per recipient per 24h.
     function claimAsRaiseToken(
         uint256 recipientIdx,
         uint256 minRaiseTokenOut,
@@ -245,7 +245,7 @@ contract FeeDistributor is Timelocked, Initializable {
         emit IssuerClaimed(recipientIdx, msg.sender, tokenAmount, amounts[1]);
     }
 
-    /// @notice Claimable issuer fee amount respecting the 10%/24h rate limit and dust escape.
+    /// @notice Claimable issuer fee amount respecting the 10%/24h rate limit.
     function claimableAmount(
         uint256 recipientIdx
     ) public view returns (uint256) {
@@ -255,9 +255,9 @@ contract FeeDistributor is Timelocked, Initializable {
         uint256 unclaimed = state.totalAccrued - state.totalClaimed;
         if (unclaimed == 0) return 0;
 
-        uint256 maxClaimable = state.totalAccrued / 10;
+        uint256 maxClaimable = unclaimed / 10;
 
-        // Dust escape: when 10% rounds to zero, bypass the rate limit to unstick small balances.
+        // Dust escape: when 10% of unclaimed rounds to zero, return the full residue
         if (maxClaimable == 0) return unclaimed;
 
         if (block.timestamp >= state.lastClaimTime + 1 days) {
@@ -326,7 +326,7 @@ contract FeeDistributor is Timelocked, Initializable {
         _cancel(ACTION_CHANGE_REFERRER);
     }
 
-    /// @notice Collector migration hook. Atomically rotates token exemption and approvals to the
+    /// @notice Collector migration hook. Rotates token exemption and approvals to the
     ///         new collector. Only the current collector can call.
     function setFeeCollector(
         address newFeeCollector

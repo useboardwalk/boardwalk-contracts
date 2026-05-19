@@ -496,8 +496,9 @@ contract ClaimableMath is Base {
         c.claim(address(launchToken), 0, block.timestamp + 1);
         // Warp 1 day + 1 second past lastClaimTime
         vm.warp(block.timestamp + 1 days + 1);
-        // Should be claimable again (cap = 2000/4 = 500, unclaimed = 1500)
-        assertEq(c.claimableAmount(alice, address(launchToken)), 500);
+        // Cap = unclaimed / 4. alice's slot accrued 2000 (50% of 4000); first claim took 500;
+        // unclaimed = 1500; new cap = 375.
+        assertEq(c.claimableAmount(alice, address(launchToken)), 375);
     }
 }
 
@@ -547,34 +548,80 @@ contract ClaimSingular is Base {
     }
 
     function test_Claim_FullExhaustion_RemovesFromSet() public {
-        // accrued = 2000; claim 500 in each of 4 rate-limit windows.
-        // Use explicit warp targets keyed off `startTime` so the test does not depend on
-        // Foundry's per-iteration `block.timestamp` view interacting oddly with successive warps.
+        // accrued = 2000. Cap = unclaimed / 4, so each window claims 25% of the live remainder
+        // (500, 375, 281, 211, ...) until `unclaimed < 4` triggers the dust escape. Loop with
+        // a generous upper bound and break on exhaustion.
         uint256 startTime = block.timestamp;
-        for (uint256 i = 0; i < 4; i++) {
+        uint256 maxWindows = 30;
+        bool exhausted;
+        for (uint256 i = 0; i < maxWindows; i++) {
+            uint256 claimable = c.claimableAmount(alice, address(launchToken));
+            if (claimable == 0) {
+                exhausted = true;
+                break;
+            }
             vm.prank(alice);
             c.claim(address(launchToken), 0, type(uint256).max);
-            // Move to start of the next 24h window after this iteration's claim.
             vm.warp(startTime + (i + 1) * (1 days + 1));
         }
+        assertTrue(exhausted, "exhausted within bounded windows");
         assertEq(c.claimableAmount(alice, address(launchToken)), 0);
         assertFalse(c.isTracked(alice, address(launchToken)), "exhausted token removed from set");
     }
 
     function test_Claim_Reaccrual_AfterFullExhaustion() public {
-        // Drain alice across 4 windows; deterministic warps as above.
         uint256 startTime = block.timestamp;
-        for (uint256 i = 0; i < 4; i++) {
+        for (uint256 i = 0; i < 30; i++) {
+            uint256 claimable = c.claimableAmount(alice, address(launchToken));
+            if (claimable == 0) break;
             vm.prank(alice);
             c.claim(address(launchToken), 0, type(uint256).max);
             vm.warp(startTime + (i + 1) * (1 days + 1));
         }
         assertFalse(c.isTracked(alice, address(launchToken)));
-        // New fees arrive — token re-tracked.
+        // After full drain `unclaimed == 0`. A fresh receiveFees(4000) adds alice's 50% slot
+        // share = 2000 unclaimed; new cap = 2000 / 4 = 500.
         _receiveFees(c, 4000);
         assertTrue(c.isTracked(alice, address(launchToken)));
-        // alice's totalAccrued = 2000 + 2000 = 4000; claimable = 4000/4 = 1000
-        assertEq(c.claimableAmount(alice, address(launchToken)), 1000);
+        assertEq(c.claimableAmount(alice, address(launchToken)), 500);
+    }
+
+    /// @notice Under steady recurring accruals the cap stays bounded by `unclaimed / 4` and
+    ///         does not inflate from the lifetime totalAccrued history.
+    function test_RateLimit_SteadyInflow_DoesNotInflateWithHistory() public {
+        // setUp already ran _receiveFees(c, 4000) (alice slot = 2000 accrued).
+        uint256 dailyAccrual = 100; // alice's slot share = 50/day at 5000 BPS
+
+        uint256 startTime = block.timestamp;
+        uint256 totalClaimed;
+        uint256 maxCapEver;
+
+        for (uint256 i = 0; i < 30; i++) {
+            vm.warp(startTime + i * (1 days + 1));
+            _receiveFees(c, dailyAccrual);
+
+            (uint256 totalAccrued, uint256 claimedSoFar,,) = c.claimStates(0, address(launchToken));
+            uint256 unclaimed = totalAccrued - claimedSoFar;
+            uint256 cap = c.claimableAmount(alice, address(launchToken));
+
+            if (unclaimed >= 4) {
+                assertLe(cap, unclaimed / 4, "cap exceeds live unclaimed/4");
+            }
+            assertLe(cap, unclaimed, "cap exceeds unclaimed");
+
+            if (cap > maxCapEver) maxCapEver = cap;
+
+            if (cap > 0) {
+                vm.prank(alice);
+                c.claim(address(launchToken), 0, type(uint256).max);
+                totalClaimed += cap;
+            }
+        }
+
+        // After 30 days at 50/day, lifetime totalAccrued ≈ 3500. A `totalAccrued / 4` cap
+        // would read ~875, well above the 50/day inflow. Live `unclaimed / 4` keeps the cap
+        // bounded by the rolling backlog (~4 * dailyAccrual).
+        assertLt(maxCapEver, 700, "cap inflated with history");
     }
 }
 

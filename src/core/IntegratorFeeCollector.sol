@@ -403,9 +403,9 @@ contract IntegratorFeeCollector is Ownable2Step, Timelocked {
         uint256 unclaimed = state.totalAccrued - state.totalClaimed;
         if (unclaimed == 0) return 0;
 
-        uint256 maxClaimable = state.totalAccrued / CLAIM_RATE_DIVISOR;
+        uint256 maxClaimable = unclaimed / CLAIM_RATE_DIVISOR;
 
-        // Dust escape: when the rate-limit cap rounds to zero, bypass it to unstick small balances.
+        // Dust escape: when 25% of unclaimed rounds to zero, return the full residue.
         if (maxClaimable == 0) return unclaimed;
 
         if (block.timestamp >= state.lastClaimTime + 1 days) {
