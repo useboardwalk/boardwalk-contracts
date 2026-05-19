@@ -209,7 +209,7 @@ contract PresaleManager is Initializable {
             if (pair == address(0)) revert PairCreationFailed();
         }
 
-        // Seed liquidity by transferring directly to the pair and calling mint — no router needed.
+        // Seed liquidity by transferring directly to the pair and calling mint; no router needed.
         IERC20(token).safeTransfer(pair, liquidityTokens);
         raiseToken.safeTransfer(pair, totalRaised);
         uint256 lpTokens = IUniswapV2Pair(pair).mint(address(this));

@@ -718,7 +718,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
     }
 
-    /// @dev Epoch 0 falls back to treasury — no prior-epoch voters exist to stream to.
+    /// @dev Epoch 0 falls back to treasury; no prior-epoch voters exist to stream to.
     function _executeParticipation(
         uint256 epoch,
         uint256 raiseAmount,

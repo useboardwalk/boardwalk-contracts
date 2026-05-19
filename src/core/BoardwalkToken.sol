@@ -16,7 +16,7 @@ contract BoardwalkToken is ERC20, Initializable {
     uint256 public antiWhaleTaxBps;
     uint256 public antiWhaleDuration;
 
-    /// @notice Zero is the sentinel for "not yet seeded" — no tax applies until this is set.
+    /// @notice Zero is the sentinel for "not yet seeded"; no tax applies until this is set.
     uint256 public liquiditySeedTime;
 
     address public feeDistributor;

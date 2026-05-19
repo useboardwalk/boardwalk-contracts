@@ -29,7 +29,7 @@ contract ParticipationDistributor is IParticipationDistributor {
     }
 
     /// @notice Called by GovernanceVoter to start a new epoch's stream. Reads `totalVoteWeight` from
-    ///         the prior epoch (`epoch - 1`) — that's the eligibility set for this stream.
+    ///         the prior epoch (`epoch - 1`); that's the eligibility set for this stream.
     function createStream(
         uint256 epoch,
         uint256 bmxAmount

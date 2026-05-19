@@ -1,4 +1,4 @@
-# Boardwalk Launchpad — Technical Spec
+# Boardwalk Launchpad: Technical Spec
 
 A permissionless token launch protocol. Each launch deploys 4–5 EIP-1167 clones from shared implementation templates; singletons are deployed once per chain. Launches feature an embedded transfer tax, time-weighted presale, permanently locked liquidity, LP staking with multiplier points, and (on Base) onchain governance over protocol revenue.
 
@@ -9,11 +9,11 @@ Targeted chains: Ethereum, Base, Katana, Fraxtal. The raise token (WETH, frxUSD,
 ## Architecture
 
 **Per-launch clones** (deployed by `LaunchFactory.createLaunch`):
-- `BoardwalkToken` — ERC20 with embedded tax
-- `FeeDistributor` — splits tax across recipients
-- `PresaleManager` — contributions, seeding, claims, refunds
-- `LPStaking` — staking with vesting, fee epochs, multiplier points
-- `VestingStream` — linear vesting (Advanced path only when `presalePercent < 50%`)
+- `BoardwalkToken`: ERC20 with embedded tax
+- `FeeDistributor`: splits tax across recipients
+- `PresaleManager`: contributions, seeding, claims, refunds
+- `LPStaking`: staking with vesting, fee epochs, multiplier points
+- `VestingStream`: linear vesting (Advanced path only when `presalePercent < 50%`)
 
 **Singletons** (deployed once per chain):
 - `LaunchFactory`, `BoardwalkLPManager`, `BoardwalkFeeCollector`, `IntegratorFeeCollector`, `BoostBurn`
@@ -99,7 +99,7 @@ The DEX layer is a forked Uniswap V2 with a 0.1% (10 BPS) pair fee that flows to
 
 Conditional row applies only when the chain has a non-zero `integratorBps`.
 
-The exempt set is otherwise immutable post-init. The only rotation flow is `FeeDistributor.setFeeCollector` (boardwalk migration), which atomically rotates exemption with the role address and rejects a collector that is already exempt. The chain-level `IntegratorFeeCollector` is immutable — its exempt status cannot be re-pointed.
+The exempt set is otherwise immutable post-init. The only rotation flow is `FeeDistributor.setFeeCollector` (boardwalk migration), which atomically rotates exemption with the role address and rejects a collector that is already exempt. The chain-level `IntegratorFeeCollector` is immutable; its exempt status cannot be re-pointed.
 
 ---
 
@@ -146,21 +146,21 @@ Factory parameters (`issuer + boardwalk + incentive + INTEGRATOR_BPS` = `total` 
 **Per-transfer routing in `onTaxReceived`:**
 
 1. Compute `lp / boardwalk / issuer / referrer / integrator` shares (proportional by frozen BPS).
-2. `try LPStaking.notifyFees(lpShare)` — on revert, `pendingLpFees += lpShare`, emit `FeeForwardFailed`.
-3. `try FeeCollector.receiveFees(token, boardwalkShare)` — on revert, `pendingBoardwalkFees += boardwalkShare`.
-4. `try IntegratorFeeCollector.receiveFees(token, integratorShare)` — on revert, `pendingIntegratorFees += integratorShare`. The collector is protocol-deployed and immutable; `FeeDistributor` grants it max allowance at init for the pull pattern.
+2. `try LPStaking.notifyFees(lpShare)`; on revert, `pendingLpFees += lpShare`, emit `FeeForwardFailed`.
+3. `try FeeCollector.receiveFees(token, boardwalkShare)`; on revert, `pendingBoardwalkFees += boardwalkShare`.
+4. `try IntegratorFeeCollector.receiveFees(token, integratorShare)`; on revert, `pendingIntegratorFees += integratorShare`. The collector is protocol-deployed and immutable; `FeeDistributor` grants it max allowance at init for the pull pattern.
 5. Distribute issuer share across recipients by frozen splits; last recipient absorbs rounding dust.
 6. Increment `referrerAccrued`.
 
 `retryPendingFees()` is permissionless and flushes any of the three pending buckets. Steps 1–6 never revert in aggregate, so a downstream contract cannot brick transfers.
 
-**Issuer claim** (`claimAsRaiseToken(recipientIdx, minRaiseTokenOut, deadline)`): rate-limited to 10% of `totalAccrued` per recipient per 24h, swapped via the standard router. Dust escape: when `totalAccrued / 10 == 0`, the full unclaimed amount is claimable in one call.
+**Issuer claim** (`claimAsRaiseToken(recipientIdx, minRaiseTokenOut, deadline)`): rate-limited to 10% of live unclaimed (`totalAccrued - totalClaimed`) per recipient per 24h, swapped via the standard router. The cap is anchored to live unclaimed rather than lifetime cumulative, so it cannot inflate from history. Under steady inflow `f`/day the equilibrium is `claim ≈ f` with a rolling backlog of `~9f`. Burst drains under no further inflow decay geometrically `(9/10)^k`. Dust escape: when 10% of unclaimed rounds to zero, the full unclaimed amount is claimable in one call.
 
 **Integrator claim** (on `IntegratorFeeCollector`):
 
 - Allocation: `receiveFees(token, amount)` pulls the bucket and splits it across slots by frozen `integratorSplits[]`; per-slot per-token state in `claimStates[slot][token]`.
 - Modes: `claim(token, minOut, deadline)` for one token; `claimBatch(tokens[], minAmountsOut[], deadline)` for many.
-- Rate limit: 25% of `totalAccrued` per (slot, token) per 24h, with dust escape when `totalAccrued < 4`. State updates only on successful swap, so a failed claim does not consume the window.
+- Rate limit: 25% of live unclaimed (`totalAccrued - totalClaimed`) per (slot, token) per 24h, anchored to live state so the cap cannot inflate from cumulative deposits. Under steady inflow `f`/day the equilibrium is `claim ≈ f` with a rolling backlog of `~3f`. Burst drains under no further inflow decay geometrically `(3/4)^k`. Dust escape: when 25% of unclaimed rounds to zero, the full unclaimed amount is claimable in one call. State updates only on successful swap, so a failed claim does not consume the window.
 - Batch isolation: each per-token attempt wrapped in `try this._claimOneToken(...) catch { emit ClaimFailed(...) }`; tokens with nothing claimable are skipped silently.
 - Off-chain helpers: `quote(integrator, token, slippageBps)` and `quoteBatch(integrator, tokens[], slippageBps)` compute `minAmountsOut[]` from `IDEXRouter.getAmountsOut` for caller convenience.
 
@@ -183,7 +183,7 @@ Factory parameters (`issuer + boardwalk + incentive + INTEGRATOR_BPS` = `total` 
    - `AllocationLib.compute()` → mints to `PresaleManager` (presale + liquidity), `LPStaking` (incentive), `VestingStream` (issuer vesting if applicable).
    - Transfers token + raise token directly to the pair, calls `pair.mint(DEAD_ADDRESS)`. LP tokens are unrecoverable.
    - Initialises `LPStaking` and (if applicable) `VestingStream` with `seedTime`.
-   - Calls `token.setLiquiditySeedTime(seedTime)` — anti-whale tax begins counting down.
+   - Calls `token.setLiquiditySeedTime(seedTime)`; anti-whale tax begins counting down.
 3. After `seedTime + 7d cliff`, `claimTokens()` pays out `userTokenAmount = user.weightedContributed * presaleTokens / totalWeightedRaise` (O(1)).
 4. If presale fails (under threshold by `seedLiquidity()` time), `refund()` returns each user's `totalContributed`.
 
@@ -193,7 +193,7 @@ Factory parameters (`issuer + boardwalk + incentive + INTEGRATOR_BPS` = `total` 
 
 ## LP staking
 
-`LPStaking` has zero admin functions — fully immutable after `initialize`. Two reward streams flow into a single weight-based accumulator:
+`LPStaking` has zero admin functions; fully immutable after `initialize`. Two reward streams flow into a single weight-based accumulator:
 
 **Vesting reward** (continuous, 3-year linear from `vestingStart = seedTime + 24h` to `vestingStart + 3 years`):
 
@@ -214,6 +214,8 @@ Epoch advancement happens lazily inside `_updateAllRewards()`, called by every `
 - `currentEpochFees ← pendingEpochFees`, `pendingEpochFees ← 0`
 - `feeRewardRate = currentEpochFees / 7 days`
 - `currentEpochStart ← block.timestamp` (anchored to trigger, not boundary, so every epoch gets a full 7-day window even when the keeper is late)
+
+**Cross-epoch fee attribution**: Fees accumulated during epoch N (in `pendingEpochFees`) are streamed during epoch N+1, not the accrual epoch. On rollover the bucket is promoted to `currentEpochFees` and streamed pro-rata against the live `totalWeight` over the following 7 days. A staker who provides weight at any point during epoch N+1, including the block that triggers the rollover, shares pro-rata in fees that accrued during epoch N. This is intentional smoothing: stakers must remain staked through the streaming window of epoch N+1 to capture the full epoch-N bucket.
 
 `notifyFees` is the most reliable trigger because it fires on every taxed transfer. Both endpoints (`FeeDistributor` and `LPStaking`) are tax-exempt, so `BoardwalkToken._update` short-circuits before any callback can re-enter, and `nonReentrant` is omitted on this path. The caller wraps the call in `try/catch`.
 
@@ -281,7 +283,7 @@ Claims revert before `cliffEnd`. Vesting amounts, schedule, and labels are immut
 
 ### 3. Transfer → tax → distribution
 
-1. Non-exempt sender transfers — `BoardwalkToken._update` checks both endpoints against `isExempt`.
+1. Non-exempt sender transfers; `BoardwalkToken._update` checks both endpoints against `isExempt`.
 2. Tax computed (anti-whale or base), debited from amount, transferred to FeeDistributor.
 3. `FeeDistributor.onTaxReceived(tax)`: split into `lp / boardwalk / issuer / referrer / integrator` shares; `try`-forward `lp`, `boardwalk`, and `integrator` (each wrapped in `try/catch` with a per-bucket `pending*Fees` retry queue); accrue `issuer` and `referrer` shares.
 4. **LP path**: `LPStaking.notifyFees(lp)` advances rewards. If `totalWeight > 0`, the amount lands in `pendingEpochFees`. If `totalWeight == 0`, the amount is burned to `DEAD_ADDRESS` and `FeesLost(lp)` is emitted, so a first staker after dormancy cannot harvest fees that arrived earlier.
@@ -298,7 +300,7 @@ Claims revert before `cliffEnd`. Vesting amounts, schedule, and labels are immut
 
 1. Keeper calls `swapToRaiseToken(tokens[], minAmountsOut[], deadline)`. For bridge-only revenue with no swaps to perform, the keeper calls `forwardRevenue()` instead (no-op on zero balance).
 2. For each token: read balance, lazy `forceApprove(router, max)` if undersized allowance, swap, clear `accumulatedFees[token]`. `RAISE_TOKEN` entries are silently skipped (passing them to the router would revert with `[X, X]`).
-3. Forward the collector's full raise-token balance — swap output PLUS any pre-existing balance (bridged revenue, residual) — to `treasury` (or split 30/70 with `GovernanceVoter` on Base).
+3. Forward the collector's full raise-token balance (swap output PLUS any pre-existing balance such as bridged revenue or residual) to `treasury` (or split 30/70 with `GovernanceVoter` on Base).
 
 ### 6. Governance vote → finalize → execute (Base only)
 
@@ -369,14 +371,14 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 
 ### Collector migration choreography
 
-`executeMigrateCollector` retargets all FeeDistributors to a new collector. The new collector's `swapToRaiseToken` will call `IGovernanceVoter.depositRevenue` — which only accepts the bound `feeCollector`. A fresh collector also starts with `governanceVault == address(0)`, so until that is set the 70/30 split is skipped and 100% routes to treasury. On the OLD side: the old collector still has `governanceVault = voter` set, so any subsequent `swapToRaiseToken()` would try to forward 70% to the voter and revert (`NotFeeCollector`). The old collector's `governanceVault` must therefore be cleared so its residual balance can drain to treasury.
+`executeMigrateCollector` retargets all FeeDistributors to a new collector. The new collector's `swapToRaiseToken` will call `IGovernanceVoter.depositRevenue`, which only accepts the bound `feeCollector`. A fresh collector also starts with `governanceVault == address(0)`, so until that is set the 70/30 split is skipped and 100% routes to treasury. On the OLD side: the old collector still has `governanceVault = voter` set, so any subsequent `swapToRaiseToken()` would try to forward 70% to the voter and revert (`NotFeeCollector`). The old collector's `governanceVault` must therefore be cleared so its residual balance can drain to treasury.
 
 A complete migration requires FOUR timelocked signals, all 7-day delay, all signed at the same time:
 
-1. **New collector** — `signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(voter)))`. Sets `governanceVault` on the new collector. The `IGovernanceVoter(voter).WETH() == RAISE_TOKEN` guard fires here.
-2. **Old collector** — `signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(address(0))))`. Clears the old collector's vault so its post-migration `swapToRaiseToken()` falls through to the treasury-only branch.
-3. **Old collector** — `signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, distributors)))`. Switches every FD to the new collector.
-4. **Governance voter** — `signalAction(ACTION_SET_FEE_COLLECTOR, keccak256(abi.encode(newCollector)))`. Rotates the sole `depositRevenue` caller.
+1. **New collector**: `signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(voter)))`. Sets `governanceVault` on the new collector. The `IGovernanceVoter(voter).WETH() == RAISE_TOKEN` guard fires here.
+2. **Old collector**: `signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(address(0))))`. Clears the old collector's vault so its post-migration `swapToRaiseToken()` falls through to the treasury-only branch.
+3. **Old collector**: `signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, distributors)))`. Switches every FD to the new collector.
+4. **Governance voter**: `signalAction(ACTION_SET_FEE_COLLECTOR, keccak256(abi.encode(newCollector)))`. Rotates the sole `depositRevenue` caller.
 
 After all four execute, the new collector is the sole `depositRevenue` caller, the old collector is locked out of governance routing, and any pre-rotation residual on the old collector can be drained 100% to treasury.
 
@@ -384,10 +386,10 @@ After all four execute, the new collector is the sole `depositRevenue` caller, t
 
 Votes in epoch `N` decide the winner of epoch `N+1`. Epoch 0 always defaults to treasury (no prior votes).
 
-1. **`vote(option)`** — sbfBMX holders cast a vote weighted by `sbfBMX.balanceOf(voter)` at vote time. Voting requires `stakedMP >= stakedBMX * 1.5%` (participation-points gate, read from external Morphex sbfBMX contracts). Optional `governanceBurn` BMX burn per vote (0–1 BMX, 21-day timelocked, starts at 0). Reverts during finalization.
-2. **`finalize(epoch, maxBatch)`** — keeper-or-owner. Re-validates epoch `N-1` voters in batches (re-reads `sbfBMX.balanceOf(voter)`, reduces option weights for voters whose balance dropped). When all batches done: closes the finalization window, applies quorum and consecutive-win cap, picks the winner. Sets `e.budget = epochRevenue[N]`, the WETH that `BoardwalkFeeCollector` deposited via `depositRevenue` while epoch `N` was current. Per-epoch revenue invariant: governance budget follows when WETH enters the governance vault — keeper-driven swap timing controls the attribution.
-3. **`execute(epoch, amountOutMin, liquidity, deadline)`** — keeper-or-owner. Executes the finalized winner with caller-supplied slippage protection. `liquidity` is used by Option 3 (Buy & Burn LP); ignored otherwise. Decrements `accountedBudget` by the consumed amount.
-4. **`forceMarkExecuted(epoch)`** — permissionless, callable 14 days after `finalizedAt[epoch]`. The window is anchored to the finalize timestamp (not epoch end) so the keeper always has a full 14 days to retry execute even after a late finalize. Routes the budget to `fallbackTreasury`, decrements `accountedBudget`, marks executed. Deadlock resolver only.
+1. **`vote(option)`**: sbfBMX holders cast a vote weighted by `sbfBMX.balanceOf(voter)` at vote time. Voting requires `stakedMP >= stakedBMX * 1.5%` (participation-points gate, read from external Morphex sbfBMX contracts). Optional `governanceBurn` BMX burn per vote (0–1 BMX, 21-day timelocked, starts at 0). Reverts during finalization.
+2. **`finalize(epoch, maxBatch)`**: keeper-or-owner. Re-validates epoch `N-1` voters in batches (re-reads `sbfBMX.balanceOf(voter)`, reduces option weights for voters whose balance dropped). When all batches done: closes the finalization window, applies quorum and consecutive-win cap, picks the winner. Sets `e.budget = epochRevenue[N]`, the WETH that `BoardwalkFeeCollector` deposited via `depositRevenue` while epoch `N` was current. Per-epoch revenue invariant: governance budget follows when WETH enters the governance vault; keeper-driven swap timing controls the attribution.
+3. **`execute(epoch, amountOutMin, liquidity, deadline)`**: keeper-or-owner. Executes the finalized winner with caller-supplied slippage protection. `liquidity` is used by Option 3 (Buy & Burn LP); ignored otherwise. Decrements `accountedBudget` by the consumed amount.
+4. **`forceMarkExecuted(epoch)`**: permissionless, callable 14 days after `finalizedAt[epoch]`. The window is anchored to the finalize timestamp (not epoch end) so the keeper always has a full 14 days to retry execute even after a late finalize. Routes the budget to `fallbackTreasury`, decrements `accountedBudget`, marks executed. Deadlock resolver only.
 
 **Sequential rule**: epoch `N` cannot be finalized until epoch `N-1` is both finalized AND executed.
 
@@ -425,7 +427,7 @@ Uniswap v4 pools on Base use native ETH (`address(0)`), not WETH. `GovernanceVot
 ### Supporting contracts
 
 - **LPLocker**: permanent holder of Uniswap v4 LP NFTs. `lockPosition(tokenId)` is callable only by `GovernanceVoter` after an Option 3 mint and is the sole registration path; no `onERC721Received` is implemented, so external `safeTransferFrom` reverts at the destination. `claimFees(tokenId)` (and the batch `claimAllFees()`) call `PositionManager.modifyLiquidities()` with `DECREASE_LIQUIDITY(liquidity=0) + TAKE_PAIR`; the ETH portion is sent natively to `GovernanceVoter.treasury()` (read live).
-- **ParticipationDistributor**: 7-day linear BMX streams per epoch. Pull-based — voters from the prior epoch call `claim(epoch)` for their proportional share. `claimAll(epochs[])` reverts if nothing is claimable across the entire batch.
+- **ParticipationDistributor**: 7-day linear BMX streams per epoch. Pull-based: voters from the prior epoch call `claim(epoch)` for their proportional share. `claimAll(epochs[])` reverts if nothing is claimable across the entire batch.
 
 ### Deployment caveats
 
