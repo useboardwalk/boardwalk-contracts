@@ -5,6 +5,7 @@ import {console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BaseTestScript} from "./BaseTestScript.s.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
+import {PresaleManager} from "src/core/PresaleManager.sol";
 import {IPresaleManager} from "src/interfaces/IPresaleManager.sol";
 
 interface IPresaleManagerLive is IPresaleManager {
@@ -138,18 +139,25 @@ contract TestAdvancedLaunchScript is BaseTestScript {
 
         vm.stopBroadcast();
 
-        uint256 seedableAt = IPresaleManager(presaleManagerAddr).presaleEnd() + 1 hours;
+        PresaleManager pm = PresaleManager(presaleManagerAddr);
+        uint256 seedableAt = pm.presaleEnd() + pm.SEED_DELAY();
         console.log("ADVANCED_TOKEN:", tokenAddr);
         console.log("ADVANCED_PRESALE_MANAGER:", presaleManagerAddr);
         console.log("ADVANCED_FEE_DISTRIBUTOR:", feeDistributorAddr);
         console.log("ADVANCED_LP_STAKING:", lpStakingAddr);
         console.log("ADV_REFERRER:", referrer);
         if (createdInThisRun) {
-            console.log("Fresh Advanced launch wait is ~25h10m (24h start delay + 10m presale + 1h seed delay).");
+            uint256 seedWait = pm.ADVANCED_START_DELAY() + factory.advancedDuration() + pm.SEED_DELAY();
+            console.log(
+                "Fresh Advanced launch: wait",
+                seedWait,
+                "seconds (ADVANCED_START_DELAY + advancedDuration + SEED_DELAY) before 05"
+            );
         }
         if (block.timestamp < seedableAt) {
             console.log("Earliest seed time:", seedableAt);
         }
+        console.log("After seed, wait", pm.CLIFF_DURATION(), "seconds before presale/vesting claims");
         console.log("Run 05_TestAdvancedSeed.s.sol once seed time is reached.");
 
         _printTxSummary();

@@ -43,7 +43,17 @@ abstract contract BaseTestScript is Script {
             console.log(string.concat("TX ", vm.toString(i + 1), " [", _txLabels[i], "] : ", vm.toString(_txHashes[i])));
         }
 
-        console.log("=== Look up on https://basescan.org/tx/<hash> for events ===");
+        console.log(string.concat("=== Look up on https://", _explorerHost(block.chainid), "/tx/<hash> for events ==="));
+    }
+
+    function _explorerHost(
+        uint256 chainId
+    ) internal pure returns (string memory) {
+        if (chainId == 1) return "etherscan.io";
+        if (chainId == 8453) return "basescan.org";
+        if (chainId == 252) return "fraxscan.com";
+        if (chainId == 747474) return "katanascan.com";
+        return "block explorer";
     }
 
     function _getBroadcastsSafe() internal view returns (VmSafe.BroadcastTxSummary[] memory summaries) {

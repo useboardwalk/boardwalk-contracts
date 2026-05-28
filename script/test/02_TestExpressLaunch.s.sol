@@ -5,6 +5,7 @@ import {console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BaseTestScript} from "./BaseTestScript.s.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
+import {PresaleManager} from "src/core/PresaleManager.sol";
 import {IPresaleManager} from "src/interfaces/IPresaleManager.sol";
 
 contract TestExpressLaunchScript is BaseTestScript {
@@ -91,7 +92,11 @@ contract TestExpressLaunchScript is BaseTestScript {
         console.log("EXPRESS_PRESALE_MANAGER:", info.presaleManager);
         console.log("EXPRESS_FEE_DISTRIBUTOR:", info.feeDistributor);
         console.log("EXPRESS_LP_STAKING:", info.lpStaking);
-        console.log("Wait ~66 minutes (5 min presale + 1 hr seed delay), then run 03_TestExpressSeed.s.sol");
+
+        PresaleManager pm = PresaleManager(info.presaleManager);
+        uint256 seedWait = factory.expressDuration() + pm.SEED_DELAY();
+        console.log("Wait", seedWait, "seconds (expressDuration + SEED_DELAY), then run 03_TestExpressSeed.s.sol");
+        console.log("After seed, wait", pm.CLIFF_DURATION(), "seconds before claimTokens()");
 
         _printTxSummary();
     }

@@ -28,7 +28,7 @@ contract TestDeployScript is BaseTestScript {
 
         address owner = vm.envOr("OWNER", deployer);
         address bmx = vm.envAddress("BMX_ADDRESS");
-        address raiseToken = vm.envOr("RAISE_TOKEN_ADDRESS", BASE_WETH);
+        address raiseToken = vm.envAddress("RAISE_TOKEN_ADDRESS");
         address feeToSetter = vm.envOr("FEE_TO_SETTER", owner);
         address treasury = vm.envOr("TREASURY", owner);
         address keeper = vm.envAddress("KEEPER_ADDRESS");
@@ -46,6 +46,7 @@ contract TestDeployScript is BaseTestScript {
         require(raiseToken != address(0), "RAISE_TOKEN_ADDRESS required");
         require(feeToSetter != address(0), "FEE_TO_SETTER required");
         require(treasury != address(0), "TREASURY required");
+        require(keeper != address(0), "KEEPER_ADDRESS required");
 
         _initTxTracking();
         vm.startBroadcast(deployerPrivateKey);
@@ -55,7 +56,7 @@ contract TestDeployScript is BaseTestScript {
         _recordTx("Deploy DEX Factory");
 
         address dexRouter = vm.deployCode(
-            "src/dex/periphery/UniswapV2Router02.sol:UniswapV2Router02", abi.encode(dexFactory, BASE_WETH)
+            "src/dex/periphery/UniswapV2Router02.sol:UniswapV2Router02", abi.encode(dexFactory, raiseToken)
         );
         _recordTx("Deploy DEX Router");
 
