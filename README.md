@@ -73,6 +73,8 @@ src/
     GovernanceVoter.sol     weekly voting + execution + vault
     LPLocker.sol            permanent Uniswap v4 LP lock with fee harvest
     ParticipationDistributor.sol 7-day BMX streaming for Option 4
+  nft/                       non-Base chains
+    BoardwalkClub.sol       soulbound membership NFT for cross-chain member discounts
   interfaces/                cross-contract interfaces
   dex/                       forked Uniswap V2 (0.1% pair fee)
 test/                        unit, fuzz, invariant, fork
@@ -85,8 +87,8 @@ script/                      deployment scripts
 forge build
 forge test
 forge coverage --ir-minimum --skip "*/dex/*" --skip "script/*" --report summary
-forge fmt src/base/ src/core/ src/interfaces/ src/governance/
-forge lint src/base/ src/core/ src/interfaces/ src/governance/
+forge fmt src/base/ src/core/ src/interfaces/ src/governance/ src/nft/
+forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/
 ```
 
 ## Deployment
@@ -96,6 +98,7 @@ forge script script/01_DeployDEX.s.sol --rpc-url $RPC_URL --broadcast
 forge script script/02_DeployFactory.s.sol --rpc-url $RPC_URL --broadcast
 forge script script/03_DeployGovernance.s.sol --rpc-url $RPC_URL --broadcast   # Base only
 forge script script/04_DeployBoostBurn.s.sol --rpc-url $RPC_URL --broadcast    # Base only
+forge script script/05_DeployBoardwalkClub.s.sol --rpc-url $RPC_URL --broadcast # non-Base chains
 ```
 
 ## Audits
