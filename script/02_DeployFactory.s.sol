@@ -11,17 +11,23 @@ import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
+import {BoostBurn} from "src/core/BoostBurn.sol";
+import {BoardwalkClub} from "src/nft/BoardwalkClub.sol";
 import {FeeSchedules} from "script/FeeSchedules.sol";
 
 /// @title DeployFactory
-/// @notice Deploys all Boardwalk singleton contracts and implementation templates.
+/// @notice Deploys the full Boardwalk per-chain stack: membership NFT, implementation templates,
+///         singletons, the per-chain integrator collector, the LaunchFactory, and BoostBurn.
 /// @dev Deployment order:
-///      1. Implementation templates (5 contracts)
-///      2. BoardwalkLPManager (singleton)
-///      3. BoardwalkFeeCollector (singleton)
-///      4. IntegratorFeeCollector (per-chain singleton; frozen integrators[]/splits[])
-///      5. LaunchFactory (singleton — wires everything)
-///      6. integratorCollector.setFactory(factory) — one-shot to break the chicken-and-egg
+///      1. BoardwalkClub (only when NFT_COLLECTION is unset; on Base set NFT_COLLECTION to the
+///         existing SeaDrop collection so this step is skipped). Used as `nftCollection` below.
+///      2. Implementation templates (5 contracts)
+///      3. BoardwalkLPManager (singleton)
+///      4. BoardwalkFeeCollector (singleton)
+///      5. IntegratorFeeCollector (per-chain singleton; frozen integrators[]/splits[] from FeeSchedules)
+///      6. LaunchFactory (singleton — wires everything, including the membership NFT)
+///      7. integratorCollector.setFactory(factory) — one-shot to break the chicken-and-egg
+///      8. BoostBurn (community ranking; wired to the same membership NFT)
 contract DeployFactory is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -38,17 +44,21 @@ contract DeployFactory is Script {
         uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(10 ether));
         uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(24 hours));
         uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(7 days));
-        address nftCollection = vm.envOr("NFT_COLLECTION", address(0));
-        uint256 memberLaunchDiscountBps = vm.envOr("MEMBER_LAUNCH_DISCOUNT_BPS", uint256(2500));
+        address nftCollectionEnv = vm.envOr("NFT_COLLECTION", address(0));
+        uint256 memberLaunchDiscountBps = vm.envOr("MEMBER_LAUNCH_DISCOUNT_BPS", uint256(5000));
 
         // Anti-whale defaults — preserve previous hardcoded values unless env overrides.
         uint256 antiWhaleTaxBps = vm.envOr("ANTI_WHALE_TAX_BPS", uint256(4000));
         uint256 antiWhaleDuration = vm.envOr("ANTI_WHALE_DURATION", uint256(90 minutes));
 
-        // Frozen per-chain integrator config. Constructor of IntegratorFeeCollector validates
-        // length, distinctness, non-zero entries, non-zero splits, and that splits sum to 10000.
-        address[] memory integratorAddresses = vm.envAddress("INTEGRATOR_ADDRESSES", ",");
-        uint256[] memory integratorSplits = vm.envUint("INTEGRATOR_SPLITS", ",");
+        // BoostBurn (community ranking) config.
+        uint256 epochZero = vm.envOr("EPOCH_ZERO", block.timestamp);
+        uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(30 days));
+        uint256 memberBoostDiscountBps = vm.envOr("MEMBER_BOOST_DISCOUNT_BPS", uint256(5000));
+
+        // Optional initial soulbound airdrop, applied only to a freshly-deployed BoardwalkClub
+        // (skipped when an existing NFT_COLLECTION is supplied, e.g. the Base SeaDrop collection).
+        address[] memory mintRecipients = vm.envOr("MINT_RECIPIENTS", ",", new address[](0));
 
         require(owner != address(0), "OWNER required");
         require(bmx != address(0), "BMX_ADDRESS required");
@@ -58,6 +68,16 @@ contract DeployFactory is Script {
         require(treasury != address(0), "TREASURY required");
         require(keeper != address(0), "KEEPER required");
 
+        // Frozen per-chain integrator recipients + splits, derived from each integrator's absolute
+        // fee. The IntegratorFeeCollector constructor re-validates distinctness/non-zero/sum==10000.
+        (address[] memory integratorAddresses, uint256[] memory integratorSplits, uint256 totalIntegratorBps) =
+            FeeSchedules.integratorConfig(block.chainid);
+
+        // Per-chain fee defaults + integrator bucket size. Integrator BPS is immutable on the factory
+        // (not in `feeBps`) and cannot be adjusted post-deployment.
+        (LaunchFactory.FeeBpsDefaults memory feeBps, uint256 integratorBps) = FeeSchedules.resolve(block.chainid);
+        require(totalIntegratorBps == integratorBps, "integrator bps mismatch");
+
         vm.startBroadcast(deployerPrivateKey);
 
         console.log("=== Boardwalk Factory Deployment ===");
@@ -65,7 +85,25 @@ contract DeployFactory is Script {
         console.log("Owner:", owner);
         console.log("Chain id:", block.chainid);
 
-        // 1. Deploy implementation templates
+        // 1. Resolve the membership NFT. On Base, NFT_COLLECTION points at the existing SeaDrop
+        //    collection; on other chains we deploy the soulbound mirror and wire its address into
+        //    both the LaunchFactory and BoostBurn below.
+        address nftCollection = nftCollectionEnv;
+        if (nftCollection == address(0)) {
+            BoardwalkClub club = new BoardwalkClub(owner);
+            nftCollection = address(club);
+            console.log("BoardwalkClub (soulbound):", nftCollection);
+
+            if (mintRecipients.length > 0) {
+                require(owner == deployer, "MINT_RECIPIENTS requires OWNER == deployer");
+                club.batchMint(mintRecipients);
+                console.log("Initial airdrop count:", mintRecipients.length);
+            }
+        } else {
+            console.log("Using existing NFT_COLLECTION:", nftCollection);
+        }
+
+        // 2. Deploy implementation templates
         BoardwalkToken tokenImpl = new BoardwalkToken();
         console.log("BoardwalkToken template:", address(tokenImpl));
 
@@ -81,18 +119,13 @@ contract DeployFactory is Script {
         LPStaking lpStakingImpl = new LPStaking();
         console.log("LPStaking template:", address(lpStakingImpl));
 
-        // 2. Deploy BoardwalkLPManager (singleton)
+        // 3. Deploy BoardwalkLPManager (singleton)
         BoardwalkLPManager lpManager = new BoardwalkLPManager(dexFactory, dexRouter, raiseToken);
         console.log("BoardwalkLPManager:", address(lpManager));
 
-        // 3. Deploy BoardwalkFeeCollector (singleton)
+        // 4. Deploy BoardwalkFeeCollector (singleton)
         BoardwalkFeeCollector feeCollector = new BoardwalkFeeCollector(owner, raiseToken, dexRouter, treasury, keeper);
         console.log("BoardwalkFeeCollector:", address(feeCollector));
-
-        // 4. Per-chain fee defaults + integrator collector deployment.
-        //    See FeeSchedules.sol and SPEC.md "Default fee schedules". Integrator BPS is immutable
-        //    on the factory (not in `feeBps`) and cannot be adjusted post-deployment.
-        (LaunchFactory.FeeBpsDefaults memory feeBps, uint256 integratorBps) = FeeSchedules.resolve(block.chainid);
 
         // 5. Deploy IntegratorFeeCollector (singleton — owner is `owner`; setFactory called below).
         //    The constructor itself validates the integrator/split arrays.
@@ -143,6 +176,11 @@ contract DeployFactory is Script {
             console.log("Owner differs from deployer; owner must call setFactory(factory) post-deploy");
         }
 
+        // 8. Deploy BoostBurn (community ranking), wired to the same membership NFT for discounts.
+        BoostBurn boostBurn =
+            new BoostBurn(owner, bmx, epochZero, epochDuration, nftCollection, memberBoostDiscountBps);
+        console.log("BoostBurn:", address(boostBurn));
+
         vm.stopBroadcast();
 
         // Post-deployment verification
@@ -157,6 +195,11 @@ contract DeployFactory is Script {
         require(factory.INTEGRATOR_COLLECTOR() == address(integratorCollector), "IntegratorCollector mismatch");
         require(factory.antiWhaleTaxBps() == antiWhaleTaxBps, "AntiWhale tax mismatch");
         require(factory.antiWhaleDuration() == antiWhaleDuration, "AntiWhale duration mismatch");
+        require(factory.nftCollection() == nftCollection, "Factory NFT mismatch");
+        require(integratorCollector.slotCount() == integratorAddresses.length, "Integrator slot count mismatch");
+        require(boostBurn.owner() == owner, "BoostBurn owner mismatch");
+        require(boostBurn.BMX() == bmx, "BoostBurn BMX mismatch");
+        require(boostBurn.nftCollection() == nftCollection, "BoostBurn NFT mismatch");
         if (deployer == owner) {
             require(integratorCollector.factory() == address(factory), "Collector factory wiring mismatch");
         }

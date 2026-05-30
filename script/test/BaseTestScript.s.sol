@@ -53,6 +53,7 @@ abstract contract BaseTestScript is Script {
         if (chainId == 8453) return "basescan.org";
         if (chainId == 252) return "fraxscan.com";
         if (chainId == 747474) return "katanascan.com";
+        if (chainId == 57073) return "explorer.inkonchain.com";
         return "block explorer";
     }
 

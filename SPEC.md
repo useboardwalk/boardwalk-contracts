@@ -2,7 +2,7 @@
 
 A permissionless token launch protocol. Each launch deploys 4–5 EIP-1167 clones from shared implementation templates; singletons are deployed once per chain. Launches feature an embedded transfer tax, time-weighted presale, permanently locked liquidity, LP staking with multiplier points, and (on Base) onchain governance over protocol revenue.
 
-Targeted chains: Ethereum, Base, Katana, Fraxtal. The raise token (WETH, frxUSD, etc.) is set per chain at deployment.
+Targeted chains: Ethereum, Base, Katana, Fraxtal, Ink. The raise token (WETH, frxUSD, etc.) is set per chain at deployment.
 
 ---
 
@@ -130,14 +130,14 @@ Factory parameters (`issuer + boardwalk + incentive + INTEGRATOR_BPS` = `total` 
 
 | Chain | `issuer` | `boardwalk` | `referrer` | `incentive` | `integrators` |
 | ----- | -------- | ----------- | ---------- | ----------- | ---------------- |
-| Base (8453), Katana (747474) | 30 | 35 | 5 | 23 | 27 |
+| Base (8453), Katana (747474), Ink (57073) | 30 | 35 | 5 | 23 | 27 |
 | Fraxtal (252) | 30 | 35 | 5 | 25 | 25 |
 | Ethereum (1) | 35 | 35 | 5 | 25 | 20 |
 
 **Effective splits at launch** (add 0.1% DEX fee on swaps):
 
-| Path | Base / Katana | Fraxtal | Ethereum |
-| ---- | ------------- | ------- | -------- |
+| Path | Base / Katana / Ink | Fraxtal | Ethereum |
+| ---- | ------------------- | ------- | -------- |
 | **Advanced** (referrer set) | 0.30% issuer, 0.30% Boardwalk, 0.05% referrer, 0.23% LP incentives, 0.27% integrators | 0.30% issuer, 0.30% Boardwalk, 0.05% referrer, 0.25% LP incentives, 0.25% integrators | 0.35% issuer, 0.30% Boardwalk, 0.05% referrer, 0.25% LP incentives, 0.20% integrators |
 | **Express** (no referrer) | 0.30% issuer, 0.35% Boardwalk, 0.23% LP incentives, 0.27% integrators | 0.30% issuer, 0.35% Boardwalk, 0.25% LP incentives, 0.25% integrators | 0.35% issuer, 0.35% Boardwalk, 0.25% LP incentives, 0.20% integrators |
 

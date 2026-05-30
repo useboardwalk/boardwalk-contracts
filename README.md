@@ -97,8 +97,6 @@ forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/
 forge script script/01_DeployDEX.s.sol --rpc-url $RPC_URL --broadcast
 forge script script/02_DeployFactory.s.sol --rpc-url $RPC_URL --broadcast
 forge script script/03_DeployGovernance.s.sol --rpc-url $RPC_URL --broadcast   # Base only
-forge script script/04_DeployBoostBurn.s.sol --rpc-url $RPC_URL --broadcast    # Base only
-forge script script/05_DeployBoardwalkClub.s.sol --rpc-url $RPC_URL --broadcast # non-Base chains
 ```
 
 ## Audits
