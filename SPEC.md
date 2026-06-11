@@ -308,6 +308,46 @@ See *Governance* below.
 
 ---
 
+## Cross-chain membership (NFT bridge)
+
+The Boardwalk Club collection (SeaDrop on Base, immutable, 224 fixed supply, ids 1–224) bridges to
+the other deployment chains over Chainlink CCIP, hub-and-spoke with Base as the hub:
+
+- **Base**: `BoardwalkClubLockbox` escrows originals (`locked[id]` accounting set before the pull)
+  and sends a 64-byte `(recipient, tokenId)` message to the destination mirror; inbound messages
+  from the registered peer release escrow. Release requires `locked[id]` — a peer can only release
+  what `bridge` escrowed. The original collection is never modified.
+- **Spokes** (Ethereum, Katana, Ink, Fraxtal): `BoardwalkClubMirror` — a standard transferable
+  ERC721 reproducing the original's name, symbol, ids, and URIs — mints on inbound messages and
+  burns to bridge back. Its only peer is the Base lockbox, pinned at the type level
+  (`OnlyBaseSelector`); spoke→spoke moves are two hops via Base (the Ink↔Fraxtal CCIP lane does
+  not exist, so a mesh is not possible anyway). After migration each spoke's `nftCollection`
+  points at its mirror via the existing `SET_NFT_COLLECTION` timelocks; the soulbound
+  `BoardwalkClub` airdrop contract stays deployed but no longer gates.
+- **Invariant**: per token id, exactly one live representation exists — the original with a
+  holder, or (while `locked`) exactly one spoke mirror.
+- **Fees**: `bridge(destinationChainSelector, tokenId, recipient)` is `payable` (documented
+  carve-out from the no-payable rule). The caller pays the CCIP fee in native, quoted via
+  `quoteBridge`; exactly the quoted fee is forwarded to the router and any excess is refunded
+  last. Bridging is owner-only on both sides (approvals are not honored).
+- **Failure handling**: a reverting delivery parks in CCIP's failed state and is permissionlessly
+  re-executable with more gas; a delivery to a peer with no code (or one failing the ERC165
+  check) is a **vacuous SUCCESS** — never retryable — which is why wiring is one-shot + timelocked,
+  every lane gets a canary round-trip before launch, and the lockbox carries a 30-day
+  `FORCE_UNLOCK` backstop (the sole path that releases a `locked` original). The rightful
+  recipient of a stuck original is not knowable on Base (the spoke representation may have
+  changed hands in a secondary sale), so `FORCE_UNLOCK` takes an explicit recipient, verified
+  off-chain as the current spoke holder and committed at signal time; the 30-day public
+  `ChangeSignaled` window is the adjudication mechanism, and while a lane is alive the holder of
+  a live representation defeats a wrongful signal outright by bridging back (release cancels the
+  pending signal). Signaling requires the token to be escrowed, and force-unlock must only be
+  used on a CCIP-SUCCESS (vacuous) message or a deprecated lane — never on a FAILED message,
+  which is recoverable by manual re-execution (force-unlocking it double-mints when the message
+  is later replayed). Lane changes must drain in-flight messages first: `removePeer` on the
+  outgoing side, wait out deliveries, then execute.
+
+---
+
 ## Contract reference
 
 | Contract | Type | Source | Auth model |
@@ -322,6 +362,9 @@ See *Governance* below.
 | `BoardwalkFeeCollector` | singleton | [src/core/BoardwalkFeeCollector.sol](src/core/BoardwalkFeeCollector.sol) | `Ownable2Step + Timelocked` |
 | `IntegratorFeeCollector` | singleton (per chain) | [src/core/IntegratorFeeCollector.sol](src/core/IntegratorFeeCollector.sol) | `Ownable2Step + Timelocked`; the only `onlyOwner` function is one-shot `setFactory`; each slot rotates its own address |
 | `BoostBurn` | singleton | [src/core/BoostBurn.sol](src/core/BoostBurn.sol) | `Ownable2Step + Timelocked + MembershipDiscount` |
+| `BoardwalkClubLockbox` (Base) | singleton | [src/nft/BoardwalkClubLockbox.sol](src/nft/BoardwalkClubLockbox.sol) | `Ownable2Step + Timelocked`; generic admin + burn disabled; one-shot `initializePeers`; instant `removePeer` kill switch |
+| `BoardwalkClubMirror` (spokes) | singleton (per spoke) | [src/nft/BoardwalkClubMirror.sol](src/nft/BoardwalkClubMirror.sol) | `Ownable2Step + Timelocked`; peer pinned to the Base selector; instant `removePeer` kill switch |
+| `BoardwalkClubBridgeBase` | base | [src/nft/BoardwalkClubBridgeBase.sol](src/nft/BoardwalkClubBridgeBase.sol) | CCIP peer registry + send/receive plumbing; typed timelocked `SET_PEER` |
 | `Timelocked` | base | [src/base/Timelocked.sol](src/base/Timelocked.sol) | Generic signal/execute/burn pattern; per-action delay via `_actionDelay` virtual hook |
 | `MembershipDiscount` | base | [src/base/MembershipDiscount.sol](src/base/MembershipDiscount.sol) | NFT membership check + BPS discount helpers |
 | `GovernanceVoter` (Base) | singleton | [src/governance/GovernanceVoter.sol](src/governance/GovernanceVoter.sol) | `Ownable2Step + Timelocked`; keeper-or-owner for finalize/execute |
@@ -354,6 +397,9 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 | FeeDistributor | `CHANGE_ISSUER(idx) / CHANGE_REFERRER` | 7d | per-recipient self-signal; non-zero in execute; not burnable |
 | IntegratorFeeCollector | `CHANGE_ADDRESS(slotIdx)` | **14d** | per-slot self-signal (`msg.sender == integrators[slotIdx]`); execute permissionless with explicit `slotIdx`; rejects zero address and addresses already taken by another slot; not burnable |
 | VestingStream | `CHANGE_RECIPIENT(idx)` | 7d | issuer-signal; non-zero; auto-claims for outgoing; per-allocation burnable |
+| BoardwalkClubLockbox / Mirror | `SET_PEER(selector)` | 7d | typed signal only (generic admin + burn disabled); execute permissionless; rejects zero peer; mirror restricted to the Base selector; instant owner `removePeer` is the kill switch |
+| BoardwalkClubLockbox | `RESCUE(collection, tokenId)` | 7d | recipient committed in hash; execute permissionless; hard-reverts on escrow-accounted (`locked`) originals |
+| BoardwalkClubLockbox | `FORCE_UNLOCK(tokenId)` | **30d** | recipient committed in hash (verified off-chain as the current spoke holder — secondary sales move the claim); requires the token escrowed at signal time; execute permissionless; legitimate release clears any pending signal (bridging back defeats a wrongful one); sole path that releases a `locked` original — backstop for vacuous-SUCCESS deliveries and deprecated lanes, never for FAILED-replayable messages |
 | GovernanceVoter | `SET_TREASURY / _KEEPER` | 7d | non-zero |
 | GovernanceVoter | `SET_FEE_COLLECTOR` | 7d | non-zero; pair with `BoardwalkFeeCollector.MIGRATE_COLLECTOR` |
 | GovernanceVoter | `SET_GOVERNANCE_BURN` | **21d** | 0–1 BMX |

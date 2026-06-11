@@ -7,6 +7,7 @@ import {ERC721Enumerable} from "@openzeppelin/contracts/token/ERC721/extensions/
 
 /// @title BoardwalkClub
 /// @notice Soulbound membership NFT minted on non-Base chains to mirror Boardwalk Club.
+/// @dev DEPRECATED: use BoardwalkClubMirror instead.
 contract BoardwalkClub is ERC721, ERC721Enumerable, Ownable2Step {
     uint256 public nextTokenId;
 
@@ -16,7 +17,7 @@ contract BoardwalkClub is ERC721, ERC721Enumerable, Ownable2Step {
         address initialOwner
     ) ERC721("Boardwalk Club", "BC") Ownable(initialOwner) {}
 
-    /// @notice Every token shares one metadata URI 
+    /// @notice Every token shares one metadata URI
     /// @dev    Mirrors the Base SeaDrop collection.
     function tokenURI(
         uint256 tokenId

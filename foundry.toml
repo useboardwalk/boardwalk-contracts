@@ -12,6 +12,9 @@ remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "@uniswap/v4-periphery/=lib/v4-periphery/",
     "@uniswap/v4-core/=lib/v4-periphery/lib/v4-core/",
+    "@chainlink/contracts-ccip/=lib/chainlink-ccip/chains/evm/",
+    "@chainlink/contracts-ccip/contracts/=lib/chainlink-ccip/chains/evm/contracts/",
+    "@openzeppelin/contracts@5.0.2/=lib/openzeppelin-contracts/contracts/",
 ]
 
 [fmt]
