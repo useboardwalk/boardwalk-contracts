@@ -2,7 +2,7 @@
 
 A permissionless token launch protocol. Each launch deploys 4–5 EIP-1167 clones from shared implementation templates; singletons are deployed once per chain. Launches feature an embedded transfer tax, time-weighted presale, permanently locked liquidity, LP staking with multiplier points, and (on Base) onchain governance over protocol revenue.
 
-Targeted chains: Ethereum, Base, Katana, Fraxtal, Ink. The raise token (WETH, frxUSD, etc.) is set per chain at deployment.
+Targeted chains: Ethereum, Base, Katana, Fraxtal, Ink, Arbitrum. The raise token (WETH, frxUSD, etc.) is set per chain at deployment.
 
 ---
 
@@ -322,7 +322,7 @@ the other deployment chains over Chainlink CCIP, hub-and-spoke with Base as the 
   burns to bridge back. Its only peer is the Base lockbox, pinned at the type level
   (`OnlyBaseSelector`); spoke→spoke moves are two hops via Base (the Ink↔Fraxtal CCIP lane does
   not exist, so a mesh is not possible anyway). After migration each spoke's `nftCollection`
-  points at its mirror via the existing `SET_NFT_COLLECTION` timelocks; the soulbound
+  points at its mirror via the existing `SET_NFT_COLLECTION` timelocks; the deprecated soulbound
   `BoardwalkClub` airdrop contract stays deployed but no longer gates.
 - **Invariant**: per token id, exactly one live representation exists — the original with a
   holder, or (while `locked`) exactly one spoke mirror.
@@ -348,6 +348,82 @@ the other deployment chains over Chainlink CCIP, hub-and-spoke with Base as the 
 
 ---
 
+## Cross-chain revenue bridging
+
+Protocol revenue accrues on each non-Base chain in that chain's raise token (WETH on Ethereum/Ink,
+KAT on Katana, frxUSD on Fraxtal), aggregated by that chain's `BoardwalkFeeCollector`. Weekly, an
+automated keeper consolidates it to Base, landing as **WETH** in the Base `BoardwalkFeeCollector`.
+Revenue flows only through onchain bridging contracts the keeper triggers.
+
+Two contracts (`src/crosschain/`):
+
+- **`RevenueBridger`** (every non-Base lane: Ethereum, Ink, Arbitrum, Katana, Fraxtal): generic. Holds the raise
+  token (it is the source FeeCollector `treasury`). The bridge keeper calls
+  `bridgeToBase(amount, lifiCalldata)`, forwarding keeper-built LiFi route calldata to the per-chain
+  LiFi Diamond. ETH/Ink/Arbitrum use a pure Across V4 route; Katana a composed Symbiosis route; Fraxtal a
+  composed Glacis route (frxUSD → Base frxUSD). Payable: the route's native fee (e.g. the Glacis GMP
+  fee in native FRAX) is the keeper's `msg.value`, forwarded to the Diamond with any unconsumed excess
+  refunded to the keeper; pure ERC20 lanes pass `msg.value == 0`. An unconditional `receive()` accepts
+  the Diamond's excess-fee refund.
+- **`BaseRevenueSwapper`** (Base): delivery target for all lanes (rescue-capable, so a wrong asset is
+  recoverable — at the rescue-less FeeCollector it would be stuck). Swaps the delivered raise token
+  (`tokenIn`, any non-WETH ERC20; e.g. the frxUSD from Fraxtal) → WETH via the 0x AllowanceHolder
+  (`swapAndForward`), then forwards its entire WETH balance to the Base FeeCollector — bridged-in WETH
+  (ETH/Ink/Katana) rides along. Permissionless, `forwardWeth()` is the if-needed sweep.
+
+Per-chain config (LiFi Diamond, facet selectors, raise/delivered frxUSD, AllowanceHolder, WETH) lives in
+[script/CrossChainConfig.sol](script/CrossChainConfig.sol); deploy via
+[script/06_DeployRevenueBridging.s.sol](script/06_DeployRevenueBridging.s.sol). Deploy order: Base swapper 
+first, then each non-Base lane pinned to it as `BASE_DESTINATION`.
+
+### Security controls (`RevenueBridger`)
+
+`bridgeToBase` is bridge-keeper-gated, `nonReentrant`, payable (the route's native fee is the keeper's
+`msg.value`, forwarded to the Diamond; any unconsumed excess is refunded to the keeper, and an
+unconditional `receive()` accepts the Diamond's excess-fee refund):
+
+1. **Diamond + selector allowlist**: the call target is the immutable Diamond; `bytes4(lifiCalldata)`
+   must be allowlisted (timelocked `SET_SELECTOR`). One shape per lane, matching `HAS_SOURCE_SWAPS`:
+   pure Across V4 (`0xa1f1ce43`) on ETH/Ink/Arbitrum, Symbiosis (`0x6e067161`) on Katana, Glacis (`0x9c4b6dd9`)
+   on Fraxtal.
+2. **Calldata pinning**: `abi.decode(lifiCalldata[4:], (ILiFi.BridgeData))` (mirrors LiFi's own
+   `CalldataVerificationFacet`) pins `receiver == BaseRevenueSwapper`, `destinationChainId == 8453`,
+   `hasDestinationCall == false`, and `hasSourceSwaps == HAS_SOURCE_SWAPS` (so a mis-curated
+   wrong-shape selector self-reverts). On pure Across V4 lanes it also decodes `AcrossV4Data` and pins
+   `refundAddress == address(this)` (load-bearing — closes the forced-expiry self-refund path that
+   would otherwise reclaim the full input on origin), `sendingAssetId == raise token`,
+   `receivingAssetId == Base WETH`, `outputAmount >= amount * (10000 - MAX_FEE_BPS) / 10000`, and
+   `receiverAddress == swapper`. On composed lanes it pins only the deposited input across
+   `requiresDeposit` swap legs (`sendingAssetId == raise token`, summed `fromAmount == amount`) and
+   never the post-swap `BridgeData.sendingAssetId`/`minAmount`.
+3. **Exact-approve + reset + balance-delta**: approves the Diamond for exactly `amount`, calls, resets
+   to 0, asserts the carrier balance dropped by at most `amount`.
+
+### Trust statement (per lane)
+
+- **Ethereum / Ink / Arbitrum**: delivery (recipient + output asset + origin refund) is **pinned on-chain**
+  (Across V4 facet-data). Residual = the bounded relayer-fee spread (`MAX_FEE_BPS`) plus LiFi-Diamond
+  upgrade risk against the standing balance.
+- **Katana / Fraxtal**: delivery is **keeper-trusted** end-to-end (the composed Symbiosis / Glacis
+  facet ignores `BridgeData` for routing; the destination lives in keeper-supplied `metaRoute` /
+  `GlacisData` calldata).
+- **Base swap leg** (`BaseRevenueSwapper.swapAndForward`): keeper-supplied `tokenIn` + 0x calldata +
+  `minOut`; the keeper `minOut` is the bound. `tokenIn` is pinned `!= WETH` so keeper calldata can never pull the
+  contract's bridged WETH, and the output is always WETH to the immutable `FEE_COLLECTOR`.
+
+Emergency response = `revokeKeeper` + halt the accrual cron (both instant); keeper replacement is then a 7-day timelock.
+
+### Invariants (new)
+
+- **Source `governanceVault == address(0)` forever** (Ethereum, Ink, Arbitrum, Katana, Fraxtal): a set vault
+  diverts 70% of `forwardRevenue` to the vault, silently bypassing the bridger. All four are zero
+  onchain; never call `executeSetGovernanceVault` there; alert on `GovernanceVaultUpdated`.
+- **Nothing but WETH addressed to the Base FeeCollector**: it can only swap Boardwalk-DEX-listed
+  tokens and has no rescue. Made structural — all lanes deliver to the rescue-capable swapper; only
+  its WETH (`swapAndForward`'s full-balance forward / `forwardWeth`) ever reaches the FeeCollector.
+
+---
+
 ## Contract reference
 
 | Contract | Type | Source | Auth model |
@@ -365,6 +441,8 @@ the other deployment chains over Chainlink CCIP, hub-and-spoke with Base as the 
 | `BoardwalkClubLockbox` (Base) | singleton | [src/nft/BoardwalkClubLockbox.sol](src/nft/BoardwalkClubLockbox.sol) | `Ownable2Step + Timelocked`; generic admin + burn disabled; one-shot `initializePeers`; instant `removePeer` kill switch |
 | `BoardwalkClubMirror` (spokes) | singleton (per spoke) | [src/nft/BoardwalkClubMirror.sol](src/nft/BoardwalkClubMirror.sol) | `Ownable2Step + Timelocked`; peer pinned to the Base selector; instant `removePeer` kill switch |
 | `BoardwalkClubBridgeBase` | base | [src/nft/BoardwalkClubBridgeBase.sol](src/nft/BoardwalkClubBridgeBase.sol) | CCIP peer registry + send/receive plumbing; typed timelocked `SET_PEER` |
+| `RevenueBridger` | singleton (every non-Base lane) | [src/crosschain/RevenueBridger.sol](src/crosschain/RevenueBridger.sol) | `Ownable2Step + Timelocked + ReentrancyGuardTransient`; generic admin + burn disabled; typed `SET_KEEPER` / `SET_SELECTOR` / `RESCUE` (ERC20 or native); payable carve-out (native LiFi route fee via `msg.value`, excess refunded; unconditional `receive()`); instant `revokeKeeper` kill switch |
+| `BaseRevenueSwapper` | singleton (Base) | [src/crosschain/BaseRevenueSwapper.sol](src/crosschain/BaseRevenueSwapper.sol) | as `RevenueBridger` (non-payable); typed `SET_KEEPER` / `RESCUE` (ERC20 or native); permissionless `nonReentrant` `forwardWeth`; `tokenIn != WETH` swap guard |
 | `Timelocked` | base | [src/base/Timelocked.sol](src/base/Timelocked.sol) | Generic signal/execute/burn pattern; per-action delay via `_actionDelay` virtual hook |
 | `MembershipDiscount` | base | [src/base/MembershipDiscount.sol](src/base/MembershipDiscount.sol) | NFT membership check + BPS discount helpers |
 | `GovernanceVoter` (Base) | singleton | [src/governance/GovernanceVoter.sol](src/governance/GovernanceVoter.sol) | `Ownable2Step + Timelocked`; keeper-or-owner for finalize/execute |
@@ -404,6 +482,9 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 | GovernanceVoter | `SET_FEE_COLLECTOR` | 7d | non-zero; pair with `BoardwalkFeeCollector.MIGRATE_COLLECTOR` |
 | GovernanceVoter | `SET_GOVERNANCE_BURN` | **21d** | 0–1 BMX |
 | GovernanceVoter | `SET_FALLBACK_TREASURY` | **21d** | non-zero; setter itself burnable |
+| RevenueBridger / BaseRevenueSwapper | `SET_KEEPER` | 7d | non-zero; instant owner `revokeKeeper` is the kill switch (documented exception to the all-admin-Timelocked rule, precedent: lockbox `removePeer`) |
+| RevenueBridger | `SET_SELECTOR(selector)` | 7d | add/remove a LiFi facet selector; one shape per lane matching `HAS_SOURCE_SWAPS` |
+| RevenueBridger / BaseRevenueSwapper | `RESCUE(token)` | 7d | `token == address(0)` rescues native, else the ERC20; recipient + amount committed in hash; execute permissionless |
 
 `BoardwalkToken`, `LPStaking`, `PresaleManager`, `BoardwalkLPManager`, `LPLocker`, and `ParticipationDistributor` have no admin functions.
 

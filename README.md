@@ -2,6 +2,8 @@
 
 Permissionless token launch protocol with embedded transfer tax, time-weighted presale, permanently burned liquidity, LP staking, community ranking, and (on Base) onchain governance over protocol revenue.
 
+Deployed across Ethereum, Base, Arbitrum, Ink, Katana, and Fraxtal. Membership NFTs bridge between chains via Chainlink CCIP, and non-Base protocol revenue is consolidated to Base.
+
 See [SPEC.md](SPEC.md) for the full spec.
 
 ## Architecture
@@ -73,8 +75,14 @@ src/
     GovernanceVoter.sol     weekly voting + execution + vault
     LPLocker.sol            permanent Uniswap v4 LP lock with fee harvest
     ParticipationDistributor.sol 7-day BMX streaming for Option 4
-  nft/                       non-Base chains
-    BoardwalkClub.sol       soulbound membership NFT for cross-chain member discounts
+  nft/                       cross-chain membership NFT (Chainlink CCIP bridge)
+    BoardwalkClub.sol       (deprecated) soulbound membership NFT; superseded by BoardwalkClubMirror
+    BoardwalkClubBridgeBase.sol shared CCIP send/receive plumbing
+    BoardwalkClubLockbox.sol Base side: lock/release of the original collection
+    BoardwalkClubMirror.sol  spoke side: burn/mint transferable mirror
+  crosschain/                weekly consolidation of non-Base revenue to Base
+    RevenueBridger.sol      non-Base lanes: forward revenue to Base via LiFi (Across/Symbiosis/Glacis)
+    BaseRevenueSwapper.sol  Base: swap delivered tokens to WETH, forward to the FeeCollector
   interfaces/                cross-contract interfaces
   dex/                       forked Uniswap V2 (0.1% pair fee)
 test/                        unit, fuzz, invariant, fork
@@ -87,8 +95,8 @@ script/                      deployment scripts
 forge build
 forge test
 forge coverage --ir-minimum --skip "*/dex/*" --skip "script/*" --report summary
-forge fmt src/base/ src/core/ src/interfaces/ src/governance/ src/nft/
-forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/
+forge fmt src/base/ src/core/ src/interfaces/ src/governance/ src/nft/ src/crosschain/
+forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/ src/crosschain/
 ```
 
 ## Deployment
@@ -96,7 +104,10 @@ forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/
 ```bash
 forge script script/01_DeployDEX.s.sol --rpc-url $RPC_URL --broadcast
 forge script script/02_DeployFactory.s.sol --rpc-url $RPC_URL --broadcast
-forge script script/03_DeployGovernance.s.sol --rpc-url $RPC_URL --broadcast   # Base only
+forge script script/03_DeployGovernance.s.sol --rpc-url $RPC_URL --broadcast       # Base only
+forge script script/04_DeployNFTBridge.s.sol --rpc-url $RPC_URL --broadcast        # Base lockbox + spoke mirrors
+forge script script/05_WireLockboxPeers.s.sol --rpc-url $RPC_URL --broadcast       # one-shot CCIP peer wiring
+forge script script/06_DeployRevenueBridging.s.sol --rpc-url $RPC_URL --broadcast  # Base swapper first, then each lane
 ```
 
 ## Audits

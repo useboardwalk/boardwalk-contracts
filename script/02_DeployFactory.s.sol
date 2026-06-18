@@ -19,8 +19,9 @@ import {FeeSchedules} from "script/FeeSchedules.sol";
 /// @notice Deploys the full Boardwalk per-chain stack: membership NFT, implementation templates,
 ///         singletons, the per-chain integrator collector, the LaunchFactory, and BoostBurn.
 /// @dev Deployment order:
-///      1. BoardwalkClub (only when NFT_COLLECTION is unset; on Base set NFT_COLLECTION to the
-///         existing SeaDrop collection so this step is skipped). Used as `nftCollection` below.
+///      1. BoardwalkClub (DEPRECATED soulbound NFT, only deployed when NFT_COLLECTION is unset). On
+///         Base set NFT_COLLECTION to the SeaDrop collection; on a CCIP spoke set it to the deployed
+///         `BoardwalkClubMirror`. Either way this fallback deploy is skipped. Used as `nftCollection`.
 ///      2. Implementation templates (5 contracts)
 ///      3. BoardwalkLPManager (singleton)
 ///      4. BoardwalkFeeCollector (singleton)
