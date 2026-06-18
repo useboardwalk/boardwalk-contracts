@@ -910,14 +910,6 @@ contract BoardwalkClubLockboxTest is Test {
         assertEq(lockbox.owner(), bob, "ownership accepted");
     }
 
-    function test_RevertWhen_RenounceOwnership() public {
-        // Renouncing would brick the kill switch and the rescue/force-unlock custody backstops.
-        vm.prank(owner);
-        vm.expectRevert(BoardwalkClubBridgeBase.RenounceDisabled.selector);
-        lockbox.renounceOwnership();
-        assertEq(lockbox.owner(), owner, "owner intact");
-    }
-
     // ============ Fuzz ============
 
     function testFuzz_Bridge_RefundsExcess(

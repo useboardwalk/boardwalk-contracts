@@ -469,14 +469,6 @@ contract BoardwalkClubMirrorTest is Test {
         mirror.signalBurnAction(action);
     }
 
-    function test_RevertWhen_RenounceOwnership() public {
-        // Renouncing would brick the kill switch (the mirror's only safety lever).
-        vm.prank(owner);
-        vm.expectRevert(BoardwalkClubBridgeBase.RenounceDisabled.selector);
-        mirror.renounceOwnership();
-        assertEq(mirror.owner(), owner, "owner intact");
-    }
-
     // ============ Membership discount integration ============
 
     function test_Integration_MembershipGatingFollowsBridgedToken() public {

@@ -13,12 +13,14 @@ library CCIPConfig {
     uint256 internal constant CHAIN_KATANA = 747474;
     uint256 internal constant CHAIN_FRAXTAL = 252;
     uint256 internal constant CHAIN_INK = 57073;
+    uint256 internal constant CHAIN_ARBITRUM = 42161;
 
     uint64 internal constant SELECTOR_ETHEREUM = 5009297550715157269;
     uint64 internal constant SELECTOR_BASE = 15971525489660198786;
     uint64 internal constant SELECTOR_KATANA = 2459028469735686113;
     uint64 internal constant SELECTOR_FRAXTAL = 1462016016387883143;
     uint64 internal constant SELECTOR_INK = 3461204551265785888;
+    uint64 internal constant SELECTOR_ARBITRUM = 4949039107694359620;
 
     error UnsupportedChainId(uint256 chainId);
 
@@ -34,6 +36,7 @@ library CCIPConfig {
         if (chainId == CHAIN_KATANA) return (0x7c19b79D2a054114Ab36ad758A36e92376e267DA, SELECTOR_KATANA);
         if (chainId == CHAIN_FRAXTAL) return (0x4bdF20477744Ec5F9DE738b5cC9ACd01763905ee, SELECTOR_FRAXTAL);
         if (chainId == CHAIN_INK) return (0xca7c90A52B44E301AC01Cb5EB99b2fD99339433A, SELECTOR_INK);
+        if (chainId == CHAIN_ARBITRUM) return (0x141fa059441E0ca23ce184B6A78bafD2A517DdE8, SELECTOR_ARBITRUM);
         revert UnsupportedChainId(chainId);
     }
 }

@@ -16,6 +16,7 @@ library FeeSchedules {
     uint256 internal constant CHAIN_KATANA = 747474;
     uint256 internal constant CHAIN_FRAXTAL = 252;
     uint256 internal constant CHAIN_INK = 57073;
+    uint256 internal constant CHAIN_ARBITRUM = 42161;
 
     uint256 internal constant TOTAL_TAX_BPS = 115;
     uint256 internal constant SPLITS_DENOMINATOR = 10_000;
@@ -32,7 +33,10 @@ library FeeSchedules {
         if (chainId == CHAIN_ETHEREUM) {
             return (ethereum(), 20);
         }
-        if (chainId == CHAIN_BASE || chainId == CHAIN_KATANA || chainId == CHAIN_INK) {
+        if (
+            chainId == CHAIN_BASE || chainId == CHAIN_KATANA || chainId == CHAIN_INK
+                || chainId == CHAIN_ARBITRUM
+        ) {
             return (baseKatanaInk(), 27);
         }
         if (chainId == CHAIN_FRAXTAL) {
@@ -41,7 +45,7 @@ library FeeSchedules {
         revert UnsupportedChainId(chainId);
     }
 
-    /// @notice Base, Katana, and Ink: issuer 30, boardwalk 35, incentive 23, referrer 5, integrator 27.
+    /// @notice Base, Katana, Ink, Arbitrum: issuer 30, boardwalk 35, incentive 23, referrer 5, integrator 27.
     function baseKatanaInk() internal pure returns (LaunchFactory.FeeBpsDefaults memory) {
         return LaunchFactory.FeeBpsDefaults({
             issuer: 30,
@@ -159,6 +163,17 @@ library FeeSchedules {
             absBps = new uint256[](2);
             // Ink
             addrs[0] = 0x8e7Def02a84534F9D799f375CF94CC763A53F8b2;
+            absBps[0] = 25;
+            // 0x
+            addrs[1] = 0x3C241dAF101F697044ee076B51baEe5B0d72c0dc;
+            absBps[1] = 2;
+            return (addrs, absBps);
+        }
+        if (chainId == CHAIN_ARBITRUM) {
+            addrs = new address[](2);
+            absBps = new uint256[](2);
+            // Arbitrum Foundation
+            addrs[0] = 0xF3FC178157fb3c87548bAA86F9d24BA38E649B58;
             absBps[0] = 25;
             // 0x
             addrs[1] = 0x3C241dAF101F697044ee076B51baEe5B0d72c0dc;

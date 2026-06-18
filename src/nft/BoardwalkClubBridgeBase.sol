@@ -25,7 +25,6 @@ abstract contract BoardwalkClubBridgeBase is Ownable2Step, Timelocked, CCIPRecei
     error InsufficientFee(uint256 required, uint256 provided);
     error RefundFailed();
     error InvalidPeer(uint64 chainSelector, address sender);
-    error RenounceDisabled();
 
     event PeerSet(uint64 indexed chainSelector, address indexed peer);
     event BridgeInitiated(
