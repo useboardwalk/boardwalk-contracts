@@ -27,7 +27,9 @@ import {CrossChainConfig} from "script/CrossChainConfig.sol";
 ///      7. Keep `governanceVault == address(0)` on all source chains; a set vault diverts 70% past the
 ///         bridger. Never call `executeSetGovernanceVault` there; alert on `GovernanceVaultUpdated`.
 ///         BWS-migration carve-out: Arbitrum becomes the governance home — at the migration cutover
-///         its FeeCollector's vault is set to the BWS GovernanceVoter and its lane re-homes.
+///         its FeeCollector's vault is set to the BWS GovernanceVoter, and the Arbitrum lane is
+///         retired (the bridger pins Base as destination, so a post-cutover Arbitrum lane would
+///         ship the hub's own revenue away; the replacement mesh targets Arbitrum).
 ///      8. Accrual gating: don't call `forwardRevenue` until monitoring confirms the previous bridge
 ///         landed on Base. The 30/70 split lands when the Base FeeCollector runs its regular cycle.
 ///
@@ -119,6 +121,12 @@ contract DeployRevenueBridging is Script {
             console.log(
                 "  NOTE: pure Across V4 lane - confirm the fee-0 LiFi integrator returns pure routes (sec 8 gate)"
             );
+        }
+        if (chainId == CrossChainConfig.CHAIN_ARBITRUM) {
+            // The bridger hard-pins Base as destination; a post-cutover deploy here would ship the
+            // new hub's own revenue back to Base.
+            console.log("  WARNING: the Arbitrum lane is PRE-CUTOVER ONLY. Once the BWS migration makes");
+            console.log("           Arbitrum the hub, do NOT deploy or repoint this lane - retire it.");
         }
         if (chainId == CrossChainConfig.CHAIN_FRAXTAL) {
             console.log("  NOTE: Fraxtal/Glacis charges a native FRAX fee - keeper attaches it as msg.value per call");
