@@ -38,8 +38,10 @@ interface ICcaAuctionIntrospect {
 /// - CCA_END_BLOCK (ArbSys L2 block num)
 /// - CCA_CLAIM_BLOCK (ArbSys L2 block num)
 /// - CCA_MIGRATION_BLOCK (ArbSys L2 block num)
-/// - CCA_AUCTION_STEPS: packed hex, 8 bytes/step (uint24 mps + uint40 blockDelta; mps*delta = 1e7, deltas span start..end)
 /// Optional (defaults are the announced launch values / canonical addresses in ArbitrumConfig):
+/// - CCA_AUCTION_STEPS: packed hex, 8 bytes/step (uint24 mps + uint40 blockDelta; mps*delta = 1e7,
+///   deltas span start..end). Default: generated from start/end per Uniswap's uniswap-cca plugin
+///   defaults - 12 equal-token steps on a convex t^1.2 ramp, then ~30% of supply in the final block
 /// - CCA_TICK_SPACING_Q96: Q96 token price (default: 1% of the floor)
 /// - CCA_FLOOR_PRICE_Q96: Q96 token price (default: 0.00025 ETH per BWS)
 /// - CCA_REQUIRED_CURRENCY_RAISED: graduation threshold in wei (default: full supply clearing at
@@ -94,6 +96,9 @@ contract LaunchBwsCca is Script {
     error AuctionNotDeployed(address predicted);
     error AuctionTokensRecipientMismatch(address actual, address expected);
     error InitializerNotRegisteredWithStrategy(address auction);
+    error ScheduleSpanInvalid(uint64 startBlock, uint64 endBlock);
+    error ScheduleStepEmpty(uint256 stepIndex);
+    error ScheduleFinalBlockTooSmall(uint256 finalMps);
 
     function run() external {
         if (block.chainid != ArbitrumConfig.ARBITRUM_CHAIN_ID) revert WrongChain(block.chainid);
@@ -264,6 +269,54 @@ contract LaunchBwsCca is Script {
         }
     }
 
+    /// @notice The default supply schedule, an integer port of Uniswap's uniswap-cca generator
+    ///         defaults: 12 equal-token steps whose durations follow the convex curve t^1.2 (the
+    ///         release rate accelerates), then the remaining ~30% of supply in the final block
+    ///         (Uniswap's guidance: at least 25%). The curve is laid over span - 1 blocks with the
+    ///         final block appended, so the deltas span start..end exactly.
+    function defaultAuctionSchedule(
+        uint64 startBlock,
+        uint64 endBlock
+    ) public pure returns (bytes memory steps) {
+        if (endBlock <= startBlock) revert ScheduleSpanInvalid(startBlock, endBlock);
+        uint256 auctionBlocks = (endBlock - startBlock) - 1;
+
+        // Curve boundaries: t_i = (i/12)^(1/1.2), scaled to 1e18.
+        uint256[12] memory boundaries = [
+            uint256(126_090_479_118_575_132),
+            224_667_692_432_879_611,
+            314_980_262_473_718_291,
+            400_312_318_392_000_909,
+            482_122_387_528_632_466,
+            561_231_024_154_686_491,
+            638_161_590_787_250_250,
+            713_275_462_622_441_967,
+            786_836_297_566_236_139,
+            859_044_434_072_037_145,
+            930_056_928_911_782_669,
+            1_000_000_000_000_000_000
+        ];
+
+        uint256 prevBoundary;
+        uint256 sumMain;
+        for (uint256 i = 0; i < 12; i++) {
+            uint256 boundary = (boundaries[i] * auctionBlocks + 0.5e18) / 1e18;
+            uint256 duration = boundary - prevBoundary;
+            if (duration == 0) revert ScheduleStepEmpty(i);
+            // Equal token target per step: (0.7 * 1e7) / 12 mps-units, rounded half up per block.
+            uint256 mps = (7_000_000 + 6 * duration) / (12 * duration);
+            if (mps == 0) mps = 1;
+            steps = abi.encodePacked(steps, uint24(mps), uint40(duration));
+            sumMain += mps * duration;
+            prevBoundary = boundary;
+        }
+
+        // The final block takes the exact remainder; per-step rounding must not erode it below 25%.
+        uint256 finalMps = sumMain >= MPS ? 0 : MPS - sumMain;
+        if (finalMps < 2_500_000) revert ScheduleFinalBlockTooSmall(finalMps);
+        steps = abi.encodePacked(steps, uint24(finalMps), uint40(1));
+    }
+
     /// @dev Deposit and distribute in one multicall
     function _execute(
         LaunchConfig memory cfg
@@ -305,7 +358,10 @@ contract LaunchBwsCca is Script {
         cfg.requiredCurrencyRaised =
             _envU128("CCA_REQUIRED_CURRENCY_RAISED", ArbitrumConfig.CCA_REQUIRED_CURRENCY_RAISED);
         cfg.zeroGraduationAttested = vm.envOr("CCA_ZERO_GRADUATION_ATTESTED", false);
-        cfg.auctionStepsData = vm.envBytes("CCA_AUCTION_STEPS");
+        cfg.auctionStepsData = vm.envOr("CCA_AUCTION_STEPS", bytes(""));
+        if (cfg.auctionStepsData.length == 0) {
+            cfg.auctionStepsData = defaultAuctionSchedule(cfg.startBlock, cfg.endBlock);
+        }
         cfg.salt = vm.envOr("CCA_LAUNCH_SALT", bytes32(0));
     }
 

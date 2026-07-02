@@ -136,15 +136,16 @@ contract LaunchBwsCcaForkTest is Test {
         cfg.burner = address(burner);
         cfg.recipient = treasury;
         cfg.startBlock = baseBlock + 10;
-        cfg.endBlock = baseBlock + 110;
-        cfg.claimBlock = baseBlock + 120;
-        cfg.migrationBlock = baseBlock + 130;
+        cfg.endBlock = baseBlock + 10 + 10_000;
+        cfg.claimBlock = cfg.endBlock;
+        cfg.migrationBlock = cfg.endBlock + 20;
         cfg.tickSpacingQ96 = TICK_Q96;
         cfg.floorPriceQ96 = FLOOR_Q96;
         cfg.requiredCurrencyRaised = REQUIRED_RAISE;
         cfg.zeroGraduationAttested = false;
-        // Two 1%-mps steps of 50 blocks each: sums to 1e7, spans exactly start..end.
-        cfg.auctionStepsData = abi.encodePacked(uint24(100_000), uint40(50), uint24(100_000), uint40(50));
+        // The production shape: the script-generated convex ramp + ~30% final block, validated
+        // here by the real CCA constructor.
+        cfg.auctionStepsData = launchScript.defaultAuctionSchedule(cfg.startBlock, cfg.endBlock);
         cfg.salt = bytes32(0);
     }
 

@@ -216,6 +216,72 @@ contract LaunchBwsCcaTest is Test {
         assertLe(ArbitrumConfig.CCA_REQUIRED_CURRENCY_RAISED, fullRaiseAtFloor, "floor sell-out graduates");
     }
 
+    // ---- default supply schedule ----
+
+    /// @dev Parses one packed 8-byte step: uint24 mps + uint40 blockDelta, big-endian.
+    function _step(
+        bytes memory steps,
+        uint256 i
+    ) internal pure returns (uint256 mps, uint256 delta) {
+        uint256 o = i * 8;
+        mps = (uint256(uint8(steps[o])) << 16) | (uint256(uint8(steps[o + 1])) << 8) | uint256(uint8(steps[o + 2]));
+        delta = (uint256(uint8(steps[o + 3])) << 32) | (uint256(uint8(steps[o + 4])) << 24)
+            | (uint256(uint8(steps[o + 5])) << 16) | (uint256(uint8(steps[o + 6])) << 8) | uint256(uint8(steps[o + 7]));
+    }
+
+    /// @dev The generated schedule must satisfy the CCA constructor invariants (sum to 1e7, span
+    ///      start..end exactly, no empty steps) and the uniswap-cca shape (12 ramp steps whose
+    ///      release rate never decreases, then >= 25% of supply in the final block) at every
+    ///      realistic span, including the ~1.61M-block launch window.
+    function test_DefaultSchedule_ShapeAndInvariantsAcrossSpans() public view {
+        uint256[4] memory spans = [uint256(10_000), 86_401, 1_614_393, 3_000_000];
+        for (uint256 s = 0; s < spans.length; s++) {
+            uint64 startBlock = 1000;
+            uint64 endBlock = uint64(1000 + spans[s]);
+            bytes memory steps = launchScript.defaultAuctionSchedule(startBlock, endBlock);
+            assertEq(steps.length, 13 * 8, "12 ramp steps + final block");
+
+            uint256 sumMps;
+            uint256 sumDelta;
+            uint256 prevRate;
+            for (uint256 i = 0; i < 13; i++) {
+                (uint256 mps, uint256 delta) = _step(steps, i);
+                assertGt(delta, 0, "no empty steps");
+                sumMps += mps * delta;
+                sumDelta += delta;
+                if (i < 12) {
+                    assertGe(mps, prevRate, "release rate never decreases along the ramp");
+                    prevRate = mps;
+                } else {
+                    assertEq(delta, 1, "final step is one block");
+                    assertGe(mps, 2_500_000, "final block carries >= 25% of supply");
+                }
+            }
+            assertEq(sumMps, 1e7, "mps*delta sums to the full supply");
+            assertEq(sumDelta, spans[s], "deltas span start..end exactly");
+        }
+    }
+
+    function test_Launch_WithDefaultSchedule() public {
+        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        cfg.endBlock = cfg.startBlock + 10_000;
+        cfg.claimBlock = cfg.endBlock;
+        cfg.migrationBlock = cfg.endBlock + 20;
+        cfg.auctionStepsData = launchScript.defaultAuctionSchedule(cfg.startBlock, cfg.endBlock);
+
+        address auction = launchScript.launch(cfg);
+
+        (, bytes memory inner) = abi.decode(launcher.lastConfigData(), (ILBPStrategy.MigratorParameters, bytes));
+        ICcaAuctionFactory.AuctionParameters memory auc = abi.decode(inner, (ICcaAuctionFactory.AuctionParameters));
+        assertEq(auc.auctionStepsData, cfg.auctionStepsData, "generated schedule passed through");
+        assertEq(MockLaunchCcaAuction(auction).endBlock(), cfg.endBlock, "auction committed to the same window");
+    }
+
+    function test_RevertWhen_DefaultScheduleSpanInvalid() public {
+        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.ScheduleSpanInvalid.selector, 1000, 1000));
+        launchScript.defaultAuctionSchedule(1000, 1000);
+    }
+
     // ---- launch() + check() reverts ----
 
     function test_RevertWhen_WalletIsNotTheScript() public {
