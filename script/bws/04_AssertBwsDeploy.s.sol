@@ -439,7 +439,7 @@ contract AssertBwsDeploy is Script {
         if (actualGov != expected) revert F1_StakingGovNotExpected(target, actualGov, expected);
     }
 
-    /// @dev A: CCA launch wiring, checked post-launch (runbook step 6). Each sub-config may be left
+    /// @dev A: CCA launch wiring, checked after script 06's printed follow-ups. Each sub-config may be left
     ///      unset ONLY for a pre-launch dry run of D-1..D-5/F-1 - run() prints a loud warning for
     ///      anything skipped. A-1..A-4: the auction's launch token is this BWS, its unsold sink is
     ///      the burner (which burns this BWS), and it offered exactly the auction bucket. A-5..A-7:

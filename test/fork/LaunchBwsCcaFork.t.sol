@@ -231,7 +231,7 @@ contract LaunchBwsCcaForkTest is Test {
         // returns to the treasury recipient.
         assertGt(bws.balanceOf(treasury), treasuryBwsBefore, "unused LP reserve swept to recipient");
 
-        // -- Post-migrate governance wiring (runbook step 5) --
+        // -- Post-migrate governance wiring (script 06's printed step 2/3) --
         voter.setPoolHooks(address(0)); // the one-shot hook commit, hookless as read from the pool
         for (uint256 i = 0; i < mintCount; i++) {
             vm.prank(registrar);
@@ -242,7 +242,7 @@ contract LaunchBwsCcaForkTest is Test {
         locker.renounceRegistrar();
         assertEq(locker.registrar(), address(0), "registrar renounced");
 
-        // -- Burn the unsold supply (runbook step 7) --
+        // -- Burn the unsold supply (script 06's printed step 4) --
         uint256 auctionBalance = bws.balanceOf(auction);
         uint256 deadBefore = bws.balanceOf(DEAD);
         burner.sweep(auction);

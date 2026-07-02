@@ -12,7 +12,7 @@ import {ArbitrumConfig} from "./ArbitrumConfig.sol";
 ///         `tokensRecipient` is immutable once the launch tx lands.
 /// @dev Required env: DEPLOYER_PRIVATE_KEY, BWS_TOKEN (same env name as scripts 02-04). Optional:
 ///      CCA_REQUIRED_CURRENCY_RAISED (graduation threshold in raise-token wei; only echoed here — the
-///      auction is created through the LiquidityLauncher flow, see CCA_LAUNCH_RUNBOOK.md).
+///      auction is created through the LiquidityLauncher flow, see 06_LaunchBwsCca.s.sol).
 contract DeployUnsoldBurner is Script {
     error WrongChain(uint256 chainId);
     error BwsHasNoCode(address bws);

@@ -67,10 +67,10 @@ library ArbitrumConfig {
     uint24 internal constant POOL_FEE = 10_000;
     int24 internal constant POOL_TICK_SPACING = 200;
 
-    // The CCA launch is run directly through Uniswap's CCA contracts, so the auction can set
-    // tokensRecipient = UnsoldBurner and requiredCurrencyRaised at creation. Deploy UnsoldBurner via
-    // 05_DeployUnsoldBurner.s.sol before the auction; parameters are in CCA_LAUNCH_RUNBOOK.md. All four
-    // addresses below have code on Arbitrum One (checked in test/fork/UnsoldBurnerFork.t.sol).
+    // The CCA launch runs through the LiquidityLauncher (06_LaunchBwsCca.s.sol), which sets
+    // tokensRecipient = UnsoldBurner and requiredCurrencyRaised at auction creation. Deploy
+    // UnsoldBurner via 05_DeployUnsoldBurner.s.sol before the auction. All four addresses below
+    // have code on Arbitrum One (checked in test/fork/UnsoldBurnerFork.t.sol).
     address internal constant ARB_CCA_FACTORY = 0x00cCa200BF124dBfA848937c553864f4B4CE0632;
     address internal constant ARB_LIQUIDITY_LAUNCHER = 0x00004c4ccc709Ef590F7C81102C0689F0263D4e9;
     address internal constant ARB_LBP_STRATEGY = 0x18608AD558dcD233F7854242bbAef73988Bee000;

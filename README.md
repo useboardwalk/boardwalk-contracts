@@ -90,7 +90,7 @@ src/
   interfaces/                cross-contract interfaces
   dex/                       forked Uniswap V2 (0.1% pair fee)
 test/                        unit, fuzz, invariant, fork
-script/                      deployment scripts (script/bws/ = the Arbitrum BWS deployment + launch runbook)
+script/                      deployment scripts (script/bws/ = the Arbitrum BWS deployment + CCA launch)
 snapshot/                    off-chain merkle pipeline for the migration's voter-point snapshot (TS)
 ```
 
@@ -115,7 +115,7 @@ forge script script/05_WireLockboxPeers.s.sol --rpc-url $RPC_URL --broadcast    
 forge script script/06_DeployRevenueBridging.s.sol --rpc-url $RPC_URL --broadcast  # hub swapper first, then each lane
 ```
 
-BWS migration (Arbitrum, see `script/bws/CCA_LAUNCH_RUNBOOK.md` for the full order of operations):
+BWS migration (Arbitrum, in this order; script `06` prints the post-launch steps — migrate, hook commit, position registration, unsold burn):
 
 ```bash
 forge script script/bws/01_DeployBWS.s.sol --rpc-url $ARB_RPC --broadcast           # token + genesis buckets

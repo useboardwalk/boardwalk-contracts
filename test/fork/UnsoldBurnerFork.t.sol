@@ -123,7 +123,7 @@ contract UnsoldBurnerForkTest is Test {
     }
 
     /// @dev The deployed factory accepts the burner (a contract) as `tokensRecipient` and stores it — the
-    ///      wiring the launch runbook relies on.
+    ///      wiring the launch script relies on.
     function testFork_RealFactory_StoresBurnerAsTokensRecipient() public onlyFork {
         uint128 offered = 219_466e18;
         ICcaAuctionFull auction = _createRealAuction(offered, 1_000_000);

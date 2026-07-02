@@ -23,16 +23,18 @@ interface ICcaAuctionIntrospect {
 }
 
 /// @title LaunchBwsCca - Launch the 438,932 BWS market-formation bucket through Uniswap's CCA
-/// @notice Runbook step 3: from the wallet holding the bucket, deposit + distribute through the
-///         LiquidityLauncher so the LBPStrategy creates AND registers the auction (auction half =
-///         219,466 BWS; the other 219,466 is the LP reserve). NEVER the raw CCA factory: an auction
-///         the factory creates directly is not in `LBPStrategy._initializers`, so `migrate()`
-///         reverts `InitializerNotRegistered` and a graduated raise is stuck forever (the strategy
-///         is the only address the auction lets call `sweepCurrency`).
-/// @dev    Deposit and distribute are batched in ONE `multicall` tx: the launcher keeps no
+/// @notice From the wallet holding the bucket, deposit + distribute through the LiquidityLauncher
+///         so the LBPStrategy creates and registers the auction (auction half = 219,466 BWS; the
+///         other 219,466 is the LP reserve). Never the raw CCA factory: an auction the factory
+///         creates directly is not in `LBPStrategy._initializers`, so `migrate()` reverts
+///         `InitializerNotRegistered` and a graduated raise is stuck forever (the strategy is the
+///         only address the auction lets call `sweepCurrency`). After broadcasting, prints the
+///         predicted auction address and the post-launch steps (migrate, hook commit, position
+///         registration, unsold burn, go-live gate).
+/// @dev    Deposit and distribute are batched in one `multicall` tx: the launcher keeps no
 ///         per-depositor accounting, so tokens parked between separate txs could be distributed by
 ///         anyone. Funding moves via Permit2 (ERC20 approve to Permit2 + a Permit2 allowance for
-///         the launcher), exactly-sized so both allowances are consumed to zero by the deposit.
+///         the launcher), sized exactly so both allowances are consumed to zero by the deposit.
 ///
 ///         Required env: DEPLOYER_PRIVATE_KEY (the bucket wallet), BWS_TOKEN, GOVERNANCE_VOTER,
 ///         LP_LOCKER, UNSOLD_BURNER, LAUNCH_RECIPIENT (treasury: leftovers + the whole LP seed on
@@ -71,7 +73,7 @@ contract LaunchBwsCca is Script {
         address voter;
         address lpLocker; // positionRecipient: every LP position mints here
         address burner; // tokensRecipient: unsold BWS sink
-        address recipient; // leftover currency/token dust + the ENTIRE LP seed on non-graduation
+        address recipient; // leftover currency/token dust + the entire LP seed on non-graduation
         uint64 startBlock; // ArbSys L2 block numbers, not block.number
         uint64 endBlock;
         uint64 claimBlock;
@@ -175,7 +177,7 @@ contract LaunchBwsCca is Script {
             revert WalletBucketMissing(cfg.wallet, balance, ArbitrumConfig.CCA_BUCKET);
         }
 
-        // Uniswap side: launcher, its Permit2, the strategy and its auction factory all live.
+        // Uniswap side: launcher, its Permit2, the strategy and its auction factory all have code.
         if (cfg.launcher.code.length == 0) revert LauncherHasNoCode(cfg.launcher);
         address permit2 = ILiquidityLauncher(cfg.launcher).permit2();
         if (permit2.code.length == 0) revert Permit2HasNoCode(permit2);
@@ -183,8 +185,8 @@ contract LaunchBwsCca is Script {
         address factory = ILBPStrategy(cfg.strategy).initializerFactory();
         if (factory.code.length == 0) revert FactoryHasNoCode(factory);
 
-        // Unsold sink: the burner burns THIS BWS (its token and the auction's tokensRecipient are
-        // both immutable - a mismatch silently strands the unsold supply).
+        // Unsold sink: the burner's token and the auction's tokensRecipient are both immutable,
+        // so a mismatch here strands the unsold supply.
         if (cfg.burner.code.length == 0) revert BurnerHasNoCode(cfg.burner);
         address burnerBws = address(UnsoldBurner(cfg.burner).BWS());
         if (burnerBws != cfg.bws) revert BurnerBwsMismatch(burnerBws, cfg.bws);
@@ -203,9 +205,9 @@ contract LaunchBwsCca is Script {
             revert PositionManagerMismatch(strategyPm, locker.POSITION_MANAGER());
         }
 
-        // Voter: the hook is committed AFTER migrate (runbook step 5); already-set means the order
-        // broke. Fee/tick are read from the voter when building MigratorParameters - cross-check
-        // them against the canonical config so a mis-deployed voter cannot steer the launch.
+        // Voter: the hook is only committed after migrate; already set means the order broke.
+        // Fee/tick are read from the voter when building MigratorParameters - cross-check them
+        // against the canonical config so a mis-deployed voter cannot steer the launch.
         GovernanceVoter voter = GovernanceVoter(payable(cfg.voter));
         if (voter.poolHooksSet()) revert PoolHooksAlreadySet();
         if (
@@ -227,15 +229,15 @@ contract LaunchBwsCca is Script {
 
         _checkSteps(cfg);
 
-        // A zero threshold graduates on ANY raise; require an explicit attestation to allow it.
+        // A zero threshold graduates on any raise; require an explicit attestation to allow it.
         if (cfg.requiredCurrencyRaised == 0 && !cfg.zeroGraduationAttested) {
             revert GraduationThresholdZeroUnattested();
         }
 
-        // The CCA constructor's price bounds, replicated so a typo'd Q96 value (a common one:
-        // forgetting the << 96, in either direction) fails here instead of in the broadcast.
-        // Lower bounds + floor-on-a-tick-boundary mirror TickStorage; the upper bound mirrors
-        // MaxBidPriceLib. The minimum checks run first so the modulo cannot divide by zero.
+        // The CCA constructor's price bounds, replicated so a typo'd Q96 value (typically a
+        // forgotten << 96) fails here instead of in the broadcast. Lower bounds and the
+        // floor-on-a-tick-boundary rule mirror TickStorage; the upper bound mirrors MaxBidPriceLib.
+        // Minimums first, so the modulo cannot divide by zero.
         if (cfg.tickSpacingQ96 < MIN_TICK_SPACING_Q96 || cfg.floorPriceQ96 < MIN_FLOOR_PRICE_Q96) {
             revert PriceUnderMinimum(cfg.tickSpacingQ96, cfg.floorPriceQ96);
         }
@@ -296,7 +298,7 @@ contract LaunchBwsCca is Script {
             poolParameters: ILBPStrategy.PoolParameters({
                 fee: voter.POOL_FEE(),
                 tickSpacing: voter.POOL_TICK_SPACING(),
-                hook: address(0) // hookless; the real hook is read back post-migrate (runbook step 5)
+                hook: address(0) // hookless; the actual hook is read back post-migrate and committed via setPoolHooks
             }),
             positionDefinitions: abi.encode(defs),
             lpAllocationSchedule: abi.encode(brackets)
@@ -350,14 +352,14 @@ contract LaunchBwsCca is Script {
         if (auction.totalSupply() != ArbitrumConfig.CCA_AUCTION_SUPPLY) {
             revert AuctionSupplyMismatch(auction.totalSupply(), ArbitrumConfig.CCA_AUCTION_SUPPLY);
         }
-        // THE load-bearing invariant: registered with the strategy, so migrate() can run.
+        // Registered with the strategy; an auction it never registered cannot be migrated.
         if (ILBPStrategy(cfg.strategy).initializers(predicted).migrationBlock != cfg.migrationBlock) {
             revert InitializerNotRegisteredWithStrategy(predicted);
         }
     }
 
-    /// @dev Funds + creates in one atomic multicall (see contract NatSpec). Exact-sized Permit2
-    ///      approvals: both are consumed to zero by the deposit.
+    /// @dev Funds and creates in one atomic multicall (see contract NatSpec). Both approvals are
+    ///      exact-sized and consumed to zero by the deposit.
     function _execute(
         LaunchConfig memory cfg
     ) internal {
@@ -453,23 +455,22 @@ contract LaunchBwsCca is Script {
     ) internal pure {
         console.log("BWS CCA launch submitted through the LiquidityLauncher.");
         console.log("");
-        console.log("=== RECORD THIS ADDRESS ===");
         console.log("CCA auction (initializer):", auction);
-        console.log("===========================");
+        console.log("Record this address; every step below needs it.");
         console.log("  offered supply:", ArbitrumConfig.CCA_AUCTION_SUPPLY / 1e18, "BWS");
         console.log("  LP reserve    :", uint256(LP_RESERVE) / 1e18, "BWS (held by the strategy until migrate)");
         console.log("  endBlock      :", cfg.endBlock);
         console.log("  migrationBlock:", cfg.migrationBlock);
         console.log("");
         console.log("After the auction ends (post-endBlock, post-migrationBlock; ArbSys L2 blocks):");
-        console.log("1. Call LBPStrategy.migrate(initializer) - permissionless, NOTHING automates it.");
-        console.log("   No pool, LP, or Migrated event exists until this lands.");
+        console.log("1. Call LBPStrategy.migrate(initializer) - permissionless and not automated,");
+        console.log("   schedule it. No pool, LP, or Migrated event exists until this lands.");
         console.log("2. Recover the pool hook from the migrate tx: the Migrated event's key topic is only");
         console.log("   a hash - read the hook from the same tx's PoolManager Initialize event (or");
         console.log("   getPoolAndPositionInfo on a minted tokenId), verify keccak256(abi.encode(key))");
         console.log("   matches the Migrated topic, then GovernanceVoter.setPoolHooks(hook) - one-shot.");
         console.log("   Expect address(0), or the LBPStrategy address if the hookless pool was front-run.");
-        console.log("3. Register EVERY PositionManager Transfer(0x0 -> LPLocker) tokenId via");
+        console.log("3. Register every PositionManager Transfer(0x0 -> LPLocker) tokenId via");
         console.log("   LPLocker.registerPosition(tokenId), confirm getLockedPositions(), then");
         console.log("   renounceRegistrar(). An unregistered position's fees are stranded forever.");
         console.log("4. After endBlock anyone can call UnsoldBurner.sweep(auction) to burn unsold BWS.");
