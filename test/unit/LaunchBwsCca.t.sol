@@ -21,8 +21,8 @@ import {
 /// @title LaunchBwsCcaTest
 /// @notice Unit coverage for script/bws/06_LaunchBwsCca.s.sol against faithful launcher/strategy/
 ///         factory mocks: the full deposit+distribute multicall runs, the captured configData is
-///         decoded back field by field, and every pre-broadcast sanity check reverts on the exact
-///         violation it guards.
+///         decoded back field by field, and every check() invariant reverts on the exact violation
+///         it guards.
 contract LaunchBwsCcaTest is Test {
     uint256 internal constant BUCKET = ArbitrumConfig.CCA_BUCKET;
     uint256 internal constant AUCTION_SUPPLY = ArbitrumConfig.CCA_AUCTION_SUPPLY;
@@ -47,9 +47,7 @@ contract LaunchBwsCcaTest is Test {
     function setUp() public {
         launchScript = new LaunchBwsCca();
         bws = new MockERC20("Boardwalk", "BWS");
-        // The check() supply shape-check expects the genuine fixed supply; the script holds the bucket.
         bws.mint(address(launchScript), BUCKET);
-        bws.mint(address(this), ArbitrumConfig.TOTAL_SUPPLY - BUCKET);
 
         permit2 = new MockPermit2();
         launcher = new MockLiquidityLauncher(address(permit2));
@@ -97,8 +95,8 @@ contract LaunchBwsCcaTest is Test {
         assertEq(launcher.lastDepositToken(), address(bws), "deposit token");
         assertEq(launcher.lastDepositAmount(), uint160(BUCKET), "deposit amount");
         assertEq(launcher.lastDepositCaller(), address(launchScript), "deposit caller preserved by multicall");
-        // The atomicity invariant the script's NatSpec relies on: both legs ran inside ONE multicall
-        // (tokens parked in the launcher between separate txs would be distributable by anyone).
+        // Both legs ran inside one multicall: tokens parked in the launcher between separate txs
+        // would be distributable by anyone.
         assertTrue(launcher.depositViaMulticall(), "deposit executed inside the multicall");
         assertTrue(launcher.distributeViaMulticall(), "distribute executed inside the same multicall");
 
@@ -187,7 +185,7 @@ contract LaunchBwsCcaTest is Test {
         assertEq(MockLaunchCcaAuction(auction).auctionParameters().requiredCurrencyRaised, 0, "zero threshold kept");
     }
 
-    // ---- launch-entry guards ----
+    // ---- launch() + check() reverts ----
 
     function test_RevertWhen_WalletIsNotTheScript() public {
         LaunchBwsCca.LaunchConfig memory cfg = _cfg();
@@ -198,87 +196,10 @@ contract LaunchBwsCcaTest is Test {
         launchScript.launch(cfg);
     }
 
-    function test_RevertWhen_PredictedAuctionAlreadyDeployed() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        address predicted = launchScript.predictAuction(cfg);
-        vm.etch(predicted, hex"01");
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.AuctionAlreadyDeployed.selector, predicted));
-        launchScript.launch(cfg);
-    }
-
-    // ---- check(): token + bucket ----
-
-    function test_RevertWhen_BwsHasNoCode() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.bws = makeAddr("eoa");
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.BwsHasNoCode.selector, cfg.bws));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_BwsSupplyWrong() public {
-        MockERC20 wrong = new MockERC20("Wrong", "W");
-        wrong.mint(address(launchScript), BUCKET);
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.bws = address(wrong);
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.BwsSupplyWrong.selector, BUCKET, ArbitrumConfig.TOTAL_SUPPLY)
-        );
-        launchScript.check(cfg);
-    }
-
     function test_RevertWhen_WalletMissesTheBucket() public {
         LaunchBwsCca.LaunchConfig memory cfg = _cfg();
         cfg.wallet = makeAddr("poor");
         vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.WalletBucketMissing.selector, cfg.wallet, 0, BUCKET));
-        launchScript.check(cfg);
-    }
-
-    // ---- check(): Uniswap side ----
-
-    function test_RevertWhen_LauncherHasNoCode() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.launcher = makeAddr("eoaLauncher");
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.LauncherHasNoCode.selector, cfg.launcher));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_Permit2HasNoCode() public {
-        address eoaPermit2 = makeAddr("eoaPermit2");
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.launcher = address(new MockLiquidityLauncher(eoaPermit2));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.Permit2HasNoCode.selector, eoaPermit2));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_StrategyHasNoCode() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.strategy = makeAddr("eoaStrategy");
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.StrategyHasNoCode.selector, cfg.strategy));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_FactoryHasNoCode() public {
-        address eoaFactory = makeAddr("eoaFactory");
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.strategy = address(new MockLBPStrategy(eoaFactory, positionManager, poolManager));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.FactoryHasNoCode.selector, eoaFactory));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_PositionManagersDiverge() public {
-        address otherPm = makeAddr("otherPm");
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.strategy = address(new MockLBPStrategy(address(factory), otherPm, poolManager));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.PositionManagerMismatch.selector, otherPm, positionManager));
-        launchScript.check(cfg);
-    }
-
-    // ---- check(): burner ----
-
-    function test_RevertWhen_BurnerHasNoCode() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.burner = makeAddr("eoaBurner");
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.BurnerHasNoCode.selector, cfg.burner));
         launchScript.check(cfg);
     }
 
@@ -289,8 +210,6 @@ contract LaunchBwsCcaTest is Test {
         vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.BurnerBwsMismatch.selector, address(other), address(bws)));
         launchScript.check(cfg);
     }
-
-    // ---- check(): locker ----
 
     function test_RevertWhen_LockerBoundToAnotherVoter() public {
         address otherVoter = makeAddr("otherVoter");
@@ -315,7 +234,13 @@ contract LaunchBwsCcaTest is Test {
         launchScript.check(cfg);
     }
 
-    // ---- check(): voter ----
+    function test_RevertWhen_PositionManagersDiverge() public {
+        address otherPm = makeAddr("otherPm");
+        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        cfg.strategy = address(new MockLBPStrategy(address(factory), otherPm, poolManager));
+        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.PositionManagerMismatch.selector, otherPm, positionManager));
+        launchScript.check(cfg);
+    }
 
     function test_RevertWhen_PoolHooksAlreadySet() public {
         voter.setPoolHooks(address(0));
@@ -323,35 +248,6 @@ contract LaunchBwsCcaTest is Test {
         vm.expectRevert(LaunchBwsCca.PoolHooksAlreadySet.selector);
         launchScript.check(cfg);
     }
-
-    function test_RevertWhen_VoterPoolParamsDivergeFromCanonical() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.voter = address(new MockLaunchVoter(3000, 60));
-        cfg.lpLocker = address(new MockLaunchLocker(cfg.voter, address(0), address(bws), registrar, positionManager));
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.VoterPoolParamsUnexpected.selector, uint24(3000), int24(60))
-        );
-        launchScript.check(cfg);
-    }
-
-    // ---- check(): recipient ----
-
-    function test_RevertWhen_RecipientInvalid() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.recipient = address(0);
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.RecipientInvalid.selector, address(0)));
-        launchScript.check(cfg);
-
-        cfg.recipient = address(1);
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.RecipientInvalid.selector, address(1)));
-        launchScript.check(cfg);
-
-        cfg.recipient = address(2);
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.RecipientInvalid.selector, address(2)));
-        launchScript.check(cfg);
-    }
-
-    // ---- check(): blocks ----
 
     function test_RevertWhen_StartBlockNotInFuture() public {
         LaunchBwsCca.LaunchConfig memory cfg = _cfg();
@@ -362,87 +258,6 @@ contract LaunchBwsCcaTest is Test {
         launchScript.check(cfg);
     }
 
-    function test_RevertWhen_BlockOrderInvalid() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.endBlock = cfg.startBlock; // start >= end
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LaunchBwsCca.BlockOrderInvalid.selector,
-                cfg.startBlock,
-                cfg.endBlock,
-                cfg.claimBlock,
-                cfg.migrationBlock
-            )
-        );
-        launchScript.check(cfg);
-
-        cfg = _cfg();
-        cfg.claimBlock = cfg.endBlock - 1; // claim < end
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LaunchBwsCca.BlockOrderInvalid.selector,
-                cfg.startBlock,
-                cfg.endBlock,
-                cfg.claimBlock,
-                cfg.migrationBlock
-            )
-        );
-        launchScript.check(cfg);
-
-        cfg = _cfg();
-        cfg.migrationBlock = cfg.endBlock; // migration <= end
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LaunchBwsCca.BlockOrderInvalid.selector,
-                cfg.startBlock,
-                cfg.endBlock,
-                cfg.claimBlock,
-                cfg.migrationBlock
-            )
-        );
-        launchScript.check(cfg);
-    }
-
-    // ---- check(): steps ----
-
-    function test_RevertWhen_StepDataLengthInvalid() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.auctionStepsData = "";
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.StepDataLengthInvalid.selector, 0));
-        launchScript.check(cfg);
-
-        cfg.auctionStepsData = hex"01020304050607"; // 7 bytes
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.StepDataLengthInvalid.selector, 7));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_StepBlockDeltaZero() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.auctionStepsData = abi.encodePacked(uint24(100_000), uint40(100), uint24(100_000), uint40(0));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.StepBlockDeltaZero.selector, 1));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_StepMpsSumWrong() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        // 2 * 90_000 * 50 = 9_000_000 != 1e7
-        cfg.auctionStepsData = abi.encodePacked(uint24(90_000), uint40(50), uint24(90_000), uint40(50));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.StepMpsSumWrong.selector, 9_000_000));
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_StepSpanDoesNotReachEndBlock() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        // Sums to exactly 1e7 but spans 50 blocks while end - start = 100.
-        cfg.auctionStepsData = abi.encodePacked(uint24(200_000), uint40(50));
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.StepSpanMismatch.selector, uint256(cfg.startBlock) + 50, cfg.endBlock)
-        );
-        launchScript.check(cfg);
-    }
-
-    // ---- check(): graduation + prices ----
-
     function test_RevertWhen_ZeroThresholdUnattested() public {
         LaunchBwsCca.LaunchConfig memory cfg = _cfg();
         cfg.requiredCurrencyRaised = 0;
@@ -450,76 +265,7 @@ contract LaunchBwsCcaTest is Test {
         launchScript.check(cfg);
     }
 
-    /// @dev The mirrored MaxBidPriceLib bound for the fixed 219,466e18 supply:
-    ///      min(((2^154)/supply)^2, 2^222/supply).
-    function _maxBid() internal pure returns (uint256) {
-        uint256 liquidityBound = ((uint256(1) << 154) / AUCTION_SUPPLY) ** 2;
-        uint256 currencyBound = (uint256(1) << 222) / AUCTION_SUPPLY;
-        return liquidityBound < currencyBound ? liquidityBound : currencyBound;
-    }
-
-    function test_RevertWhen_PriceUnderMinimum() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.tickSpacingQ96 = 1; // < TickStorage MIN_TICK_SPACING (2)
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.PriceUnderMinimum.selector, uint256(1), cfg.floorPriceQ96));
-        launchScript.check(cfg);
-
-        cfg = _cfg();
-        cfg.floorPriceQ96 = uint256(1) << 32; // < TickStorage MIN_FLOOR_PRICE (2^32 + 1): the forgot-<<96 typo
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.PriceUnderMinimum.selector, cfg.tickSpacingQ96, uint256(1) << 32)
-        );
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_FloorNotAtTickBoundary() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.floorPriceQ96 = (uint256(1000) << 96) + 1; // not a multiple of the 1<<96 tick spacing
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.FloorNotAtTickBoundary.selector, cfg.floorPriceQ96, cfg.tickSpacingQ96)
-        );
-        launchScript.check(cfg);
-    }
-
-    function test_Check_PassesAtExactMaxBidBoundary() public view {
-        // Pins the mirrored MaxBidPriceLib value: the largest tick-aligned floor passes...
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.tickSpacingQ96 = 2;
-        uint256 floorAtCap = _maxBid() - 2;
-        if (floorAtCap % 2 != 0) floorAtCap -= 1;
-        cfg.floorPriceQ96 = floorAtCap;
-        launchScript.check(cfg);
-    }
-
-    function test_RevertWhen_FloorPastMaxBid() public {
-        // ...and one tick further reverts with the exact bound in the error.
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.tickSpacingQ96 = 2;
-        uint256 maxBid = _maxBid();
-        uint256 floorAtCap = maxBid - 2;
-        if (floorAtCap % 2 != 0) floorAtCap -= 1;
-        cfg.floorPriceQ96 = floorAtCap + 2;
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.PriceOverMaxBid.selector, uint256(2), floorAtCap + 2, maxBid)
-        );
-        launchScript.check(cfg);
-    }
-
     // ---- verifyLaunch ----
-
-    function _auctionWith(
-        address token,
-        uint128 supply,
-        ICcaAuctionFactory.AuctionParameters memory params
-    ) internal returns (address) {
-        return address(new MockLaunchCcaAuction(token, supply, params));
-    }
-
-    function _validParams(
-        LaunchBwsCca.LaunchConfig memory cfg
-    ) internal view returns (ICcaAuctionFactory.AuctionParameters memory) {
-        return launchScript.buildAuctionParameters(cfg);
-    }
 
     function test_VerifyLaunch_RevertWhen_AuctionNotDeployed() public {
         LaunchBwsCca.LaunchConfig memory cfg = _cfg();
@@ -531,24 +277,10 @@ contract LaunchBwsCcaTest is Test {
     function test_VerifyLaunch_RevertWhen_WiringDiverges() public {
         LaunchBwsCca.LaunchConfig memory cfg = _cfg();
 
-        // Wrong token.
-        address a = _auctionWith(makeAddr("otherToken"), uint128(AUCTION_SUPPLY), _validParams(cfg));
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.AuctionTokenMismatch.selector, makeAddr("otherToken"), address(bws))
-        );
-        launchScript.verifyLaunch(cfg, a);
-
-        // Non-native currency.
-        ICcaAuctionFactory.AuctionParameters memory p = _validParams(cfg);
-        p.currency = address(bws);
-        a = _auctionWith(address(bws), uint128(AUCTION_SUPPLY), p);
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.AuctionCurrencyNotNative.selector, address(bws)));
-        launchScript.verifyLaunch(cfg, a);
-
         // Wrong tokensRecipient.
-        p = _validParams(cfg);
+        ICcaAuctionFactory.AuctionParameters memory p = launchScript.buildAuctionParameters(cfg);
         p.tokensRecipient = makeAddr("notBurner");
-        a = _auctionWith(address(bws), uint128(AUCTION_SUPPLY), p);
+        address a = address(new MockLaunchCcaAuction(address(bws), uint128(AUCTION_SUPPLY), p));
         vm.expectRevert(
             abi.encodeWithSelector(
                 LaunchBwsCca.AuctionTokensRecipientMismatch.selector, makeAddr("notBurner"), address(burner)
@@ -556,26 +288,10 @@ contract LaunchBwsCcaTest is Test {
         );
         launchScript.verifyLaunch(cfg, a);
 
-        // Wrong fundsRecipient.
-        p = _validParams(cfg);
-        p.fundsRecipient = makeAddr("notStrategy");
-        a = _auctionWith(address(bws), uint128(AUCTION_SUPPLY), p);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                LaunchBwsCca.AuctionFundsRecipientMismatch.selector, makeAddr("notStrategy"), address(strategy)
-            )
-        );
-        launchScript.verifyLaunch(cfg, a);
-
-        // Wrong offered supply.
-        a = _auctionWith(address(bws), uint128(AUCTION_SUPPLY - 1), _validParams(cfg));
-        vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.AuctionSupplyMismatch.selector, AUCTION_SUPPLY - 1, AUCTION_SUPPLY)
-        );
-        launchScript.verifyLaunch(cfg, a);
-
         // Correctly wired but never registered with the strategy: the stuck-forever case.
-        a = _auctionWith(address(bws), uint128(AUCTION_SUPPLY), _validParams(cfg));
+        a = address(
+            new MockLaunchCcaAuction(address(bws), uint128(AUCTION_SUPPLY), launchScript.buildAuctionParameters(cfg))
+        );
         vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.InitializerNotRegisteredWithStrategy.selector, a));
         launchScript.verifyLaunch(cfg, a);
     }

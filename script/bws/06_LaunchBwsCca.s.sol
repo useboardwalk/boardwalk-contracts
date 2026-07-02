@@ -4,6 +4,7 @@ pragma solidity =0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {ILiquidityLauncher} from "src/interfaces/ILiquidityLauncher.sol";
 import {ILBPStrategy} from "src/interfaces/ILBPStrategy.sol";
 import {ICcaAuctionFactory} from "src/interfaces/ICcaAuctionFactory.sol";
@@ -13,49 +14,45 @@ import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {ArbitrumConfig} from "./ArbitrumConfig.sol";
 
-/// @dev CCA auction getters the post-launch verification reads (ContinuousClearingAuction).
+/// @dev The one auction getter the post-launch verification reads.
 interface ICcaAuctionIntrospect {
-    function token() external view returns (address);
-    function currency() external view returns (address);
     function tokensRecipient() external view returns (address);
-    function fundsRecipient() external view returns (address);
-    function totalSupply() external view returns (uint128);
 }
 
 /// @title LaunchBwsCca - Launch the 438,932 BWS market-formation bucket through Uniswap's CCA
 /// @notice From the wallet holding the bucket, deposit + distribute through the LiquidityLauncher
 ///         so the LBPStrategy creates and registers the auction (auction half = 219,466 BWS; the
 ///         other 219,466 is the LP reserve).
-/// @dev    Deposit and distribute are batched in one `multicall` tx: the launcher keeps no
-///         per-depositor accounting, so tokens parked between separate txs could be distributed by
-///         anyone. Funding moves via Permit2 (ERC20 approve to Permit2 + a Permit2 allowance for
-///         the launcher), sized exactly so both allowances are consumed to zero by the deposit.
+/// @dev    `check()` covers only what the Uniswap contracts don't enforce themselves; the auction
+///         parameters (step schedule, price bounds, block ordering) are validated by the CCA
+///         constructor during forge's pre-broadcast simulation, which reverts atomically.
 ///
-///         Required env: DEPLOYER_PRIVATE_KEY (the bucket wallet), BWS_TOKEN, GOVERNANCE_VOTER,
-///         LP_LOCKER, UNSOLD_BURNER, LAUNCH_RECIPIENT (treasury: leftovers + the whole LP seed on
-///         non-graduation), CCA_START_BLOCK / CCA_END_BLOCK / CCA_CLAIM_BLOCK / CCA_MIGRATION_BLOCK
-///         (ArbSys L2 block numbers), CCA_TICK_SPACING_Q96 / CCA_FLOOR_PRICE_Q96 (Q96 currency-per-
-///         token prices: wei-per-wei ratio << 96), CCA_REQUIRED_CURRENCY_RAISED (graduation
-///         threshold in wei; 0 needs CCA_ZERO_GRADUATION_ATTESTED=true), CCA_AUCTION_STEPS (packed
-///         hex, 8 bytes per step: uint24 mps + uint40 blockDelta; mps*delta must sum to 1e7 and the
-///         deltas must span exactly start..end). Optional: CCA_LIQUIDITY_LAUNCHER / CCA_LBP_STRATEGY
-///         (default ArbitrumConfig), CCA_LAUNCH_SALT (default 0).
+/// Required env vars:
+/// - DEPLOYER_PRIVATE_KEY: bucket wallet
+/// - BWS_TOKEN
+/// - GOVERNANCE_VOTER
+/// - LP_LOCKER
+/// - UNSOLD_BURNER
+/// - LAUNCH_RECIPIENT: treasury (leftovers + entire LP seed on non-graduation)
+/// - CCA_START_BLOCK (ArbSys L2 block num)
+/// - CCA_END_BLOCK (ArbSys L2 block num)
+/// - CCA_CLAIM_BLOCK (ArbSys L2 block num)
+/// - CCA_MIGRATION_BLOCK (ArbSys L2 block num)
+/// - CCA_TICK_SPACING_Q96: Q96 token price
+/// - CCA_FLOOR_PRICE_Q96: Q96 token price
+/// - CCA_REQUIRED_CURRENCY_RAISED: graduation threshold (wei; 0 needs CCA_ZERO_GRADUATION_ATTESTED=true)
+/// - CCA_AUCTION_STEPS: packed hex, 8 bytes/step (uint24 mps + uint40 blockDelta; mps*delta = 1e7, deltas span start..end)
+/// Optional:
+/// - CCA_LIQUIDITY_LAUNCHER (default: ArbitrumConfig)
+/// - CCA_LBP_STRATEGY (default: ArbitrumConfig)
+/// - CCA_LAUNCH_SALT (default: 0)
 contract LaunchBwsCca is Script {
     using SafeERC20 for IERC20;
 
-    /// @dev mps denominator (1e7 = 100%), shared by auction steps, position weights, LP brackets.
+    /// @dev mps denominator (1e7 = 100%), shared by position weights and LP brackets.
     uint24 internal constant MPS = 1e7;
-    /// @dev Packed auction-step width: uint24 mps + uint40 blockDelta.
-    uint256 internal constant STEP_BYTES = 8;
-    /// @dev v4 TickMath bounds; the (MIN_TICK, MAX_TICK) offset pair is the planner's full-range sentinel.
-    int24 internal constant MIN_TICK = -887_272;
-    int24 internal constant MAX_TICK = 887_272;
     /// @dev The LP-reserve half of the bucket (the auction offers the rest).
     uint128 internal constant LP_RESERVE = uint128(ArbitrumConfig.CCA_BUCKET - ArbitrumConfig.CCA_AUCTION_SUPPLY);
-    /// @dev The CCA TickStorage constructor's lower price bounds (ConstantsLib.MIN_TICK_SPACING /
-    ///      MIN_FLOOR_PRICE).
-    uint256 internal constant MIN_TICK_SPACING_Q96 = 2;
-    uint256 internal constant MIN_FLOOR_PRICE_Q96 = (uint256(1) << 32) + 1;
     /// @dev Arbitrum ArbSys precompile + `arbBlockNumber()` selector (the CCA's block clock).
     address internal constant ARB_SYS = 0x0000000000000000000000000000000000000064;
     bytes4 internal constant ARB_BLOCK_NUMBER_SELECTOR = 0xa3b1b31d;
@@ -84,49 +81,25 @@ contract LaunchBwsCca is Script {
     error WrongChain(uint256 chainId);
     error EnvValueTooLarge(string name, uint256 value);
     error WalletMismatch(address wallet, address expected);
-    error BwsHasNoCode(address bws);
-    error BwsSupplyWrong(uint256 actual, uint256 expected);
     error WalletBucketMissing(address wallet, uint256 balance, uint256 required);
-    error LauncherHasNoCode(address launcher);
-    error Permit2HasNoCode(address permit2);
-    error StrategyHasNoCode(address strategy);
-    error FactoryHasNoCode(address factory);
-    error PositionManagerMismatch(address strategyPm, address lockerPm);
-    error BurnerHasNoCode(address burner);
     error BurnerBwsMismatch(address burnerBws, address bws);
     error LockerVoterMismatch(address lockerVoter, address voter);
     error LockerCurrenciesWrong(address currency0, address currency1);
     error RegistrarAlreadyRenounced();
+    error PositionManagerMismatch(address strategyPm, address lockerPm);
     error PoolHooksAlreadySet();
-    error VoterPoolParamsUnexpected(uint24 fee, int24 tickSpacing);
-    error RecipientInvalid(address recipient);
     error StartBlockNotInFuture(uint64 startBlock, uint256 currentBlock);
-    error BlockOrderInvalid(uint64 startBlock, uint64 endBlock, uint64 claimBlock, uint64 migrationBlock);
-    error StepDataLengthInvalid(uint256 length);
-    error StepBlockDeltaZero(uint256 stepIndex);
-    error StepMpsSumWrong(uint256 sumMps);
-    error StepSpanMismatch(uint256 calculatedEndBlock, uint64 endBlock);
     error GraduationThresholdZeroUnattested();
-    error PriceUnderMinimum(uint256 tickSpacingQ96, uint256 floorPriceQ96);
-    error FloorNotAtTickBoundary(uint256 floorPriceQ96, uint256 tickSpacingQ96);
-    error PriceOverMaxBid(uint256 tickSpacingQ96, uint256 floorPriceQ96, uint256 maxBidPriceQ96);
-    error AuctionAlreadyDeployed(address predicted);
     error AuctionNotDeployed(address predicted);
-    error AuctionTokenMismatch(address actual, address expected);
-    error AuctionCurrencyNotNative(address actual);
     error AuctionTokensRecipientMismatch(address actual, address expected);
-    error AuctionFundsRecipientMismatch(address actual, address expected);
-    error AuctionSupplyMismatch(uint256 actual, uint256 expected);
     error InitializerNotRegisteredWithStrategy(address auction);
 
     function run() external {
         if (block.chainid != ArbitrumConfig.ARBITRUM_CHAIN_ID) revert WrongChain(block.chainid);
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         LaunchConfig memory cfg = _configFromEnv(vm.addr(deployerPrivateKey));
-
         check(cfg);
         address predicted = predictAuction(cfg);
-        if (predicted.code.length != 0) revert AuctionAlreadyDeployed(predicted);
 
         // A forked simulation cannot execute the ArbSys precompile (its on-chain code is the 0xfe
         // stub), which the CCA constructor calls; mock it to the RPC block number (on Arbitrum
@@ -154,94 +127,49 @@ contract LaunchBwsCca is Script {
         if (cfg.wallet != address(this)) revert WalletMismatch(cfg.wallet, address(this));
         check(cfg);
         auction = predictAuction(cfg);
-        if (auction.code.length != 0) revert AuctionAlreadyDeployed(auction);
         _execute(cfg);
         verifyLaunch(cfg, auction);
     }
 
-    /// @notice Reverts unless every pre-broadcast launch invariant holds for `cfg`.
+    /// @notice Wiring invariants the Uniswap contracts cannot check for us.
     function check(
         LaunchConfig memory cfg
     ) public view {
-        // Token + bucket: the genuine fixed-supply BWS, and the wallet actually holds the bucket.
-        if (cfg.bws.code.length == 0) revert BwsHasNoCode(cfg.bws);
-        uint256 supply = IERC20(cfg.bws).totalSupply();
-        if (supply != ArbitrumConfig.TOTAL_SUPPLY) revert BwsSupplyWrong(supply, ArbitrumConfig.TOTAL_SUPPLY);
+        // The wallet holds the bucket.
         uint256 balance = IERC20(cfg.bws).balanceOf(cfg.wallet);
         if (balance < ArbitrumConfig.CCA_BUCKET) {
             revert WalletBucketMissing(cfg.wallet, balance, ArbitrumConfig.CCA_BUCKET);
         }
 
-        // Uniswap side: launcher, its Permit2, the strategy and its auction factory all have code.
-        if (cfg.launcher.code.length == 0) revert LauncherHasNoCode(cfg.launcher);
-        address permit2 = ILiquidityLauncher(cfg.launcher).permit2();
-        if (permit2.code.length == 0) revert Permit2HasNoCode(permit2);
-        if (cfg.strategy.code.length == 0) revert StrategyHasNoCode(cfg.strategy);
-        address factory = ILBPStrategy(cfg.strategy).initializerFactory();
-        if (factory.code.length == 0) revert FactoryHasNoCode(factory);
-
-        // Unsold sink: the burner's token and the auction's tokensRecipient are both immutable,
-        // so a mismatch here strands the unsold supply.
-        if (cfg.burner.code.length == 0) revert BurnerHasNoCode(cfg.burner);
+        // The burner's token and the auction's tokensRecipient are both immutable; a mismatch
+        // strands the unsold supply.
         address burnerBws = address(UnsoldBurner(cfg.burner).BWS());
         if (burnerBws != cfg.bws) revert BurnerBwsMismatch(burnerBws, cfg.bws);
 
-        // Locker: the LP positions mint here permanently at migration, so its wiring must already
-        // be right and its registrar must still exist to register them afterwards.
+        // The LP positions mint to the locker permanently at migration: its wiring must be right,
+        // its registrar must still exist to register them afterwards, and it must claim through
+        // the same position manager the strategy mints on.
         LPLocker locker = LPLocker(payable(cfg.lpLocker));
         if (locker.GOVERNANCE_VOTER() != cfg.voter) revert LockerVoterMismatch(locker.GOVERNANCE_VOTER(), cfg.voter);
         if (locker.CURRENCY0() != address(0) || locker.CURRENCY1() != cfg.bws) {
             revert LockerCurrenciesWrong(locker.CURRENCY0(), locker.CURRENCY1());
         }
         if (locker.registrar() == address(0)) revert RegistrarAlreadyRenounced();
-        // The strategy mints through its own position manager; the locker must claim via the same one.
         address strategyPm = ILBPStrategy(cfg.strategy).positionManager();
         if (strategyPm != locker.POSITION_MANAGER()) {
             revert PositionManagerMismatch(strategyPm, locker.POSITION_MANAGER());
         }
 
-        // Voter: the hook is only committed after migrate; already set means the order broke.
-        // Fee/tick are read from the voter when building MigratorParameters - cross-check them
-        // against the canonical config so a mis-deployed voter cannot steer the launch.
-        GovernanceVoter voter = GovernanceVoter(payable(cfg.voter));
-        if (voter.poolHooksSet()) revert PoolHooksAlreadySet();
-        if (
-            voter.POOL_FEE() != ArbitrumConfig.POOL_FEE || voter.POOL_TICK_SPACING() != ArbitrumConfig.POOL_TICK_SPACING
-        ) {
-            revert VoterPoolParamsUnexpected(voter.POOL_FEE(), voter.POOL_TICK_SPACING());
-        }
+        // The hook is only committed after migrate; already set means the order broke.
+        if (GovernanceVoter(payable(cfg.voter)).poolHooksSet()) revert PoolHooksAlreadySet();
 
-        // Recipient: gets leftovers plus the entire LP seed back on non-graduation. address(1)/(2)
-        // are PositionManager sentinels upstream rejects for positions; refuse them here too.
-        if (cfg.recipient == address(0) || uint160(cfg.recipient) <= 2) revert RecipientInvalid(cfg.recipient);
-
-        // Block ordering. block.number on an Arbitrum RPC is the L2 height (== arbBlockNumber), so
-        // the in-future check is meaningful at simulation time; leave margin for broadcast delay.
+        // The CCA accepts a startBlock in the past and silently skips the elapsed schedule.
+        // block.number on an Arbitrum RPC is the L2 height; leave margin for broadcast delay.
         if (cfg.startBlock <= block.number) revert StartBlockNotInFuture(cfg.startBlock, block.number);
-        if (cfg.startBlock >= cfg.endBlock || cfg.claimBlock < cfg.endBlock || cfg.migrationBlock <= cfg.endBlock) {
-            revert BlockOrderInvalid(cfg.startBlock, cfg.endBlock, cfg.claimBlock, cfg.migrationBlock);
-        }
-
-        _checkSteps(cfg);
 
         // A zero threshold graduates on any raise; require an explicit attestation to allow it.
         if (cfg.requiredCurrencyRaised == 0 && !cfg.zeroGraduationAttested) {
             revert GraduationThresholdZeroUnattested();
-        }
-
-        // The CCA constructor's price bounds, replicated so a typo'd Q96 value (typically a
-        // forgotten << 96) fails here instead of in the broadcast. Lower bounds and the
-        // floor-on-a-tick-boundary rule mirror TickStorage; the upper bound mirrors MaxBidPriceLib.
-        // Minimums first, so the modulo cannot divide by zero.
-        if (cfg.tickSpacingQ96 < MIN_TICK_SPACING_Q96 || cfg.floorPriceQ96 < MIN_FLOOR_PRICE_Q96) {
-            revert PriceUnderMinimum(cfg.tickSpacingQ96, cfg.floorPriceQ96);
-        }
-        if (cfg.floorPriceQ96 % cfg.tickSpacingQ96 != 0) {
-            revert FloorNotAtTickBoundary(cfg.floorPriceQ96, cfg.tickSpacingQ96);
-        }
-        uint256 maxBid = _maxBidPrice();
-        if (cfg.tickSpacingQ96 > maxBid || cfg.floorPriceQ96 > maxBid - cfg.tickSpacingQ96) {
-            revert PriceOverMaxBid(cfg.tickSpacingQ96, cfg.floorPriceQ96, maxBid);
         }
     }
 
@@ -264,16 +192,17 @@ contract LaunchBwsCca is Script {
         });
     }
 
-    /// @notice The migration parameters this launch commits to. One full-range position (the
+    /// @notice The migration parameters this launch commits to: one full-range position (the
     ///         planner's MIN/MAX sentinel) minted to the locker, 100% of the raise as LP budget,
-    ///         excess on either side swept to `recipient` - the reference-launch configuration.
+    ///         excess on either side swept to `recipient`.
     function buildMigratorParameters(
         LaunchConfig memory cfg
     ) public view returns (ILBPStrategy.MigratorParameters memory) {
+        // The (MIN_TICK, MAX_TICK) offset pair is the position planner's full-range sentinel.
         ILBPStrategy.PositionDefinition[] memory defs = new ILBPStrategy.PositionDefinition[](1);
         defs[0] = ILBPStrategy.PositionDefinition({
-            offsetLower: MIN_TICK,
-            offsetUpper: MAX_TICK,
+            offsetLower: TickMath.MIN_TICK,
+            offsetUpper: TickMath.MAX_TICK,
             weight: MPS,
             overridePositionRecipient: address(0) // default recipient = positionRecipient = the locker
         });
@@ -288,8 +217,6 @@ contract LaunchBwsCca is Script {
             reservedTokenAmountForLP: LP_RESERVE,
             recipient: cfg.recipient,
             positionRecipient: cfg.lpLocker,
-            // Read live from the voter: options 2/3/4 trade through the pool key built from these
-            // immutables, so a divergent launch would strand governance on a nonexistent pool.
             poolParameters: ILBPStrategy.PoolParameters({
                 fee: voter.POOL_FEE(),
                 tickSpacing: voter.POOL_TICK_SPACING(),
@@ -298,13 +225,6 @@ contract LaunchBwsCca is Script {
             positionDefinitions: abi.encode(defs),
             lpAllocationSchedule: abi.encode(brackets)
         });
-    }
-
-    /// @notice The full `Distribution.configData`: abi.encode(MigratorParameters, abi.encode(AuctionParameters)).
-    function buildConfigData(
-        LaunchConfig memory cfg
-    ) public view returns (bytes memory) {
-        return abi.encode(buildMigratorParameters(cfg), abi.encode(buildAuctionParameters(cfg)));
     }
 
     /// @notice Predicts the auction (initializer) address the strategy will deploy, replicating the
@@ -327,34 +247,23 @@ contract LaunchBwsCca is Script {
             );
     }
 
-    /// @notice Reverts unless the launch actually produced the predicted, correctly-wired,
-    ///         strategy-registered auction. In `run()` this executes on the post-broadcast
-    ///         simulation state, so a mis-encoding aborts before anything is sent.
+    /// @notice Post-simulation check that the launch produced the predicted auction. The strategy
+    ///         already validates token, currency and fundsRecipient at creation; what's left is
+    ///         that the prediction matched (ops acts on the printed address), the auction is
+    ///         registered so migrate() can run, and the unsold supply drains to the burner.
     function verifyLaunch(
         LaunchConfig memory cfg,
         address predicted
     ) public view {
         if (predicted.code.length == 0) revert AuctionNotDeployed(predicted);
-        ICcaAuctionIntrospect auction = ICcaAuctionIntrospect(predicted);
-        if (auction.token() != cfg.bws) revert AuctionTokenMismatch(auction.token(), cfg.bws);
-        if (auction.currency() != address(0)) revert AuctionCurrencyNotNative(auction.currency());
-        if (auction.tokensRecipient() != cfg.burner) {
-            revert AuctionTokensRecipientMismatch(auction.tokensRecipient(), cfg.burner);
-        }
-        if (auction.fundsRecipient() != cfg.strategy) {
-            revert AuctionFundsRecipientMismatch(auction.fundsRecipient(), cfg.strategy);
-        }
-        if (auction.totalSupply() != ArbitrumConfig.CCA_AUCTION_SUPPLY) {
-            revert AuctionSupplyMismatch(auction.totalSupply(), ArbitrumConfig.CCA_AUCTION_SUPPLY);
-        }
-        // Registered with the strategy; an auction it never registered cannot be migrated.
+        address tokensRecipient = ICcaAuctionIntrospect(predicted).tokensRecipient();
+        if (tokensRecipient != cfg.burner) revert AuctionTokensRecipientMismatch(tokensRecipient, cfg.burner);
         if (ILBPStrategy(cfg.strategy).initializers(predicted).migrationBlock != cfg.migrationBlock) {
             revert InitializerNotRegisteredWithStrategy(predicted);
         }
     }
 
-    /// @dev Funds and creates in one atomic multicall (see contract NatSpec). Both approvals are
-    ///      exact-sized and consumed to zero by the deposit.
+    /// @dev Deposit and distribute in one multicall
     function _execute(
         LaunchConfig memory cfg
     ) internal {
@@ -363,46 +272,16 @@ contract LaunchBwsCca is Script {
         IPermit2(permit2)
             .approve(cfg.bws, cfg.launcher, uint160(ArbitrumConfig.CCA_BUCKET), uint48(block.timestamp + 1 days));
 
+        // configData = abi.encode(MigratorParameters, abi.encode(AuctionParameters)).
         ILiquidityLauncher.Distribution memory distribution = ILiquidityLauncher.Distribution({
-            strategy: cfg.strategy, amount: uint128(ArbitrumConfig.CCA_BUCKET), configData: buildConfigData(cfg)
+            strategy: cfg.strategy,
+            amount: uint128(ArbitrumConfig.CCA_BUCKET),
+            configData: abi.encode(buildMigratorParameters(cfg), abi.encode(buildAuctionParameters(cfg)))
         });
         bytes[] memory calls = new bytes[](2);
         calls[0] = abi.encodeCall(ILiquidityLauncher.depositToken, (cfg.bws, uint160(ArbitrumConfig.CCA_BUCKET)));
         calls[1] = abi.encodeCall(ILiquidityLauncher.distributeToken, (cfg.bws, distribution, cfg.salt));
         ILiquidityLauncher(cfg.launcher).multicall(calls);
-    }
-
-    /// @dev Steps encoding check, mirroring StepStorage._validate: 8 bytes per step, no zero
-    ///      deltas, mps*delta sums to exactly 1e7, and the deltas span exactly start..end.
-    function _checkSteps(
-        LaunchConfig memory cfg
-    ) internal pure {
-        bytes memory steps = cfg.auctionStepsData;
-        if (steps.length == 0 || steps.length % STEP_BYTES != 0) revert StepDataLengthInvalid(steps.length);
-        uint256 sumMps;
-        uint256 sumDelta;
-        for (uint256 o = 0; o < steps.length; o += STEP_BYTES) {
-            uint256 mps =
-                (uint256(uint8(steps[o])) << 16) | (uint256(uint8(steps[o + 1])) << 8) | uint256(uint8(steps[o + 2]));
-            uint256 delta = (uint256(uint8(steps[o + 3])) << 32) | (uint256(uint8(steps[o + 4])) << 24)
-                | (uint256(uint8(steps[o + 5])) << 16) | (uint256(uint8(steps[o + 6])) << 8)
-                | uint256(uint8(steps[o + 7]));
-            if (delta == 0) revert StepBlockDeltaZero(o / STEP_BYTES);
-            sumMps += mps * delta;
-            sumDelta += delta;
-        }
-        if (sumMps != MPS) revert StepMpsSumWrong(sumMps);
-        if (uint256(cfg.startBlock) + sumDelta != cfg.endBlock) {
-            revert StepSpanMismatch(uint256(cfg.startBlock) + sumDelta, cfg.endBlock);
-        }
-    }
-
-    /// @dev MaxBidPriceLib.maxBidPrice for the fixed 219,466e18 auction supply: min of the
-    ///      liquidity bound (2^154/supply)^2 and the int128 currency bound 2^222/supply.
-    function _maxBidPrice() internal pure returns (uint256) {
-        uint256 liquidityBound = ((uint256(1) << 154) / ArbitrumConfig.CCA_AUCTION_SUPPLY) ** 2;
-        uint256 currencyBound = (uint256(1) << 222) / ArbitrumConfig.CCA_AUCTION_SUPPLY;
-        return liquidityBound < currencyBound ? liquidityBound : currencyBound;
     }
 
     function _configFromEnv(
