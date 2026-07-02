@@ -10,14 +10,16 @@ Launch BWS through Uniswap's **LiquidityLauncher + LBPStrategy** so unsold BWS b
    BWS_TOKEN=<bws> CCA_REQUIRED_CURRENCY_RAISED=<threshold_wei> \
      forge script script/bws/05_DeployUnsoldBurner.s.sol --rpc-url $ARB_RPC --broadcast
    ```
-3. **Launch** from the wallet holding 438,932 BWS:
+3. **Launch** via script `06`, from the wallet holding 438,932 BWS:
    ```
-   BWS.approve(LiquidityLauncher, 438_932e18)
-   LiquidityLauncher.depositToken(BWS, 438_932e18)
-   LiquidityLauncher.distributeToken(BWS, Distribution({ strategy: LBPStrategy, amount: 438_932e18,
-     configData: abi.encode(MigratorParameters, abi.encode(AuctionParameters)) }), salt)
+   DEPLOYER_PRIVATE_KEY=<bucket wallet> BWS_TOKEN=<bws> GOVERNANCE_VOTER=<voter> LP_LOCKER=<locker> \
+     UNSOLD_BURNER=<burner> LAUNCH_RECIPIENT=<treasury> \
+     CCA_START_BLOCK=<L2 block> CCA_END_BLOCK=<L2 block> CCA_CLAIM_BLOCK=<L2 block> CCA_MIGRATION_BLOCK=<L2 block> \
+     CCA_TICK_SPACING_Q96=<q96> CCA_FLOOR_PRICE_Q96=<q96> CCA_REQUIRED_CURRENCY_RAISED=<threshold_wei> \
+     CCA_AUCTION_STEPS=<0x-packed steps> \
+     forge script script/bws/06_LaunchBwsCca.s.sol --rpc-url $ARB_RPC --broadcast
    ```
-   The strategy creates + registers the CCA (auction bucket 219,466, LP reserve 219,466) and emits the auction (initializer) address — record it.
+   The script sanity-checks the whole wiring (bucket balance, burner/locker/voter, block ordering, step schedule, Q96 price bounds), funds the launcher via Permit2 and batches `depositToken` + `distributeToken` in ONE `multicall` (the launcher has no per-depositor accounting — tokens parked between separate txs are distributable by anyone). The strategy creates + registers the CCA (auction bucket 219,466, LP reserve 219,466); the script prints the CREATE2-predicted auction (initializer) address and verifies the simulated post-state against it — **record it**. Block fields are ArbSys L2 block numbers; prices are Q96 (`wei-per-wei ratio << 96`); steps pack `uint24 mps + uint40 blockDelta` per 8 bytes, with `mps*delta` summing to 1e7 and the deltas spanning exactly `start..end`.
 4. **Migrate** — after `endBlock`/`migrationBlock`, someone must call `LBPStrategy.migrate(initializer)`. It's permissionless but nothing automates it; it sweeps the raise, initializes the pool, mints the LP to `LPLocker`, and emits `Migrated`. Nothing exists (pool, LP, event) before this call.
 5. **Wire governance** from the migrate tx:
    - **Hook** — `Migrated.key` is indexed, so read the hook from the same tx's PoolManager `Initialize` event (or `getPoolAndPositionInfo(tokenId)`), verify `keccak256(abi.encode(key))` matches the `Migrated` topic, then call the one-shot `GovernanceVoter.setPoolHooks(hook)`. Expect `address(0)` — or the LBPStrategy address, if the hookless pool was front-run and the strategy fell back to itself.
@@ -27,7 +29,7 @@ Launch BWS through Uniswap's **LiquidityLauncher + LBPStrategy** so unsold BWS b
 
 ## Key parameters
 
-`configData = abi.encode(MigratorParameters, abi.encode(AuctionParameters))`.
+`configData = abi.encode(MigratorParameters, abi.encode(AuctionParameters))` — script `06` builds and encodes all of this; the tables below are what it commits to.
 
 **AuctionParameters:**
 - `currency` = `address(0)` (native ETH raise)
@@ -42,9 +44,9 @@ Launch BWS through Uniswap's **LiquidityLauncher + LBPStrategy** so unsold BWS b
 - `reservedTokenAmountForLP` = `219_466e18`
 - `recipient` = controlled treasury/launch wallet — receives leftover currency + LP-reserve BWS, and the **entire** 219,466 back (not burned) on non-graduation or a failed migration
 - `positionRecipient` = `LPLocker`
-- `poolParameters.fee` = `10_000`, `tickSpacing` = `200` — **must** equal `GovernanceVoter.POOL_FEE`/`POOL_TICK_SPACING` (both immutable) or vote options 2/3 target a nonexistent pool
+- `poolParameters.fee` / `tickSpacing` — the script reads them live from `GovernanceVoter.POOL_FEE`/`POOL_TICK_SPACING` (both immutable, canonically `10_000`/`200`) or vote options 2/3/4 would target a nonexistent pool
 - `poolParameters.hook` = `address(0)` — read the real hook post-migrate (step 5)
-- keep `positionDefinitions` without `overridePositionRecipient` so everything lands in the locker
+- `positionDefinitions` = one full-range sentinel definition at 100% weight with no `overridePositionRecipient` (everything lands in the locker); `lpAllocationSchedule` = a single `{0, 1e7}` bracket (100% of the raise to LP, excess on either side swept to `recipient`)
 
 ## Sweep semantics
 

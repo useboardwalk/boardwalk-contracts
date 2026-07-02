@@ -121,6 +121,7 @@ BWS migration (Arbitrum, see `script/bws/CCA_LAUNCH_RUNBOOK.md` for the full ord
 forge script script/bws/01_DeployBWS.s.sol --rpc-url $ARB_RPC --broadcast           # token + genesis buckets
 forge script script/bws/02_DeployBwsGovernance.s.sol --rpc-url $ARB_RPC --broadcast # voter + locker + distributor
 forge script script/bws/05_DeployUnsoldBurner.s.sol --rpc-url $ARB_RPC --broadcast  # before the CCA launch
+forge script script/bws/06_LaunchBwsCca.s.sol --rpc-url $ARB_RPC --broadcast        # the CCA launch (LiquidityLauncher, never the raw factory)
 forge script script/bws/03_DeployBwsMigration.s.sol --rpc-url $ARB_RPC --broadcast  # root before funding
 forge script script/bws/04_AssertBwsDeploy.s.sol --rpc-url $ARB_RPC                 # go-live gate, reverts on any mis-wiring
 ```
