@@ -2,6 +2,7 @@ import { type Address, type PublicClient } from "viem";
 import { clientFor, ERC20_ABI } from "./clients.js";
 import {
   BMX_ADDRESS,
+  MULTICALL3_ADDRESS,
   multicallBatchSize,
   snapshotBlock,
   type ChainKey,
@@ -57,6 +58,8 @@ async function multicallBalanceOf(
   const results = await client.multicall({
     blockNumber,
     allowFailure: false,
+    // The client has no `chain` object, so viem cannot resolve Multicall3 on its own.
+    multicallAddress: MULTICALL3_ADDRESS,
     contracts: accounts.map((account) => ({
       address: token,
       abi: ERC20_ABI,

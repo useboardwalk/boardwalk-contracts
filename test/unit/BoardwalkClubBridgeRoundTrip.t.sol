@@ -59,12 +59,12 @@ contract LoopbackCCIPRouter {
         IAny2EVMMessageReceiver(abi.decode(message.receiver, (address)))
             .ccipReceive(
                 Client.Any2EVMMessage({
-                    messageId: messageId,
-                    sourceChainSelector: chainOf[msg.sender],
-                    sender: abi.encode(msg.sender),
-                    data: message.data,
-                    destTokenAmounts: new Client.EVMTokenAmount[](0)
-                })
+                messageId: messageId,
+                sourceChainSelector: chainOf[msg.sender],
+                sender: abi.encode(msg.sender),
+                data: message.data,
+                destTokenAmounts: new Client.EVMTokenAmount[](0)
+            })
             );
     }
 }

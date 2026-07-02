@@ -49,12 +49,13 @@ export const REWARD_TRACKER_ABI = [
 ] as const satisfies Abi;
 
 /**
- * Build a public client for a chain. We deliberately do NOT pass a `chain` object — the pipeline
- * only needs raw JSON-RPC reads, and avoiding the viem chain registry keeps Katana (and any
- * non-registered chain) working from a bare RPC URL.
- *
- * `batch.multicall` lets viem fold individual contract reads into Multicall3 calls automatically,
- * but we also use explicit `multicall` for the bulk balance reads.
+ * Build a public client for a chain. We do NOT pass a `chain` object — the pipeline only needs raw
+ * JSON-RPC reads, and avoiding the viem chain registry keeps Katana (and any non-registered chain)
+ * working from a bare RPC URL. The trade-offs of a chain-less client:
+ *  - explicit `client.multicall` calls must pass `multicallAddress: MULTICALL3_ADDRESS` (viem
+ *    otherwise resolves it from `chain.contracts`, which does not exist here);
+ *  - no client-level `batch.multicall` (same reason); the http transport's JSON-RPC batching
+ *    still folds concurrent reads into one request.
  */
 export function clientFor(chain: ChainKey): PublicClient {
   return createPublicClient({
@@ -64,7 +65,6 @@ export function clientFor(chain: ChainKey): PublicClient {
       retryDelay: 250,
       timeout: 30_000,
     }),
-    batch: { multicall: { wait: 16 } },
   });
 }
 

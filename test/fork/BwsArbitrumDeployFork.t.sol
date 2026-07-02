@@ -161,7 +161,9 @@ contract BwsArbitrumDeployForkTest is Test {
             stakingGov: address(this),
             auction: address(0), // no live BWS auction on the fork; run() warns when skipped
             burner: address(0),
-            lpLocker: address(lpLocker),
+            // Pre-launch stage: no CCA position exists to register (A-9), so the locker section
+            // is skipped here; BwsDeployAssertion.t.sol covers A-5..A-9 with doubles.
+            lpLocker: address(0),
             totalMigratableBmx: ArbitrumConfig.MIGRATION_POOL,
             expectedTrackerCodehash: address(staked).codehash,
             expectedBnTokenCodehash: address(bnBws).codehash,

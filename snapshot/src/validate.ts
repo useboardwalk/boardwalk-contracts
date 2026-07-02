@@ -229,18 +229,14 @@ async function nonMigratableBmx(chain: ChainKey, block: bigint): Promise<bigint>
   const client = clientFor(chain);
   let sum = 0n;
   for (const addr of [DEAD_ADDRESS, ZERO_ADDRESS, ...(LOCKED_BMX_HOLDERS[chain] ?? [])]) {
-    try {
-      const bal = (await client.readContract({
-        address: BMX_ADDRESS[chain],
-        abi: ERC20_ABI,
-        functionName: "balanceOf",
-        args: [addr],
-        blockNumber: block,
-      })) as bigint;
-      sum += bal;
-    } catch {
-      // ignore unreadable addresses
-    }
+    // No try/catch: a failed read must abort the run, not silently skew the deduction.
+    sum += (await client.readContract({
+      address: BMX_ADDRESS[chain],
+      abi: ERC20_ABI,
+      functionName: "balanceOf",
+      args: [addr],
+      blockNumber: block,
+    })) as bigint;
   }
   return sum;
 }

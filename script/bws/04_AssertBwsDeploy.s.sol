@@ -142,6 +142,7 @@ contract AssertBwsDeploy is Script {
     error A6_RegistrarNotRenounced(address registrar);
     error A7_LockerWiringMismatch();
     error A8_LockerNotVoterPeer(address voterLocker, address cfgLocker);
+    error A9_NoPositionsRegistered();
     error AuctionBurnerEnvPairIncomplete(address auction, address burner);
     error WrongChain(uint256 chainId);
 
@@ -473,6 +474,9 @@ contract AssertBwsDeploy is Script {
             if (!voter.peersInitialized() || voter.lpLocker() != cfg.lpLocker) {
                 revert A8_LockerNotVoterPeer(voter.lpLocker(), cfg.lpLocker);
             }
+            // A renounced registrar with nothing registered means the CCA positions were never
+            // locked in - their fees are unclaimable forever once the registrar is gone.
+            if (locker.getLockedPositions().length == 0) revert A9_NoPositionsRegistered();
         }
     }
 }

@@ -9,6 +9,7 @@ import {UnsoldBurner} from "src/token/UnsoldBurner.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
+import {IV4PositionManager} from "src/interfaces/IV4PositionManager.sol";
 import {AssertBwsDeploy} from "script/bws/04_AssertBwsDeploy.s.sol";
 import {ArbitrumConfig} from "script/bws/ArbitrumConfig.sol";
 import {
@@ -18,6 +19,31 @@ import {
     MockMintableERC20
 } from "test/bws/MockMorphexStaking.sol";
 import {MockCcaAuction} from "test/bws/UnsoldBurnerMocks.sol";
+
+/// @dev Minimal v4 PositionManager double: just enough for the locker's registration path.
+contract MockPmForGate {
+    mapping(uint256 => address) public ownerOf;
+    IV4PositionManager.PoolKey internal key;
+
+    constructor(
+        IV4PositionManager.PoolKey memory _key
+    ) {
+        key = _key;
+    }
+
+    function mint(
+        address to,
+        uint256 id
+    ) external {
+        ownerOf[id] = to;
+    }
+
+    function getPoolAndPositionInfo(
+        uint256
+    ) external view returns (IV4PositionManager.PoolKey memory, uint256) {
+        return (key, 0);
+    }
+}
 
 /// @title BwsDeployAssertionTest
 /// @notice Non-fork coverage of the go-live gate `AssertBwsDeploy.assertAll`: a correctly wired
@@ -37,6 +63,7 @@ contract BwsDeployAssertionTest is Test {
     LPLocker internal lpLocker;
     UnsoldBurner internal burner;
     MockCcaAuction internal auction;
+    MockPmForGate internal pm;
 
     address internal escrow = makeAddr("escrow");
     address internal timelock = makeAddr("timelock");
@@ -55,6 +82,15 @@ contract BwsDeployAssertionTest is Test {
         bws = new BWS(escrow, makeAddr("ccipAdmin"));
 
         bmx = new MockMintableERC20("BMX", "BMX");
+        pm = new MockPmForGate(
+            IV4PositionManager.PoolKey({
+                currency0: address(0),
+                currency1: address(bws),
+                fee: ArbitrumConfig.POOL_FEE,
+                tickSpacing: ArbitrumConfig.POOL_TICK_SPACING,
+                hooks: address(0)
+            })
+        );
         staked = new MockRewardTrackerFull("Staked BWS", "sBWS");
         bonus = new MockRewardTrackerFull("Bonus BWS", "snBWS");
         fee = new MockRewardTrackerFull("Staked + Bonus + Fee BWS", "sbfBWS");
@@ -82,7 +118,7 @@ contract BwsDeployAssertionTest is Test {
                 bmx: address(bws),
                 weth: makeAddr("weth"),
                 universalRouter: makeAddr("router"),
-                v4PositionManager: makeAddr("pm"),
+                v4PositionManager: address(pm),
                 treasury: makeAddr("treasury"),
                 fallbackTreasury: makeAddr("fallback"),
                 epochZero: block.timestamp,
@@ -115,12 +151,15 @@ contract BwsDeployAssertionTest is Test {
         _wireStakingForMigrator();
 
         // Post-launch wiring the gate's A-section checks: hook committed, locker wired as the
-        // voter's registered peer + registrar renounced, burner + auction bound to this BWS with
-        // the auction bucket offered.
+        // voter's registered peer with the launch position registered + registrar renounced,
+        // burner + auction bound to this BWS with the auction bucket offered.
         voter.setPoolHooks(address(0));
-        lpLocker = new LPLocker(makeAddr("pm"), address(voter), address(0), address(bws), lpRegistrar);
+        lpLocker = new LPLocker(address(pm), address(voter), address(0), address(bws), lpRegistrar);
         ParticipationDistributor pd = new ParticipationDistributor(address(bws), address(voter));
         voter.initializePeers(address(lpLocker), address(pd), makeAddr("feeCollector"));
+        pm.mint(address(lpLocker), 1);
+        vm.prank(lpRegistrar);
+        lpLocker.registerPosition(1);
         vm.prank(lpRegistrar);
         lpLocker.renounceRegistrar();
         burner = new UnsoldBurner(address(bws));
@@ -691,7 +730,7 @@ contract BwsDeployAssertionTest is Test {
     function test_RevertWhen_A8_LockerNotVoterPeer() public {
         // A perfectly-wired locker that is NOT the voter's registered peer still fails: option-3
         // locks and revenue routing hang off initializePeers.
-        LPLocker lockerNotPeer = new LPLocker(makeAddr("pm"), address(voter), address(0), address(bws), lpRegistrar);
+        LPLocker lockerNotPeer = new LPLocker(address(pm), address(voter), address(0), address(bws), lpRegistrar);
         vm.prank(lpRegistrar);
         lockerNotPeer.renounceRegistrar();
         AssertBwsDeploy.Config memory cfg = _cfg();
@@ -701,6 +740,59 @@ contract BwsDeployAssertionTest is Test {
                 AssertBwsDeploy.A8_LockerNotVoterPeer.selector, address(lpLocker), address(lockerNotPeer)
             )
         );
+        gate.assertAll(cfg);
+    }
+
+    function test_RevertWhen_A9_NoPositionsRegistered() public {
+        // A fully-wired stack whose registrar renounced WITHOUT registering the launch position:
+        // the fees of every unregistered position are unclaimable forever.
+        GovernanceVoter voter2 = new GovernanceVoter(
+            address(this),
+            GovernanceVoter.DeployParams({
+                sbfBmx: address(fee),
+                stakedBmxTracker: address(staked),
+                bnBmx: address(bnBws),
+                bmx: address(bws),
+                weth: makeAddr("weth"),
+                universalRouter: makeAddr("router"),
+                v4PositionManager: address(pm),
+                treasury: makeAddr("treasury"),
+                fallbackTreasury: makeAddr("fallback"),
+                epochZero: block.timestamp,
+                epochDuration: 7 days,
+                poolFee: ArbitrumConfig.POOL_FEE,
+                poolTickSpacing: ArbitrumConfig.POOL_TICK_SPACING,
+                poolHooks: address(0),
+                keeper: keeper
+            })
+        );
+        voter2.setPoolHooks(address(0));
+        BwsMigration m = new BwsMigration(
+            timelock,
+            address(bmx),
+            address(bws),
+            address(staked),
+            address(bonus),
+            address(fee),
+            address(bnBws),
+            address(voter2),
+            deadline
+        );
+        deal(address(bws), address(m), ArbitrumConfig.MIGRATION_POOL);
+        _wireMigrator(address(m));
+        vm.prank(timelock);
+        m.setMerkleRoot(keccak256("root"));
+        LPLocker locker2 = new LPLocker(address(pm), address(voter2), address(0), address(bws), lpRegistrar);
+        ParticipationDistributor pd2 = new ParticipationDistributor(address(bws), address(voter2));
+        voter2.initializePeers(address(locker2), address(pd2), makeAddr("feeCollector"));
+        vm.prank(lpRegistrar);
+        locker2.renounceRegistrar();
+
+        AssertBwsDeploy.Config memory cfg = _cfg();
+        cfg.voter = address(voter2);
+        cfg.migrator = address(m);
+        cfg.lpLocker = address(locker2);
+        vm.expectRevert(AssertBwsDeploy.A9_NoPositionsRegistered.selector);
         gate.assertAll(cfg);
     }
 

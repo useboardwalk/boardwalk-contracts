@@ -61,6 +61,12 @@ export const BASE_STAKING = {
   bnBMX: getAddress("0x10AB197551BAB91f8B218dC9730AE0e43d893Db2"),
 } as const;
 
+/** Canonical Multicall3, same address on all six chains. Needed explicitly because the clients are
+ *  built without a viem `chain` object (see clients.ts). */
+export const MULTICALL3_ADDRESS = getAddress(
+  "0xcA11bde05977b3631167028862bE2a173976CA11",
+);
+
 /** Burn / dead address — always excluded. */
 export const DEAD_ADDRESS = getAddress(
   "0x000000000000000000000000000000000000dEaD",

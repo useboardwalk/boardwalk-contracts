@@ -3,6 +3,7 @@ import { clientFor, REWARD_TRACKER_ABI } from "./clients.js";
 import {
   BASE_STAKING,
   BMX_ADDRESS,
+  MULTICALL3_ADDRESS,
   multicallBatchSize,
   snapshotBlock,
 } from "./config.js";
@@ -84,6 +85,8 @@ async function multicallDepositBalances(
   const results = await client.multicall({
     blockNumber,
     allowFailure: false,
+    // The client has no `chain` object, so viem cannot resolve Multicall3 on its own.
+    multicallAddress: MULTICALL3_ADDRESS,
     contracts: pairs.map(([account, depositToken]) => ({
       address: tracker,
       abi: REWARD_TRACKER_ABI,

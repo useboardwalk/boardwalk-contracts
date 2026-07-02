@@ -78,12 +78,12 @@ contract MockCCIPRouter {
         IAny2EVMMessageReceiver(target)
             .ccipReceive(
                 Client.Any2EVMMessage({
-                    messageId: messageId,
-                    sourceChainSelector: sourceChainSelector,
-                    sender: abi.encode(sender),
-                    data: data,
-                    destTokenAmounts: new Client.EVMTokenAmount[](0)
-                })
+                messageId: messageId,
+                sourceChainSelector: sourceChainSelector,
+                sender: abi.encode(sender),
+                data: data,
+                destTokenAmounts: new Client.EVMTokenAmount[](0)
+            })
             );
     }
 }

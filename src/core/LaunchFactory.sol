@@ -320,21 +320,21 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         IFeeDistributor(feeDistributorAddr)
             .initialize(
                 IFeeDistributor.InitParams({
-                    token: tokenAddr,
-                    lpStaking: lpStakingAddr,
-                    feeCollector: boardwalkFeeCollector,
-                    integratorCollector: INTEGRATOR_COLLECTOR,
-                    router: BOARDWALK_ROUTER,
-                    raiseToken: RAISE_TOKEN,
-                    issuerRecipients: config.issuerFeeRecipients,
-                    issuerSplits: config.issuerFeeSplits,
-                    referrer: config.referrer,
-                    issuerBps: feeBps.issuer,
-                    boardwalkBps: effectiveBoardwalkBps,
-                    lpIncentiveBps: feeBps.incentive,
-                    referrerBps: effectiveReferrerBps,
-                    integratorBps: INTEGRATOR_BPS
-                })
+                token: tokenAddr,
+                lpStaking: lpStakingAddr,
+                feeCollector: boardwalkFeeCollector,
+                integratorCollector: INTEGRATOR_COLLECTOR,
+                router: BOARDWALK_ROUTER,
+                raiseToken: RAISE_TOKEN,
+                issuerRecipients: config.issuerFeeRecipients,
+                issuerSplits: config.issuerFeeSplits,
+                referrer: config.referrer,
+                issuerBps: feeBps.issuer,
+                boardwalkBps: effectiveBoardwalkBps,
+                lpIncentiveBps: feeBps.incentive,
+                referrerBps: effectiveReferrerBps,
+                integratorBps: INTEGRATOR_BPS
+            })
             );
 
         uint256 presaleDuration;
