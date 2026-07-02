@@ -369,9 +369,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
         uint8 option = e.winningOption;
 
-        // Options 2/3/4 swap through the v4 pool key built from POOL_HOOKS; executing before the hook
-        // is committed would target a front-runnable hookless pool. (Epoch 0 can never win option 4 —
-        // it is forced to treasury — so its swapless option-4 branch is unreachable anyway.)
+        // Options 2/3/4 swap through the v4 pool key built from POOL_HOOKS;
         // `forceMarkExecuted` remains the escape hatch for a budget stuck behind an uncommitted hook.
         if (
             (option == OPTION_BUY_BURN_BMX || option == OPTION_BUY_BURN_LP || option == OPTION_PARTICIPATION)
