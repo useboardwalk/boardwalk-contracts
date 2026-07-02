@@ -25,12 +25,7 @@ interface ICcaAuctionIntrospect {
 /// @title LaunchBwsCca - Launch the 438,932 BWS market-formation bucket through Uniswap's CCA
 /// @notice From the wallet holding the bucket, deposit + distribute through the LiquidityLauncher
 ///         so the LBPStrategy creates and registers the auction (auction half = 219,466 BWS; the
-///         other 219,466 is the LP reserve). Never the raw CCA factory: an auction the factory
-///         creates directly is not in `LBPStrategy._initializers`, so `migrate()` reverts
-///         `InitializerNotRegistered` and a graduated raise is stuck forever (the strategy is the
-///         only address the auction lets call `sweepCurrency`). After broadcasting, prints the
-///         predicted auction address and the post-launch steps (migrate, hook commit, position
-///         registration, unsold burn, go-live gate).
+///         other 219,466 is the LP reserve).
 /// @dev    Deposit and distribute are batched in one `multicall` tx: the launcher keeps no
 ///         per-depositor accounting, so tokens parked between separate txs could be distributed by
 ///         anyone. Funding moves via Permit2 (ERC20 approve to Permit2 + a Permit2 allowance for
