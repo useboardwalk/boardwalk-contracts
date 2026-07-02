@@ -62,7 +62,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
     uint24 public immutable POOL_FEE;
     int24 public immutable POOL_TICK_SPACING;
-    address public immutable POOL_HOOKS;
+    
+    address public POOL_HOOKS;
 
     struct EpochInfo {
         uint256 snapshotTotalWeight;
@@ -90,6 +91,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     address public participationDistributor;
     address public feeCollector;
     bool public peersInitialized;
+    bool public poolHooksSet;
 
     mapping(uint256 => uint256) public epochRevenue;
     mapping(uint256 => uint256) public finalizedAt;
@@ -131,6 +133,8 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     error PeerWiringMismatch();
     error PeersNotInitialized();
     error NotFeeCollector();
+    error PoolHooksAlreadySet();
+    error PoolHooksNotSet();
 
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
@@ -144,6 +148,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
     event RevenueDeposited(uint256 indexed epoch, uint256 amount);
     event FeeCollectorChanged(address oldFeeCollector, address newFeeCollector);
+    event PoolHooksSet(address poolHooks);
 
     struct DeployParams {
         address sbfBmx;
@@ -179,6 +184,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         POOL_FEE = p.poolFee;
         POOL_TICK_SPACING = p.poolTickSpacing;
         POOL_HOOKS = p.poolHooks;
+        if (p.poolHooks != address(0)) poolHooksSet = true;
 
         if (p.treasury == address(0)) revert ZeroAddress();
         treasury = p.treasury;
@@ -225,6 +231,16 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         emit PeersInitialized(_lpLocker, _participationDistributor, _feeCollector);
     }
 
+    /// @notice Set the v4 pool hook once.
+    function setPoolHooks(
+        address poolHooks
+    ) external onlyOwner {
+        if (poolHooksSet) revert PoolHooksAlreadySet();
+        poolHooksSet = true;
+        POOL_HOOKS = poolHooks;
+        emit PoolHooksSet(poolHooks);
+    }
+
     /// @notice Pull `amount` WETH from `feeCollector` and credit it to the current epoch's
     ///         revenue bucket. Caller must have pre-approved this contract for `amount`.
     function depositRevenue(
@@ -238,7 +254,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
     }
 
     /// @notice Cast a vote for the current epoch. Advance voting: vote in epoch N directs fees for epoch N+1.
-    ///         Options: 1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation.
+    /// @param option 1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation.
     function vote(
         uint8 option
     ) external {
@@ -283,8 +299,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         emit Voted(epoch, msg.sender, option, weight);
     }
 
-    /// @notice Finalize an epoch after it ends. Re-validates prior-epoch voters in batches; call
-    ///         repeatedly until `validationCursor[epoch-1]` reaches the end.
+    /// @notice Finalize an epoch after it ends. Revalidates prior epoch voters in batches.
     function finalize(
         uint256 epoch,
         uint256 maxBatch
@@ -353,6 +368,17 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         }
 
         uint8 option = e.winningOption;
+
+        // Options 2/3/4 swap through the v4 pool key built from POOL_HOOKS; executing before the hook
+        // is committed would target a front-runnable hookless pool. (Epoch 0 can never win option 4 —
+        // it is forced to treasury — so its swapless option-4 branch is unreachable anyway.)
+        // `forceMarkExecuted` remains the escape hatch for a budget stuck behind an uncommitted hook.
+        if (
+            (option == OPTION_BUY_BURN_BMX || option == OPTION_BUY_BURN_LP || option == OPTION_PARTICIPATION)
+                && !poolHooksSet
+        ) {
+            revert PoolHooksNotSet();
+        }
 
         if (option == OPTION_TREASURY) {
             address _treasury = treasury;
@@ -625,7 +651,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
         IWETH(WETH).withdraw(amountIn);
 
-        // zeroForOne=true: ETH is currency0 (address(0) sorts below BMX).
+        // zeroForOne=true: ETH is currency0.
         bytes memory swapActions =
             abi.encodePacked(uint8(Actions.SWAP_EXACT_IN_SINGLE), uint8(Actions.SETTLE), uint8(Actions.TAKE_ALL));
         bytes[] memory swapParams = new bytes[](3);
@@ -661,7 +687,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
         IERC20(BMX).safeTransfer(DEAD_ADDRESS, bmxReceived);
     }
 
-    /// @dev Mints an ETH/BMX v4 LP position by calling PositionManager directly.
+    /// @dev Mints a v4 LP position by calling PositionManager directly.
     function _executeBuyBurnLp(
         uint256 raiseAmount,
         uint256 amountOutMin,

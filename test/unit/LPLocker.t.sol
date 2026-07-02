@@ -3,6 +3,7 @@ pragma solidity =0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
+import {IV4PositionManager} from "src/interfaces/IV4PositionManager.sol";
 
 /// @dev Mock PositionManager that accepts modifyLiquidities calls (replaces MockUniversalRouter)
 contract MockPositionManager {
@@ -10,6 +11,21 @@ contract MockPositionManager {
 
     // ERC721 support — needed for safeTransferFrom tests
     mapping(uint256 => address) public ownerOf;
+
+    // Pool key returned for registered positions (defaults to the locker's currencies in setUp).
+    address public poolC0;
+    address public poolC1;
+
+    function setPool(address c0, address c1) external {
+        poolC0 = c0;
+        poolC1 = c1;
+    }
+
+    function getPoolAndPositionInfo(
+        uint256
+    ) external view returns (IV4PositionManager.PoolKey memory, uint256) {
+        return (IV4PositionManager.PoolKey(poolC0, poolC1, 0, 0, address(0)), 0);
+    }
 
     function mint(address to, uint256 tokenId) external {
         ownerOf[tokenId] = to;
@@ -41,9 +57,14 @@ contract MockPositionManager {
     }
 }
 
-/// @dev Mock GovernanceVoter that returns a treasury address
+/// @dev Mock GovernanceVoter: treasury for claims + the pool params registerPosition pins against.
+///      Defaults (0, 0, address(0)) match MockPositionManager's fixed key.
 contract MockGovernanceVoterForLocker {
     address public treasury;
+    uint24 public POOL_FEE;
+    int24 public POOL_TICK_SPACING;
+    address public POOL_HOOKS;
+    bool public poolHooksSet = true;
 
     constructor(address _treasury) {
         treasury = _treasury;
@@ -51,6 +72,16 @@ contract MockGovernanceVoterForLocker {
 
     function setTreasury(address _treasury) external {
         treasury = _treasury;
+    }
+
+    function setPoolParams(uint24 fee, int24 tickSpacing, address hooks) external {
+        POOL_FEE = fee;
+        POOL_TICK_SPACING = tickSpacing;
+        POOL_HOOKS = hooks;
+    }
+
+    function setPoolHooksSet(bool v) external {
+        poolHooksSet = v;
     }
 }
 
@@ -61,11 +92,13 @@ contract LPLockerTest is Test {
 
     address public treasury = makeAddr("treasury");
     address public alice = makeAddr("alice");
+    address public registrar = makeAddr("registrar");
     address public currency0 = makeAddr("currency0");
     address public currency1 = makeAddr("currency1");
 
     event LPLocked(uint256 indexed tokenId);
     event FeesClaimed(uint256 indexed tokenId);
+    event RegistrarRenounced(address indexed registrar);
 
     function setUp() public {
         positionManager = new MockPositionManager();
@@ -74,8 +107,11 @@ contract LPLockerTest is Test {
             address(positionManager),
             address(mockGovernanceVoter),
             currency0,
-            currency1
+            currency1,
+            registrar
         );
+        // Default: positions report the locker's pool so registerPosition's pool-key check passes.
+        positionManager.setPool(currency0, currency1);
     }
 
     // ============ NFT injection — onERC721Received removed ============
@@ -255,5 +291,158 @@ contract LPLockerTest is Test {
         vm.expectRevert(LPLocker.AlreadyLocked.selector);
         vm.prank(address(mockGovernanceVoter));
         locker.lockPosition(77);
+    }
+
+    // ============ registerPosition (CCA path) ============
+
+    function test_Registrar_InitialValue() public view {
+        assertEq(locker.registrar(), registrar);
+    }
+
+    function test_RegisterPosition_HappyPath() public {
+        positionManager.mint(address(locker), 123);
+
+        vm.expectEmit(true, true, true, true);
+        emit LPLocked(123);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+
+        assertTrue(locker.lockedPositions(123));
+        uint256[] memory ids = locker.getLockedPositions();
+        assertEq(ids.length, 1);
+        assertEq(ids[0], 123);
+    }
+
+    function test_RegisterPosition_ThenFeesClaimable() public {
+        positionManager.mint(address(locker), 123);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+
+        vm.expectEmit(true, true, true, true);
+        emit FeesClaimed(123);
+        locker.claimFees(123, block.timestamp);
+    }
+
+    function test_RevertWhen_RegisterPosition_NotRegistrar() public {
+        positionManager.mint(address(locker), 123);
+        vm.expectRevert(LPLocker.NotRegistrar.selector);
+        vm.prank(alice);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RegisterPosition_NotOwned() public {
+        // Position exists but is owned by alice, not the locker.
+        positionManager.mint(alice, 123);
+        vm.expectRevert(LPLocker.NotPositionOwner.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RegisterPosition_PoolMismatch() public {
+        positionManager.mint(address(locker), 123);
+        positionManager.setPool(makeAddr("otherC0"), makeAddr("otherC1"));
+        vm.expectRevert(LPLocker.PoolKeyMismatch.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RegisterPosition_FeeTierMismatch() public {
+        // Same currency pair, but the position's pool uses a different fee tier than the voter's.
+        positionManager.mint(address(locker), 123);
+        mockGovernanceVoter.setPoolParams(10_000, 0, address(0));
+        vm.expectRevert(LPLocker.PoolKeyMismatch.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RegisterPosition_TickSpacingMismatch() public {
+        positionManager.mint(address(locker), 123);
+        mockGovernanceVoter.setPoolParams(0, 200, address(0));
+        vm.expectRevert(LPLocker.PoolKeyMismatch.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RegisterPosition_HooksMismatch() public {
+        // Same pair + fee + tick, foreign hook: the hostile-hook pool that would brick claimAllFees.
+        positionManager.mint(address(locker), 123);
+        mockGovernanceVoter.setPoolParams(0, 0, makeAddr("foreignHook"));
+        vm.expectRevert(LPLocker.PoolKeyMismatch.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RegisterPosition_PoolHooksNotCommitted() public {
+        // Before setPoolHooks commits the voter's hook, the hook pin is vacuous - registration waits.
+        positionManager.mint(address(locker), 123);
+        mockGovernanceVoter.setPoolHooksSet(false);
+        vm.expectRevert(LPLocker.PoolHooksNotSet.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RegisterPosition_AlreadyLocked() public {
+        positionManager.mint(address(locker), 123);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+
+        vm.expectRevert(LPLocker.AlreadyLocked.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    /// @notice Junk NFTs plain-transferred in cannot be registered by a non-registrar, so an attacker
+    ///         cannot bloat `claimAllFees`. (Even the registrar would only register the real position.)
+    function test_RegisterPosition_JunkNotRegisterableByAttacker() public {
+        positionManager.mint(alice, 99);
+        vm.prank(alice);
+        positionManager.transferFrom(alice, address(locker), 99); // strands NFT (locker owns it)
+
+        // Attacker is not the registrar -> cannot register the stranded id.
+        vm.expectRevert(LPLocker.NotRegistrar.selector);
+        vm.prank(alice);
+        locker.registerPosition(99);
+
+        assertFalse(locker.lockedPositions(99));
+    }
+
+    // ============ renounceRegistrar ============
+
+    function test_RenounceRegistrar() public {
+        vm.expectEmit(true, true, true, true);
+        emit RegistrarRenounced(registrar);
+        vm.prank(registrar);
+        locker.renounceRegistrar();
+
+        assertEq(locker.registrar(), address(0));
+
+        // After renounce, registration is permanently disabled.
+        positionManager.mint(address(locker), 123);
+        vm.expectRevert(LPLocker.NotRegistrar.selector);
+        vm.prank(registrar);
+        locker.registerPosition(123);
+    }
+
+    function test_RevertWhen_RenounceRegistrar_NotRegistrar() public {
+        vm.expectRevert(LPLocker.NotRegistrar.selector);
+        vm.prank(alice);
+        locker.renounceRegistrar();
+    }
+
+    // ============ receive (native ETH from PositionManager during claimFees) ============
+
+    function test_Receive_FromPositionManager() public {
+        vm.deal(address(positionManager), 1 ether);
+        vm.prank(address(positionManager));
+        (bool ok,) = address(locker).call{value: 1 ether}("");
+        assertTrue(ok, "PositionManager ETH accepted");
+        assertEq(address(locker).balance, 1 ether);
+    }
+
+    function test_RevertWhen_Receive_NotPositionManager() public {
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        (bool ok,) = address(locker).call{value: 1 ether}("");
+        assertFalse(ok, "non-PositionManager ETH rejected");
     }
 }

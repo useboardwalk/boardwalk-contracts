@@ -174,7 +174,7 @@ contract GovernanceIntegrationTest is Test {
         (address c0, address c1) = address(bmx) < address(raiseToken)
             ? (address(bmx), address(raiseToken))
             : (address(raiseToken), address(bmx));
-        locker = new LPLocker(address(positionManager), address(voter), c0, c1);
+        locker = new LPLocker(address(positionManager), address(voter), c0, c1, address(this));
 
         // Deploy participation distributor pointed at voter
         participationDistributor = new MockParticipationDistributor(address(voter));
@@ -182,6 +182,10 @@ contract GovernanceIntegrationTest is Test {
         // Initialize peers
         vm.prank(owner);
         voter.initializePeers(address(locker), address(participationDistributor), feeCollector);
+
+        // Commit the (hookless) pool wiring: execute() blocks options 2/3/4 until the hook is set.
+        vm.prank(owner);
+        voter.setPoolHooks(address(0));
 
         // Setup default voter weights
         _setupVoter(alice, 1000e18);

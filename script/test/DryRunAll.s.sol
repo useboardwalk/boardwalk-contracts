@@ -151,7 +151,8 @@ contract DryRunAll is Script {
             v4PositionManager,
             address(governanceVoter),
             address(0),
-            bmx
+            bmx,
+            owner
         );
         console.log("LPLocker:", address(lpLocker));
 

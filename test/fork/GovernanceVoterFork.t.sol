@@ -65,8 +65,10 @@ contract GovernanceVoterForkTest is Test {
                 fallbackTreasury: treasury,
                 epochZero: block.timestamp,
                 epochDuration: 7 days,
-                poolFee: 3000,
-                poolTickSpacing: int24(60),
+                // The LIVE Base ETH/BMX v4 pool: hookless, 1% fee, tick spacing 200 (probed via
+                // StateView.getSlot0 - the once-configured 3000/60 pool was never initialized).
+                poolFee: 10_000,
+                poolTickSpacing: int24(200),
                 poolHooks: address(0),
                 keeper: keeper
             })
@@ -77,12 +79,15 @@ contract GovernanceVoterForkTest is Test {
             BASE_POSITION_MANAGER,
             address(voter),
             address(0),
-            BASE_BMX
+            BASE_BMX,
+            address(this)
         );
 
         pd = new ParticipationDistributor(BASE_BMX, address(voter));
 
         voter.initializePeers(address(locker), address(pd), makeAddr("feeCollector"));
+        // Commit the (hookless) pool wiring: execute() blocks options 2/3/4 until the hook is set.
+        voter.setPoolHooks(address(0));
         vm.stopPrank();
     }
 
@@ -242,20 +247,28 @@ contract GovernanceVoterForkTest is Test {
     /// @dev Drive the voter from epoch 0 through finalize+execute of an Option 3 winning
     ///      epoch (1). Returns the WETH budget assigned to epoch 1 so the caller can
     ///      assert against treasury deltas etc.
+    ///
+    ///      Warps are ABSOLUTE (anchored to EPOCH_ZERO), never `block.timestamp + N`: under via-ir
+    ///      the optimizer legitimately caches the TIMESTAMP opcode within the test frame (it cannot
+    ///      change mid-transaction in a real EVM), so a second relative warp would be computed from
+    ///      the stale pre-warp value and silently re-target the same instant.
     function _runOption3ToExecution(uint256 budgetWeth) internal returns (uint256 epochOneBudget) {
         address alice = makeAddr("voterAlice");
         _mockAliceVoter(alice, 1000e18, 1000e18);
+
+        // Hoisted: an inline voter.EPOCH_ZERO() argument would consume the preceding vm.prank.
+        uint256 epochZero = voter.EPOCH_ZERO();
 
         // Epoch 0 vote for option 3 (drives finalize(1) winner).
         vm.prank(alice);
         voter.vote(3);
 
         // Finalize+execute epoch 0 (always defaults to treasury).
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(epochZero + 7 days);
         vm.prank(keeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(0, 0, 0, block.timestamp);
+        voter.execute(0, 0, 0, epochZero + 8 days);
 
         // currentEpoch is now 1. Deposit revenue here so epochRevenue[1] is funded.
         address depositor = voter.feeCollector();
@@ -268,7 +281,7 @@ contract GovernanceVoterForkTest is Test {
 
         // Finalize epoch 1 (snapshot total = 1000, totalVote = 1000, 100% > 51% -> option 3 wins).
         // e.budget = epochRevenue[1] = budgetWeth.
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(epochZero + 14 days);
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
     }
@@ -285,9 +298,12 @@ contract GovernanceVoterForkTest is Test {
         uint256 pmEthBefore = BASE_POSITION_MANAGER.balance;
         uint256 lockerCountBefore = locker.getLockedPositions().length;
 
+        uint256 deadline = voter.EPOCH_ZERO() + 15 days;
         vm.prank(keeper);
         // liquidity = 0 would be a no-op mint; pick a small value that the half-budget can fund.
-        voter.execute(1, 0, uint256(1e15), block.timestamp);
+        // Deadline is absolute (see _runOption3ToExecution): a stale cached block.timestamp here
+        // would hand the router an already-expired deadline.
+        voter.execute(1, 0, uint256(1e15), deadline);
 
         // 1. NFT registered at locker.
         assertEq(locker.getLockedPositions().length, lockerCountBefore + 1, "NFT should be registered at locker");
@@ -321,8 +337,9 @@ contract GovernanceVoterForkTest is Test {
         uint256 deadBmxBefore = IERC20(BASE_BMX).balanceOf(0x000000000000000000000000000000000000dEaD);
 
         // Tiny liquidity: mint consumes far less BMX/ETH than the pre-funded budget allows.
+        uint256 deadline = voter.EPOCH_ZERO() + 15 days;
         vm.prank(keeper);
-        voter.execute(1, 0, uint256(1), block.timestamp);
+        voter.execute(1, 0, uint256(1), deadline);
 
         // PM returns to snapshot exactly (SWEEP recovered every prefunded wei).
         assertEq(IERC20(BASE_BMX).balanceOf(BASE_POSITION_MANAGER), pmBmxBefore, "PM BMX delta == 0");
@@ -356,11 +373,15 @@ contract GovernanceVoterForkTest is Test {
         vm.prank(alice);
         voter.vote(2);
 
-        vm.warp(block.timestamp + 7 days);
+        // Absolute warps/deadlines (see _runOption3ToExecution): via-ir caches TIMESTAMP within the
+        // test frame, so relative `block.timestamp + N` warps silently re-target the same instant.
+        // Hoisted local: an inline voter.EPOCH_ZERO() argument would consume the preceding vm.prank.
+        uint256 epochZero = voter.EPOCH_ZERO();
+        vm.warp(epochZero + 7 days);
         vm.prank(keeper);
         voter.finalize(0, type(uint256).max);
         vm.prank(keeper);
-        voter.execute(0, 0, 0, block.timestamp);
+        voter.execute(0, 0, 0, epochZero + 8 days);
 
         // Deposit through feeCollector so epochRevenue[1] is funded.
         address depositor = voter.feeCollector();
@@ -370,14 +391,14 @@ contract GovernanceVoterForkTest is Test {
         voter.depositRevenue(0.1 ether);
         vm.stopPrank();
 
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(epochZero + 14 days);
         vm.prank(keeper);
         voter.finalize(1, type(uint256).max);
 
         // Option 2 routes 100% of the budget through _swapRaiseTokenForBmx -> Universal Router.
         // A reverting execute() here means the configured UR did not accept our 0x140 calldata.
         vm.prank(keeper);
-        voter.execute(1, 0, 0, block.timestamp);
+        voter.execute(1, 0, 0, epochZero + 15 days);
 
         // Sanity: DEAD received the swapped BMX (BuyBurnBMX outcome).
         assertGt(IERC20(BASE_BMX).balanceOf(0x000000000000000000000000000000000000dEaD), 0);

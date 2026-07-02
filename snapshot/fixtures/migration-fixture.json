@@ -1,0 +1,47 @@
+{
+  "root": "0xf03e3fed1b9eeb74c54825c153a32e78623de91d20a4e2f9a52d7797d02b33fe",
+  "leafEncoding": [
+    "address",
+    "uint256",
+    "uint256"
+  ],
+  "note": "Synthetic deterministic fixture for BwsMigration tests. snapshotBmx/snapshotPoints in wei.",
+  "entries": [
+    {
+      "account": "0x0000000000000000000000000000000000000001",
+      "snapshotBmx": "1000000000000000000000",
+      "snapshotPoints": "0",
+      "proof": [
+        "0xb6d12dc267bad06fed56bfdb6fd10f990472b320c6029712b66b5489e4bb0b5a",
+        "0xdddb5c6396065dc94532a727006791e0cd5a6e94c4274704c79d5b8d283337ff"
+      ]
+    },
+    {
+      "account": "0x0000000000000000000000000000000000000002",
+      "snapshotBmx": "50000000000000000000000",
+      "snapshotPoints": "50000000000000000000000",
+      "proof": [
+        "0xc0f49fd686f89076d3c0442f4875f7f25cad9338dedb3d16aa367425d534f6b3",
+        "0xdddb5c6396065dc94532a727006791e0cd5a6e94c4274704c79d5b8d283337ff"
+      ]
+    },
+    {
+      "account": "0x0000000000000000000000000000000000000003",
+      "snapshotBmx": "25000000000000000000000",
+      "snapshotPoints": "10000000000000000000000",
+      "proof": [
+        "0x56a25a3c7f492486d9826113b57983298b4725e4cf22e749449f53d6e8b84325",
+        "0x7a9a24ce602148267f17801a79c7c203ffaf48abcde9e081a2cd65ecc3591b9f"
+      ]
+    },
+    {
+      "account": "0x0000000000000000000000000000000000000004",
+      "snapshotBmx": "0",
+      "snapshotPoints": "0",
+      "proof": [
+        "0x4be2afe0358d4bad7864a41bc29b4cc821127c92a195774065c5eaae41b1843b",
+        "0x7a9a24ce602148267f17801a79c7c203ffaf48abcde9e081a2cd65ecc3591b9f"
+      ]
+    }
+  ]
+}

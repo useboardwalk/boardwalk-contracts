@@ -52,7 +52,8 @@ contract LPLockerForkTest is Test {
             BASE_POSITION_MANAGER,
             governanceVoter,
             c0,
-            c1
+            c1,
+            address(this)
         );
     }
 

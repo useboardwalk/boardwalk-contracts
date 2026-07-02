@@ -235,6 +235,7 @@ contract GovernanceVoterTest is Test {
     event GovernanceBurnChanged(uint256 oldAmount, uint256 newAmount);
     event FallbackTreasuryChanged(address oldAddress, address newAddress);
     event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
+    event PoolHooksSet(address poolHooks);
     event RevenueDeposited(uint256 indexed epoch, uint256 amount);
     event FeeCollectorChanged(address oldFeeCollector, address newFeeCollector);
 
@@ -259,6 +260,10 @@ contract GovernanceVoterTest is Test {
         // Wire peers
         vm.prank(owner);
         voter.initializePeers(address(mockLPLocker), address(mockParticipationDistributor), feeCollector);
+
+        // Commit the (hookless) pool wiring: execute() blocks options 2/3/4 until the hook is set.
+        vm.prank(owner);
+        voter.setPoolHooks(address(0));
 
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
@@ -385,6 +390,138 @@ contract GovernanceVoterTest is Test {
         vm.prank(protocolKeeper);
         vm.expectRevert(GovernanceVoter.PeersNotInitialized.selector);
         freshVoter.execute(0, 0, 0, block.timestamp);
+    }
+
+    // ============ Pool Hooks (one-time settable) ============
+
+    function test_SetPoolHooks_HappyPath() public {
+        // _defaultParams uses poolHooks address(0), so a fresh voter is left open.
+        GovernanceVoter freshVoter = new GovernanceVoter(owner, _defaultParams());
+        assertFalse(freshVoter.poolHooksSet(), "open at construction when hooks unset");
+        assertEq(freshVoter.POOL_HOOKS(), address(0), "hooks start at zero");
+
+        address hook = makeAddr("poolHook");
+        vm.prank(owner);
+        vm.expectEmit(true, true, true, true);
+        emit PoolHooksSet(hook);
+        freshVoter.setPoolHooks(hook);
+
+        assertTrue(freshVoter.poolHooksSet(), "flag set after wiring");
+        assertEq(freshVoter.POOL_HOOKS(), hook, "hooks wired to launch value");
+    }
+
+    function test_RevertWhen_SetPoolHooks_Twice() public {
+        GovernanceVoter freshVoter = new GovernanceVoter(owner, _defaultParams());
+        address hook = makeAddr("poolHook");
+        vm.prank(owner);
+        freshVoter.setPoolHooks(hook);
+
+        vm.prank(owner);
+        vm.expectRevert(GovernanceVoter.PoolHooksAlreadySet.selector);
+        freshVoter.setPoolHooks(makeAddr("otherHook"));
+    }
+
+    function test_RevertWhen_SetPoolHooks_NotOwner() public {
+        GovernanceVoter freshVoter = new GovernanceVoter(owner, _defaultParams());
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
+        freshVoter.setPoolHooks(makeAddr("poolHook"));
+    }
+
+    function test_RevertWhen_SetPoolHooks_LockedAtConstruction() public {
+        // A non-zero hook supplied at deploy is final. The setter is closed from the start.
+        GovernanceVoter.DeployParams memory p = _defaultParams();
+        p.poolHooks = makeAddr("deployHook");
+        GovernanceVoter freshVoter = new GovernanceVoter(owner, p);
+        assertTrue(freshVoter.poolHooksSet(), "locked when deployed with a hook");
+
+        vm.prank(owner);
+        vm.expectRevert(GovernanceVoter.PoolHooksAlreadySet.selector);
+        freshVoter.setPoolHooks(makeAddr("poolHook"));
+    }
+
+    function test_SetPoolHooks_CanLockHooklessPool() public {
+        // Explicitly committing the hookless (address(0)) pool still consumes the one-shot.
+        GovernanceVoter freshVoter = new GovernanceVoter(owner, _defaultParams());
+        vm.prank(owner);
+        freshVoter.setPoolHooks(address(0));
+        assertTrue(freshVoter.poolHooksSet(), "hookless commit locks the setter");
+
+        vm.prank(owner);
+        vm.expectRevert(GovernanceVoter.PoolHooksAlreadySet.selector);
+        freshVoter.setPoolHooks(makeAddr("poolHook"));
+    }
+
+    /// @dev Scaffold a fresh voter with the hook left UNSET through vote -> finalize of epoch 1 with
+    ///      `option` winning (mirrors `_setupAndFinalizeWithOption`, which uses the main harness voter
+    ///      whose hook is committed in setUp).
+    function _freshVoterFinalizedWithOption(
+        uint8 option
+    ) internal returns (GovernanceVoter freshVoter) {
+        freshVoter = new GovernanceVoter(owner, _defaultParams());
+        MockLPLockerForVoter freshLocker = new MockLPLockerForVoter(address(freshVoter));
+        MockParticipationDistributorForVoter freshDist = new MockParticipationDistributorForVoter(address(freshVoter));
+        vm.prank(owner);
+        freshVoter.initializePeers(address(freshLocker), address(freshDist), feeCollector);
+
+        vm.prank(alice);
+        freshVoter.vote(option);
+        vm.prank(bob);
+        freshVoter.vote(option);
+
+        raiseToken.mint(feeCollector, 110e18);
+        vm.startPrank(feeCollector);
+        raiseToken.approve(address(freshVoter), 110e18);
+        freshVoter.depositRevenue(10e18);
+        vm.stopPrank();
+
+        vm.warp(epochZero + EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        freshVoter.finalize(0, type(uint256).max);
+        // Epoch 0 is always treasury: executes fine with the hook unset (only option 1 is unguarded).
+        vm.prank(protocolKeeper);
+        freshVoter.execute(0, 0, 0, block.timestamp);
+
+        vm.prank(feeCollector);
+        freshVoter.depositRevenue(100e18); // credits epoch 1
+
+        vm.warp(epochZero + 2 * EPOCH_DURATION);
+        vm.prank(protocolKeeper);
+        freshVoter.finalize(1, type(uint256).max);
+    }
+
+    function test_RevertWhen_Execute_Option2_PoolHooksUnset() public {
+        GovernanceVoter freshVoter = _freshVoterFinalizedWithOption(2);
+        bmx.mint(address(universalRouter), 200e18);
+
+        vm.prank(protocolKeeper);
+        vm.expectRevert(GovernanceVoter.PoolHooksNotSet.selector);
+        freshVoter.execute(1, 0, 0, block.timestamp);
+
+        // Committing the (hookless) pool clears the guard and the same epoch executes.
+        vm.prank(owner);
+        freshVoter.setPoolHooks(address(0));
+        vm.prank(protocolKeeper);
+        freshVoter.execute(1, 0, 0, block.timestamp);
+    }
+
+    function test_RevertWhen_Execute_Option3_PoolHooksUnset() public {
+        GovernanceVoter freshVoter = _freshVoterFinalizedWithOption(3);
+        bmx.mint(address(universalRouter), 200e18);
+
+        vm.prank(protocolKeeper);
+        vm.expectRevert(GovernanceVoter.PoolHooksNotSet.selector);
+        freshVoter.execute(1, 0, 0, block.timestamp);
+    }
+
+    function test_RevertWhen_Execute_Option4_PoolHooksUnset() public {
+        // Option 4 (participation) swaps the budget through the same pool key for epochs > 0.
+        GovernanceVoter freshVoter = _freshVoterFinalizedWithOption(4);
+        bmx.mint(address(universalRouter), 200e18);
+
+        vm.prank(protocolKeeper);
+        vm.expectRevert(GovernanceVoter.PoolHooksNotSet.selector);
+        freshVoter.execute(1, 0, 0, block.timestamp);
     }
 
     // ============ Voting ============

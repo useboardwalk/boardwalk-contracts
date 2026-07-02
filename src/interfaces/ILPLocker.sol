@@ -7,15 +7,34 @@ interface ILPLocker {
     error PositionNotLocked();
     error AlreadyLocked();
     error NoPositions();
+    error NotRegistrar();
+    error NotPositionOwner();
+    error PoolKeyMismatch();
+    error PoolHooksNotSet();
 
     event LPLocked(uint256 indexed tokenId);
     event FeesClaimed(uint256 indexed tokenId);
+    event RegistrarRenounced(address indexed registrar);
+
+    function POSITION_MANAGER() external view returns (address);
 
     function GOVERNANCE_VOTER() external view returns (address);
+
+    function CURRENCY0() external view returns (address);
+
+    function CURRENCY1() external view returns (address);
+
+    function registrar() external view returns (address);
 
     function lockPosition(
         uint256 tokenId
     ) external;
+
+    function registerPosition(
+        uint256 tokenId
+    ) external;
+
+    function renounceRegistrar() external;
 
     function claimFees(
         uint256 tokenId,

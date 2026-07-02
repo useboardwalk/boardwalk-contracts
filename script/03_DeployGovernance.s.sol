@@ -6,13 +6,15 @@ import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
 
-/// @title DeployGovernance - Deploy the governance voting stack on Base
+/// @title DeployGovernance - Deploy the protocol-token governance voting stack
 /// @notice Deploys GovernanceVoter first, then LPLocker and ParticipationDistributor pointing back,
 ///         then wires them via initializePeers().
 ///         After deployment, call BoardwalkFeeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, ...)
 ///         followed by executeSetGovernanceVault after the 7-day timelock.
 ///
-/// @dev Required env: DEPLOYER_PRIVATE_KEY, OWNER, KEEPER, FEE_COLLECTOR (BoardwalkFeeCollector
+/// @dev Env defaults below are the legacy Base/BMX addresses; the live deployment is BWS on Arbitrum
+///      (script/bws/02_DeployBwsGovernance.s.sol is the Arbitrum-specific variant).
+///      Required env: DEPLOYER_PRIVATE_KEY, OWNER, KEEPER, FEE_COLLECTOR (BoardwalkFeeCollector
 ///      address — bound as the revenue depositor when peers are wired).
 contract DeployGovernance is Script {
     address internal constant BASE_WETH = 0x4200000000000000000000000000000000000006;
@@ -64,13 +66,20 @@ contract DeployGovernance is Script {
             })
         );
         console.log("GovernanceVoter deployed to:", address(governanceVoter));
+        if (!governanceVoter.poolHooksSet()) {
+            console.log("POOL_HOOKS left open: commit it with setPoolHooks() - options 2/3/4 revert until then.");
+        }
 
-        // 2. Deploy LPLocker — v4 pools use native ETH (address(0)), always currency0
+        // 2. Deploy LPLocker — v4 pools use native ETH (address(0)), always currency0. No CCA launch
+        //    runs on Base, so the registrar defaults to address(0) (registerPosition permanently
+        //    disabled — no standing privileged role); override via LP_REGISTRAR on chains that
+        //    actually run a launcher flow.
         LPLocker lpLocker = new LPLocker(
             v4PositionManager,
             address(governanceVoter),
             address(0),
-            bmx
+            bmx,
+            vm.envOr("LP_REGISTRAR", address(0))
         );
         console.log("LPLocker deployed to:", address(lpLocker));
 

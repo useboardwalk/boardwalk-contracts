@@ -2,12 +2,14 @@
 pragma solidity =0.8.28;
 
 import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IV4PositionManager} from "../interfaces/IV4PositionManager.sol";
 import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 
 /// @title LPLocker
-/// @notice Permanent vault for Uniswap v4 LP position NFTs minted by governance Option 3. Locked
-///         positions can never be unlocked; only their accrued trading fees can be harvested.
+/// @notice Permanent vault for Uniswap v4 LP position NFTs, registered either by governance (Option 3
+///         buy&lock) or by the one-time registrar (a CCA/LBP launch that minted the LP here as pool
+///         owner). Locked positions can never be unlocked; only their trading fees can be harvested.
 contract LPLocker {
     address public immutable POSITION_MANAGER;
     address public immutable GOVERNANCE_VOTER;
@@ -17,25 +19,35 @@ contract LPLocker {
     mapping(uint256 => bool) public lockedPositions;
     uint256[] public lockedTokenIds;
 
+    /// @notice One-time registrar for externally-minted (CCA) positions
+    address public registrar;
+
     error NotAuthorized();
     error OnlyPositionManager();
     error PositionNotLocked();
     error AlreadyLocked();
     error NoPositions();
+    error NotRegistrar();
+    error NotPositionOwner();
+    error PoolKeyMismatch();
+    error PoolHooksNotSet();
 
     event LPLocked(uint256 indexed tokenId);
     event FeesClaimed(uint256 indexed tokenId);
+    event RegistrarRenounced(address indexed registrar);
 
     constructor(
         address _positionManager,
         address _governanceVoter,
         address _currency0,
-        address _currency1
+        address _currency1,
+        address _registrar
     ) {
         POSITION_MANAGER = _positionManager;
         GOVERNANCE_VOTER = _governanceVoter;
         CURRENCY0 = _currency0;
         CURRENCY1 = _currency1;
+        registrar = _registrar;
     }
 
     /// @dev Accepts native ETH from PositionManager during `claimFees`.
@@ -49,6 +61,33 @@ contract LPLocker {
     ) external {
         if (msg.sender != GOVERNANCE_VOTER) revert NotAuthorized();
         _registerLock(tokenId);
+    }
+
+    /// @notice Perma-lock a v4 position already owned by this contract (e.g. minted here
+    ///         by a CCA/LBP launch with this contract as pool owner).
+    function registerPosition(
+        uint256 tokenId
+    ) external {
+        if (msg.sender != registrar) revert NotRegistrar();
+        IGovernanceVoter voter = IGovernanceVoter(GOVERNANCE_VOTER);
+        if (!voter.poolHooksSet()) revert PoolHooksNotSet();
+        if (IERC721(POSITION_MANAGER).ownerOf(tokenId) != address(this)) revert NotPositionOwner();
+        (IV4PositionManager.PoolKey memory key,) =
+            IV4PositionManager(POSITION_MANAGER).getPoolAndPositionInfo(tokenId);
+        if (key.currency0 != CURRENCY0 || key.currency1 != CURRENCY1) revert PoolKeyMismatch();
+        if (
+            key.fee != voter.POOL_FEE() || key.tickSpacing != voter.POOL_TICK_SPACING()
+                || key.hooks != voter.POOL_HOOKS()
+        ) revert PoolKeyMismatch();
+
+        _registerLock(tokenId);
+    }
+
+    function renounceRegistrar() external {
+        if (msg.sender != registrar) revert NotRegistrar();
+
+        emit RegistrarRenounced(registrar);
+        registrar = address(0);
     }
 
     /// @notice Harvest accrued v4 trading fees for a single locked position to the current treasury.

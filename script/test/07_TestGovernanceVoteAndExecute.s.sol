@@ -7,7 +7,7 @@ import {BaseTestScript} from "./BaseTestScript.s.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 
 /// @title TestGovernanceVoteAndExecute - Exercise the governance lifecycle on a test deployment
-/// @notice Supports two wallets: a VOTER (sbfBMX holder) and a KEEPER (deployer/owner).
+/// @notice Supports two wallets: a VOTER (sbf fee-tracker token holder) and a KEEPER (deployer/owner).
 ///         Runs through: vote → wait epoch → finalize → execute for each option.
 ///
 /// Required env:
@@ -15,8 +15,10 @@ import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 ///   GOVERNANCE_VOTER     — GovernanceVoter contract address
 ///
 /// Optional env:
-///   VOTER_PRIVATE_KEY — sbfBMX holder key for voting (defaults to DEPLOYER_PRIVATE_KEY)
-///   VOTE_OPTION       — 1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation (default: 1)
+///   VOTER_PRIVATE_KEY — sbf fee-tracker token holder key for voting (defaults to DEPLOYER_PRIVATE_KEY)
+///   VOTE_OPTION       — 1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation (default: 1;
+///                       option names predate the migration — the buy&burn asset is the deployment's
+///                       protocol token, BWS on Arbitrum)
 ///   REVENUE_AMOUNT    — WETH to deposit via depositRevenue (default: 0.0001 ether)
 ///   ACTION            — "vote", "deposit", "finalize", "execute", "forceExecute", or "all" (default: "all")
 contract TestGovernanceVoteAndExecuteScript is BaseTestScript {

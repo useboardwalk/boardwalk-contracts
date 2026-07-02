@@ -42,6 +42,8 @@ interface IGovernanceVoter {
     error PeersNotInitialized();
     error OnlyWETH();
     error NotFeeCollector();
+    error PoolHooksAlreadySet();
+    error PoolHooksNotSet();
 
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
@@ -55,6 +57,7 @@ interface IGovernanceVoter {
     event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
     event RevenueDeposited(uint256 indexed epoch, uint256 amount);
     event FeeCollectorChanged(address oldFeeCollector, address newFeeCollector);
+    event PoolHooksSet(address poolHooks);
 
     function initializePeers(
         address _lpLocker,
@@ -66,6 +69,9 @@ interface IGovernanceVoter {
     ) external;
     function executeSetFeeCollector(
         address newFeeCollector
+    ) external;
+    function setPoolHooks(
+        address poolHooks
     ) external;
     function vote(
         uint8 option
@@ -102,6 +108,10 @@ interface IGovernanceVoter {
     ) external view returns (address[] memory);
     function WETH() external view returns (address);
     function feeCollector() external view returns (address);
+    function POOL_HOOKS() external view returns (address);
+    function POOL_FEE() external view returns (uint24);
+    function POOL_TICK_SPACING() external view returns (int24);
+    function poolHooksSet() external view returns (bool);
     function epochRevenue(
         uint256 epoch
     ) external view returns (uint256);

@@ -8,14 +8,15 @@ import {CrossChainConfig} from "script/CrossChainConfig.sol";
 
 /// @title DeployRevenueBridging
 /// @notice Deploys Boardwalk's cross-chain revenue bridging: the `BaseRevenueSwapper` on Base and a
-///         generic `RevenueBridger` on every non-Base LiFi lane (Ethereum, Ink, Katana, Fraxtal).
+///         generic `RevenueBridger` on every non-Base LiFi lane (Ethereum, Ink, Arbitrum, Katana,
+///         Fraxtal).
 /// @dev Deploy order:
 ///      1. Base: run this script, which deploys `BaseRevenueSwapper`. Record its address; every other
 ///         lane pins it as `BASE_DESTINATION`.
-///      2. Each non-Base chain: rerun with BASE_DESTINATION set to the swapper from step 1. ETH/Ink
-///         deploy a pure Across V4 bridger; Katana a composed Symbiosis one; Fraxtal a composed Glacis
-///         one. Fraxtal/Glacis charges a native (FRAX) fee, so the keeper holds FRAX and attaches it as
-///         `msg.value` per `bridgeToBase` call (excess refunded).
+///      2. Each non-Base chain: rerun with BASE_DESTINATION set to the swapper from step 1.
+///         ETH/Ink/Arbitrum deploy a pure Across V4 bridger; Katana a composed Symbiosis one; Fraxtal
+///         a composed Glacis one. Fraxtal/Glacis charges a native (FRAX) fee, so the keeper holds FRAX
+///         and attaches it as `msg.value` per `bridgeToBase` call (excess refunded).
 ///      3. Byte-verify every external address against on-chain code before broadcasting, and recompute
 ///         the facet selectors from LiFi source at this commit.
 ///      4. transferOwnership (2-step) of all deployed contracts to the multisig.
@@ -23,14 +24,16 @@ import {CrossChainConfig} from "script/CrossChainConfig.sol";
 ///         (accrual), each bridger's keeper (bridge), and the Base swapper keeper.
 ///      6. Repoint revenue: per chain, `BoardwalkFeeCollector.signal/executeSetTreasury` (7-day timelock)
 ///         to the deployed bridger so `forwardRevenue` routes revenue in.
-///      7. Keep `governanceVault == address(0)` on all non-Base chains; a set vault diverts 70% past the
+///      7. Keep `governanceVault == address(0)` on all source chains; a set vault diverts 70% past the
 ///         bridger. Never call `executeSetGovernanceVault` there; alert on `GovernanceVaultUpdated`.
+///         BWS-migration carve-out: Arbitrum becomes the governance home — at the migration cutover
+///         its FeeCollector's vault is set to the BWS GovernanceVoter and its lane re-homes.
 ///      8. Accrual gating: don't call `forwardRevenue` until monitoring confirms the previous bridge
 ///         landed on Base. The 30/70 split lands when the Base FeeCollector runs its regular cycle.
 ///
 ///      Required env: KEEPER. Base also: FEE_COLLECTOR. Non-Base also: BASE_DESTINATION. Katana also:
-///      RAISE_TOKEN. Optional: OWNER (default deployer), MAX_FEE_BPS, RAISE_TOKEN (ETH/Ink default to
-///      canonical WETH, Fraxtal to frxUSD).
+///      RAISE_TOKEN. Optional: OWNER (default deployer), MAX_FEE_BPS, RAISE_TOKEN (ETH/Ink/Arbitrum
+///      default to canonical WETH, Fraxtal to frxUSD).
 contract DeployRevenueBridging is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -130,6 +133,7 @@ contract DeployRevenueBridging is Script {
             console.log("        toToken=WETH) - composed KAT->WETH swap bundled in-tx, hasDestinationCall=false");
         }
         console.log("  -> repoint FeeCollector.treasury here; keep governanceVault == address(0)");
+        console.log("     (carve-out: Arbitrum sets its vault to the BWS GovernanceVoter at the migration cutover)");
     }
 
     function _defaultRaiseToken(
