@@ -18,6 +18,9 @@ remappings = [
 ]
 
 [fmt]
+# Vendored Uniswap V2 fork keeps its upstream formatting (and its 0.5.16-era assembly is
+# unparseable by forge fmt anyway).
+ignore = ["src/dex/**"]
 line_length = 120
 tab_width = 4
 bracket_spacing = false
