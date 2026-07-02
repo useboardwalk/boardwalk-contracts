@@ -98,7 +98,9 @@ contract MockERC20Simple {
     }
 
     // WETH-like functions for native ETH v4 pool support
-    function withdraw(uint256 amount) external {
+    function withdraw(
+        uint256 amount
+    ) external {
         balanceOf[msg.sender] -= amount;
         (bool ok,) = msg.sender.call{value: amount}("");
         require(ok);
@@ -112,7 +114,6 @@ contract MockERC20Simple {
         balanceOf[msg.sender] += msg.value;
     }
 }
-
 
 /// @dev Mock Universal Router that simulates V4_SWAP by transferring BMX to the caller.
 ///      Records calls for test assertions.
@@ -160,7 +161,9 @@ contract MockParticipationDistributorForVoter {
     uint256 public lastEpoch;
     uint256 public lastAmount;
 
-    constructor(address _governanceVoter) {
+    constructor(
+        address _governanceVoter
+    ) {
         GOVERNANCE_VOTER = _governanceVoter;
     }
 
@@ -179,7 +182,10 @@ contract MockV4PositionManagerForVoter {
     /// @dev Accepts the unlockData + deadline + msg.value paid by GovernanceVoter's mint flow.
     ///      Real PM minting is exercised in the Base fork tests; this mock only verifies that
     ///      GovernanceVoter calls into the PM correctly without reverting.
-    function modifyLiquidities(bytes calldata, uint256) external payable {}
+    function modifyLiquidities(
+        bytes calldata,
+        uint256
+    ) external payable {}
 
     receive() external payable {}
 }
@@ -189,7 +195,9 @@ contract MockLPLockerForVoter {
     uint256 public lockCalls;
     uint256 public lastLockedTokenId;
 
-    constructor(address _governanceVoter) {
+    constructor(
+        address _governanceVoter
+    ) {
         GOVERNANCE_VOTER = _governanceVoter;
     }
 
@@ -231,7 +239,9 @@ contract GovernanceVoterTest is Test {
 
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
-    event EpochExecuted(uint256 indexed epoch, uint8 option, uint256 raiseTokenAmount, bool forced, address destination);
+    event EpochExecuted(
+        uint256 indexed epoch, uint8 option, uint256 raiseTokenAmount, bool forced, address destination
+    );
     event GovernanceBurnChanged(uint256 oldAmount, uint256 newAmount);
     event FallbackTreasuryChanged(address oldAddress, address newAddress);
     event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
@@ -326,7 +336,10 @@ contract GovernanceVoterTest is Test {
 
     /// @dev Helper: complete a full vote→finalize→execute cycle for an epoch using advance voting.
     ///      Votes are cast in `voteEpoch`, then finalize(voteEpoch+1) uses those votes.
-    function _voteAndExecuteEpoch(uint256 voteEpoch, uint8 option) internal {
+    function _voteAndExecuteEpoch(
+        uint256 voteEpoch,
+        uint8 option
+    ) internal {
         vm.warp(epochZero + voteEpoch * EPOCH_DURATION);
         sbfBmx.setTotalSupply(2000e18);
         vm.prank(alice);
@@ -729,9 +742,7 @@ contract GovernanceVoterTest is Test {
         // max(500, 1500) = 1500. 400/1500 ≈ 26.7% < 51% -> quorum NOT met. winner = treasury.
         GovernanceVoter.EpochInfo memory info1 = voter.getEpochInfo(1);
         assertEq(
-            info1.winningOption,
-            voter.OPTION_TREASURY(),
-            "live > snapshot: quorum not met by under-snapshot votes"
+            info1.winningOption, voter.OPTION_TREASURY(), "live > snapshot: quorum not met by under-snapshot votes"
         );
         GovernanceVoter.EpochInfo memory info0 = voter.getEpochInfo(0);
         assertEq(info0.snapshotTotalWeight, 500e18, "epoch-0 snapshot (used by quorum) is 500");
@@ -831,9 +842,7 @@ contract GovernanceVoterTest is Test {
 
         GovernanceVoter.EpochInfo memory info5 = voter.getEpochInfo(5);
         assertEq(
-            info5.winningOption,
-            voter.OPTION_TREASURY(),
-            "minority eligibleVoteWeight fails quorum; winner = treasury"
+            info5.winningOption, voter.OPTION_TREASURY(), "minority eligibleVoteWeight fails quorum; winner = treasury"
         );
     }
 
@@ -2001,7 +2010,7 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_ForceMarkExecuted_UsesUpdatedFallbackTreasury() public {
-        // Deposit BEFORE the 21-day timelock warp so the revenue is credited to epoch 0; 
+        // Deposit BEFORE the 21-day timelock warp so the revenue is credited to epoch 0;
         // the budget is sourced from epochRevenue[epoch], not the live WETH balance.
         _fundVoter(80e18);
 

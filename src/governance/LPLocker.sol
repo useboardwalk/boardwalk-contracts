@@ -72,8 +72,7 @@ contract LPLocker {
         IGovernanceVoter voter = IGovernanceVoter(GOVERNANCE_VOTER);
         if (!voter.poolHooksSet()) revert PoolHooksNotSet();
         if (IERC721(POSITION_MANAGER).ownerOf(tokenId) != address(this)) revert NotPositionOwner();
-        (IV4PositionManager.PoolKey memory key,) =
-            IV4PositionManager(POSITION_MANAGER).getPoolAndPositionInfo(tokenId);
+        (IV4PositionManager.PoolKey memory key,) = IV4PositionManager(POSITION_MANAGER).getPoolAndPositionInfo(tokenId);
         if (key.currency0 != CURRENCY0 || key.currency1 != CURRENCY1) revert PoolKeyMismatch();
         if (
             key.fee != voter.POOL_FEE() || key.tickSpacing != voter.POOL_TICK_SPACING()

@@ -63,8 +63,22 @@ contract BwsMigrationForkTest is Test {
     address public dest = makeAddr("dest");
     uint256 public deadline;
 
+    bool internal forked;
+
+    modifier onlyFork() {
+        if (!forked) vm.skip(true);
+        _;
+    }
+
     function setUp() public {
-        require(BMX.code.length > 0, "not a Base fork");
+        // Run with --fork-url, or self-fork from BASE_RPC_URL; without either the suite skips
+        // (CI runs with no RPC configured).
+        if (BMX.code.length == 0) {
+            string memory rpcUrl = vm.envOr("BASE_RPC_URL", string(""));
+            if (bytes(rpcUrl).length == 0) return;
+            vm.createSelectFork(rpcUrl);
+        }
+        forked = true;
 
         voter = new NotFinalizingVoter();
         deadline = block.timestamp + 30 days;
@@ -94,7 +108,7 @@ contract BwsMigrationForkTest is Test {
         IStakingAdmin(tracker).setHandler(address(migrator), true);
     }
 
-    function testFork_Migrate_RecipientGetsStakedPosition() public {
+    function testFork_Migrate_RecipientGetsStakedPosition() public onlyFork {
         vm.prank(owner);
         migrator.setMerkleRoot(keccak256("dummy"));
 
@@ -127,7 +141,7 @@ contract BwsMigrationForkTest is Test {
         assertEq(ITrackerView(STAKED_TRACKER).depositBalances(alice, BMX), 0, "caller got no position");
     }
 
-    function testFork_Migrate_WithPoints_CreditsRealBnBmx() public {
+    function testFork_Migrate_WithPoints_CreditsRealBnBmx() public onlyFork {
         uint256 amount = 1_000e18;
         deal(BMX, alice, amount);
         vm.prank(alice);
@@ -156,8 +170,6 @@ contract BwsMigrationForkTest is Test {
         );
         // The real bnBMX transferFrom skips allowance for handlers (the fee tracker is one), so only
         // _stakePoints' explicit reset keeps this at zero.
-        assertEq(
-            IERC20(BN_BMX).allowance(address(migrator), FEE_TRACKER), 0, "no standing bnBMX allowance after stake"
-        );
+        assertEq(IERC20(BN_BMX).allowance(address(migrator), FEE_TRACKER), 0, "no standing bnBMX allowance after stake");
     }
 }

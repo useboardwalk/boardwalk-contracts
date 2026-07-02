@@ -33,10 +33,7 @@ library FeeSchedules {
         if (chainId == CHAIN_ETHEREUM) {
             return (ethereum(), 20);
         }
-        if (
-            chainId == CHAIN_BASE || chainId == CHAIN_KATANA || chainId == CHAIN_INK
-                || chainId == CHAIN_ARBITRUM
-        ) {
+        if (chainId == CHAIN_BASE || chainId == CHAIN_KATANA || chainId == CHAIN_INK || chainId == CHAIN_ARBITRUM) {
             return (baseKatanaInk(), 27);
         }
         if (chainId == CHAIN_FRAXTAL) {
@@ -47,35 +44,20 @@ library FeeSchedules {
 
     /// @notice Base, Katana, Ink, Arbitrum: issuer 30, boardwalk 35, incentive 23, referrer 5, integrator 27.
     function baseKatanaInk() internal pure returns (LaunchFactory.FeeBpsDefaults memory) {
-        return LaunchFactory.FeeBpsDefaults({
-            issuer: 30,
-            boardwalk: 35,
-            incentive: 23,
-            referrer: 5,
-            total: TOTAL_TAX_BPS
-        });
+        return
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 35, incentive: 23, referrer: 5, total: TOTAL_TAX_BPS});
     }
 
     /// @notice Fraxtal mainnet: issuer 30, boardwalk 35, incentive 25, referrer 5, integrator 25.
     function fraxtal() internal pure returns (LaunchFactory.FeeBpsDefaults memory) {
-        return LaunchFactory.FeeBpsDefaults({
-            issuer: 30,
-            boardwalk: 35,
-            incentive: 25,
-            referrer: 5,
-            total: TOTAL_TAX_BPS
-        });
+        return
+            LaunchFactory.FeeBpsDefaults({issuer: 30, boardwalk: 35, incentive: 25, referrer: 5, total: TOTAL_TAX_BPS});
     }
 
     /// @notice Ethereum mainnet: issuer 35, boardwalk 35, incentive 25, referrer 5, integrator 20.
     function ethereum() internal pure returns (LaunchFactory.FeeBpsDefaults memory) {
-        return LaunchFactory.FeeBpsDefaults({
-            issuer: 35,
-            boardwalk: 35,
-            incentive: 25,
-            referrer: 5,
-            total: TOTAL_TAX_BPS
-        });
+        return
+            LaunchFactory.FeeBpsDefaults({issuer: 35, boardwalk: 35, incentive: 25, referrer: 5, total: TOTAL_TAX_BPS});
     }
 
     /// @notice Per-chain integrator recipients with their split (BPS of the integrator bucket).

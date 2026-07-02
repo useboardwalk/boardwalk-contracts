@@ -357,9 +357,7 @@ contract BwsDeployAssertionTest is Test {
 
     function test_RevertWhen_D3_TrackerNotInitialized() public {
         (MockRewardTrackerFull freshBonus, AssertBwsDeploy.Config memory cfg) = _stackWithFreshBonus();
-        vm.expectRevert(
-            abi.encodeWithSelector(AssertBwsDeploy.D3_TrackerNotInitialized.selector, address(freshBonus))
-        );
+        vm.expectRevert(abi.encodeWithSelector(AssertBwsDeploy.D3_TrackerNotInitialized.selector, address(freshBonus)));
         gate.assertAll(cfg);
     }
 

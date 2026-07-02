@@ -178,8 +178,7 @@ contract DeployFactory is Script {
         }
 
         // 8. Deploy BoostBurn (community ranking), wired to the same membership NFT for discounts.
-        BoostBurn boostBurn =
-            new BoostBurn(owner, bmx, epochZero, epochDuration, nftCollection, memberBoostDiscountBps);
+        BoostBurn boostBurn = new BoostBurn(owner, bmx, epochZero, epochDuration, nftCollection, memberBoostDiscountBps);
         console.log("BoostBurn:", address(boostBurn));
 
         vm.stopBroadcast();

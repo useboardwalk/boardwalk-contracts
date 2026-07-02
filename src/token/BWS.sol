@@ -17,7 +17,10 @@ contract BWS is ERC20 {
 
     /// @param recipient Receives the entire `MAX_SUPPLY` at deployment.
     /// @param ccipAdmin The address registered as the token's CCIP admin.
-    constructor(address recipient, address ccipAdmin) ERC20("Boardwalk", "BWS") {
+    constructor(
+        address recipient,
+        address ccipAdmin
+    ) ERC20("Boardwalk", "BWS") {
         if (recipient == address(0) || ccipAdmin == address(0)) revert ZeroAddress();
         _CCIP_ADMIN = ccipAdmin;
         _mint(recipient, MAX_SUPPLY);

@@ -44,9 +44,22 @@ contract BwsArbitrumDeployForkTest is Test {
     address internal lpRegistrar = makeAddr("lpRegistrar");
     uint256 internal deadline;
 
+    bool internal forked;
+
+    modifier onlyFork() {
+        if (!forked) vm.skip(true);
+        _;
+    }
+
     function setUp() public {
-        vm.createSelectFork(vm.envOr("ARBITRUM_RPC_URL", string("https://arb1.arbitrum.io/rpc")));
-        require(ArbitrumConfig.ARB_WETH.code.length > 0, "not an Arbitrum fork");
+        // Run with --fork-url, or self-fork from ARBITRUM_RPC_URL; without either the suite skips
+        // (CI runs with no RPC configured).
+        if (ArbitrumConfig.ARB_WETH.code.length == 0) {
+            string memory rpcUrl = vm.envOr("ARBITRUM_RPC_URL", string(""));
+            if (bytes(rpcUrl).length == 0) return;
+            vm.createSelectFork(rpcUrl);
+        }
+        forked = true;
         require(BMX.code.length > 0, "BMX missing on fork");
 
         gate = new AssertBwsDeploy();
@@ -158,12 +171,12 @@ contract BwsArbitrumDeployForkTest is Test {
     }
 
     /// @notice The wired deployment passes the go-live gate against real Arbitrum infra + real BMX.
-    function testFork_DeployAndAssert_Passes() public view {
+    function testFork_DeployAndAssert_Passes() public onlyFork {
         gate.assertAll(_cfg());
     }
 
     /// @notice D-5: the real Arbitrum BMX is a non-fee-on-transfer ERC20 (sender/receiver deltas equal).
-    function testFork_BmxIsNonFeeOnTransfer() public {
+    function testFork_BmxIsNonFeeOnTransfer() public onlyFork {
         address a = makeAddr("bmxHolderA");
         address b = makeAddr("bmxHolderB");
         uint256 amount = 1_000e18;
@@ -180,7 +193,7 @@ contract BwsArbitrumDeployForkTest is Test {
     }
 
     /// @notice Injected D-1 violation reverts the gate on the fork.
-    function testFork_AssertReverts_OnUndersizedPool() public {
+    function testFork_AssertReverts_OnUndersizedPool() public onlyFork {
         AssertBwsDeploy.Config memory cfg = _cfg();
         cfg.totalMigratableBmx = ArbitrumConfig.MIGRATION_POOL + 1;
         vm.expectRevert(
@@ -192,7 +205,7 @@ contract BwsArbitrumDeployForkTest is Test {
     }
 
     /// @notice Injected D-3 violation (migrator loses its handler role) reverts the gate on the fork.
-    function testFork_AssertReverts_OnMissingHandler() public {
+    function testFork_AssertReverts_OnMissingHandler() public onlyFork {
         fee.setHandler(address(migrator), false);
         vm.expectRevert(abi.encodeWithSelector(AssertBwsDeploy.D3_MigratorNotHandler.selector, address(fee)));
         gate.assertAll(_cfg());

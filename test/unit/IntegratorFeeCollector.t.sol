@@ -15,7 +15,10 @@ import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 contract MockERC20 is ERC20 {
     constructor() ERC20("M", "M") {}
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         _mint(to, amount);
     }
 }
@@ -24,15 +27,22 @@ contract MockERC20 is ERC20 {
 contract MockLaunchToken is ERC20 {
     address public feeDistributor;
 
-    constructor(address _fd) ERC20("LaunchT", "LT") {
+    constructor(
+        address _fd
+    ) ERC20("LaunchT", "LT") {
         feeDistributor = _fd;
     }
 
-    function setFeeDistributor(address _fd) external {
+    function setFeeDistributor(
+        address _fd
+    ) external {
         feeDistributor = _fd;
     }
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         _mint(to, amount);
     }
 }
@@ -41,11 +51,16 @@ contract MockFactory {
     mapping(address => bool) public isLaunchToken;
     address public INTEGRATOR_COLLECTOR;
 
-    function setLaunchToken(address token, bool ok) external {
+    function setLaunchToken(
+        address token,
+        bool ok
+    ) external {
         isLaunchToken[token] = ok;
     }
 
-    function setIntegratorCollector(address c) external {
+    function setIntegratorCollector(
+        address c
+    ) external {
         INTEGRATOR_COLLECTOR = c;
     }
 }
@@ -59,20 +74,29 @@ contract MockRouter {
     mapping(address => bool) public quoteRevertsOverride;
     mapping(address => bool) public quoteRevertsOverrideSet;
 
-    constructor(address _raiseToken) {
+    constructor(
+        address _raiseToken
+    ) {
         RAISE_TOKEN_ADDR = _raiseToken;
     }
 
-    function setQuoteReverts(bool v) external {
+    function setQuoteReverts(
+        bool v
+    ) external {
         quoteReverts = v;
     }
 
-    function setQuoteRevertsForToken(address token, bool v) external {
+    function setQuoteRevertsForToken(
+        address token,
+        bool v
+    ) external {
         quoteRevertsOverride[token] = v;
         quoteRevertsOverrideSet[token] = true;
     }
 
-    function setOutputMultiplier(uint256 m) external {
+    function setOutputMultiplier(
+        uint256 m
+    ) external {
         outputMultiplier = m;
     }
 
@@ -80,11 +104,10 @@ contract MockRouter {
         return address(0);
     }
 
-    function getAmountsOut(uint256 amountIn, address[] calldata path)
-        external
-        view
-        returns (uint256[] memory amounts)
-    {
+    function getAmountsOut(
+        uint256 amountIn,
+        address[] calldata path
+    ) external view returns (uint256[] memory amounts) {
         bool shouldRevert = quoteRevertsOverrideSet[path[0]] ? quoteRevertsOverride[path[0]] : quoteReverts;
         if (shouldRevert) revert("QUOTE_REVERT");
         amounts = new uint256[](path.length);
@@ -162,7 +185,10 @@ abstract contract Base is Test {
     }
 
     /// @dev Pranks `feeDistributor` to call `receiveFees(launchToken, amount)`. Mints + approves first.
-    function _receiveFees(IntegratorFeeCollector c, uint256 amount) internal {
+    function _receiveFees(
+        IntegratorFeeCollector c,
+        uint256 amount
+    ) internal {
         launchToken.mint(feeDistributor, amount);
         vm.prank(feeDistributor);
         launchToken.approve(address(c), amount);
@@ -648,7 +674,11 @@ contract ClaimBatch is Base {
         _receive(c, address(token3), 4000);
     }
 
-    function _receive(IntegratorFeeCollector col, address tk, uint256 amt) internal {
+    function _receive(
+        IntegratorFeeCollector col,
+        address tk,
+        uint256 amt
+    ) internal {
         MockLaunchToken(tk).mint(feeDistributor, amt);
         vm.prank(feeDistributor);
         IERC20(tk).approve(address(col), amt);
@@ -903,7 +933,11 @@ contract Discovery is Base {
         _receive(c, address(token2), 4000);
     }
 
-    function _receive(IntegratorFeeCollector col, address tk, uint256 amt) internal {
+    function _receive(
+        IntegratorFeeCollector col,
+        address tk,
+        uint256 amt
+    ) internal {
         MockLaunchToken(tk).mint(feeDistributor, amt);
         vm.prank(feeDistributor);
         IERC20(tk).approve(address(col), amt);

@@ -147,26 +147,15 @@ contract DryRunAll is Script {
         console.log("GovernanceVoter:", address(governanceVoter));
 
         // v4 pools use native ETH (address(0)), always currency0
-        LPLocker lpLocker = new LPLocker(
-            v4PositionManager,
-            address(governanceVoter),
-            address(0),
-            bmx,
-            owner
-        );
+        LPLocker lpLocker = new LPLocker(v4PositionManager, address(governanceVoter), address(0), bmx, owner);
         console.log("LPLocker:", address(lpLocker));
 
-        ParticipationDistributor participationDistributor = new ParticipationDistributor(
-            bmx,
-            address(governanceVoter)
-        );
+        ParticipationDistributor participationDistributor = new ParticipationDistributor(bmx, address(governanceVoter));
         console.log("ParticipationDistributor:", address(participationDistributor));
 
         // Wire peers. feeCollector defaults to the deployer in a dry-run; override via env.
         governanceVoter.initializePeers(
-            address(lpLocker),
-            address(participationDistributor),
-            vm.envOr("FEE_COLLECTOR", deployer)
+            address(lpLocker), address(participationDistributor), vm.envOr("FEE_COLLECTOR", deployer)
         );
         console.log("Peers initialized successfully");
 

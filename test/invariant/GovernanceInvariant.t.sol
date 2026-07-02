@@ -9,19 +9,30 @@ contract MockGovRewardTracker {
     uint256 internal _totalSupply;
     mapping(address => mapping(address => uint256)) internal _depositBalances;
 
-    function setBalance(address account, uint256 amount) external {
+    function setBalance(
+        address account,
+        uint256 amount
+    ) external {
         _balances[account] = amount;
     }
 
-    function setTotalSupply(uint256 amount) external {
+    function setTotalSupply(
+        uint256 amount
+    ) external {
         _totalSupply = amount;
     }
 
-    function setDepositBalance(address account, address token, uint256 amount) external {
+    function setDepositBalance(
+        address account,
+        address token,
+        uint256 amount
+    ) external {
         _depositBalances[account][token] = amount;
     }
 
-    function balanceOf(address account) external view returns (uint256) {
+    function balanceOf(
+        address account
+    ) external view returns (uint256) {
         return _balances[account];
     }
 
@@ -29,7 +40,10 @@ contract MockGovRewardTracker {
         return _totalSupply;
     }
 
-    function depositBalances(address account, address token) external view returns (uint256) {
+    function depositBalances(
+        address account,
+        address token
+    ) external view returns (uint256) {
         return _depositBalances[account][token];
     }
 }
@@ -38,22 +52,35 @@ contract MockGovToken {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         balanceOf[to] += amount;
     }
 
-    function approve(address spender, uint256 amount) external returns (bool) {
+    function approve(
+        address spender,
+        uint256 amount
+    ) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= amount;
         }
@@ -66,21 +93,30 @@ contract MockGovToken {
 contract MockInvariantLPLocker {
     address public immutable GOVERNANCE_VOTER;
 
-    constructor(address voter_) {
+    constructor(
+        address voter_
+    ) {
         GOVERNANCE_VOTER = voter_;
     }
 
-    function lockPosition(uint256) external {}
+    function lockPosition(
+        uint256
+    ) external {}
 }
 
 contract MockInvariantParticipationDistributor {
     address public immutable GOVERNANCE_VOTER;
 
-    constructor(address voter_) {
+    constructor(
+        address voter_
+    ) {
         GOVERNANCE_VOTER = voter_;
     }
 
-    function createStream(uint256, uint256) external {}
+    function createStream(
+        uint256,
+        uint256
+    ) external {}
 }
 
 contract GovernanceHandler is Test {
@@ -100,14 +136,21 @@ contract GovernanceHandler is Test {
 
     bool public deltaMismatch;
 
-    constructor(GovernanceVoter voter_, MockGovToken raiseToken_, address keeper_, address feeCollector_) {
+    constructor(
+        GovernanceVoter voter_,
+        MockGovToken raiseToken_,
+        address keeper_,
+        address feeCollector_
+    ) {
         voter = voter_;
         raiseToken = raiseToken_;
         keeper = keeper_;
         feeCollector = feeCollector_;
     }
 
-    function warpTime(uint256 dt) external {
+    function warpTime(
+        uint256 dt
+    ) external {
         callCount++;
         dt = bound(dt, 1, 21 days);
         vm.warp(block.timestamp + dt);
@@ -117,7 +160,9 @@ contract GovernanceHandler is Test {
     ///      properly credited. A bare `mint(voter, amount)` would orphan the raise token in the
     ///      voter and leave epochRevenue at 0, which makes downstream invariants trivially hold
     ///      and obscures real bugs.
-    function depositRaise(uint256 amount) external {
+    function depositRaise(
+        uint256 amount
+    ) external {
         callCount++;
         amount = bound(amount, 0, 1_000e18);
         if (amount == 0) return;
@@ -128,7 +173,9 @@ contract GovernanceHandler is Test {
         voter.depositRevenue(amount);
     }
 
-    function finalizeNext(uint256 batchSeed) external {
+    function finalizeNext(
+        uint256 batchSeed
+    ) external {
         callCount++;
         uint256 curr = voter.currentEpoch();
         uint256 epoch = nextFinalizeEpoch;
@@ -176,7 +223,9 @@ contract GovernanceHandler is Test {
         }
     }
 
-    function forceMarkExecuted(uint256 seed) external {
+    function forceMarkExecuted(
+        uint256 seed
+    ) external {
         callCount++;
         if (maxEpochSeen == 0) return;
 

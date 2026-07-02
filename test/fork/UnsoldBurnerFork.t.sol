@@ -64,8 +64,22 @@ contract UnsoldBurnerForkTest is Test {
     MockERC20 internal bws;
     address internal fundsRecipient = makeAddr("fundsRecipient");
 
+    bool internal forked;
+
+    modifier onlyFork() {
+        if (!forked) vm.skip(true);
+        _;
+    }
+
     function setUp() public {
-        require(CCA_FACTORY.code.length > 0, "not an Arbitrum fork");
+        // Run with --fork-url, or self-fork from ARBITRUM_RPC_URL; without either the suite skips
+        // (CI runs with no RPC configured).
+        if (CCA_FACTORY.code.length == 0) {
+            string memory rpcUrl = vm.envOr("ARBITRUM_RPC_URL", string(""));
+            if (bytes(rpcUrl).length == 0) return;
+            vm.createSelectFork(rpcUrl);
+        }
+        forked = true;
         require(LIQUIDITY_LAUNCHER.code.length > 0, "launcher missing");
         require(LBP_STRATEGY.code.length > 0, "strategy missing");
         require(CCA_LENS.code.length > 0, "lens missing");
@@ -110,7 +124,7 @@ contract UnsoldBurnerForkTest is Test {
 
     /// @dev The deployed factory accepts the burner (a contract) as `tokensRecipient` and stores it — the
     ///      wiring the launch runbook relies on.
-    function testFork_RealFactory_StoresBurnerAsTokensRecipient() public {
+    function testFork_RealFactory_StoresBurnerAsTokensRecipient() public onlyFork {
         uint128 offered = 219_466e18;
         ICcaAuctionFull auction = _createRealAuction(offered, 1_000_000);
 
@@ -120,7 +134,7 @@ contract UnsoldBurnerForkTest is Test {
     }
 
     /// @dev End-to-end: a non-graduated auction's full offered supply is swept to the burner and burned.
-    function testFork_RealAuction_Sweep_BurnsFullUnsoldSupplyToDead() public {
+    function testFork_RealAuction_Sweep_BurnsFullUnsoldSupplyToDead() public onlyFork {
         uint128 offered = 219_466e18;
         uint256 baseBlock = 1_000_000;
         ICcaAuctionFull auction = _createRealAuction(offered, baseBlock);

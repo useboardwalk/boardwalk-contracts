@@ -78,7 +78,10 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
         liquiditySeedTime = seedTime;
     }
 
-    function updateExempt(address account, bool exempt) external override {
+    function updateExempt(
+        address account,
+        bool exempt
+    ) external override {
         isExempt[account] = exempt;
     }
 }
@@ -203,7 +206,10 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
             revert("Not implemented");
         }
 
-        function executeChangeRecipientAddress(uint256, address) external pure override {
+        function executeChangeRecipientAddress(
+            uint256,
+            address
+        ) external pure override {
             revert("Not implemented");
         }
 
@@ -448,7 +454,9 @@ contract MockBoardwalkToken is ERC20, IBoardwalkToken {
             // Initialize token
             address[] memory exempts = new address[](1);
             exempts[0] = address(presaleManager);
-            token.initialize("TestToken", "TEST", 80, 4000, 90 minutes, feeDistributor, address(presaleManager), exempts);
+            token.initialize(
+                "TestToken", "TEST", 80, 4000, 90 minutes, feeDistributor, address(presaleManager), exempts
+            );
         }
 
         // ============ Helpers ============

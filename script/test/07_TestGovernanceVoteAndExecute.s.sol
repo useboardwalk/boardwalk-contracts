@@ -111,7 +111,12 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
         _printTxSummary();
     }
 
-    function _doVote(GovernanceVoter voter, uint8 option, uint256 currentEpoch, address voterAddr) internal {
+    function _doVote(
+        GovernanceVoter voter,
+        uint8 option,
+        uint256 currentEpoch,
+        address voterAddr
+    ) internal {
         string[4] memory optionNames = ["Treasury", "BuyBurnBMX", "BuyBurnLP", "Participation"];
 
         GovernanceVoter.UserVote memory uv = voter.getUserVote(currentEpoch, voterAddr);
@@ -150,7 +155,10 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
     /// @notice Deposit `amount` WETH into the voter via `depositRevenue`. Credits
     ///         `epochRevenue[currentEpoch()]` — operators should call this WHILE the target epoch
     ///         is live, before block.timestamp moves into the next epoch.
-    function _doDeposit(GovernanceVoter voter, uint256 amount) internal {
+    function _doDeposit(
+        GovernanceVoter voter,
+        uint256 amount
+    ) internal {
         if (amount == 0) {
             console.log("REVENUE_AMOUNT is 0, skipping deposit");
             return;
@@ -187,7 +195,11 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
         console.log("  epochRevenue[", epochCredited, "] now:", priorEpochRevenue + amount);
     }
 
-    function _doFinalize(GovernanceVoter voter, uint256 revenueAmount, uint256 currentEpoch) internal {
+    function _doFinalize(
+        GovernanceVoter voter,
+        uint256 revenueAmount,
+        uint256 currentEpoch
+    ) internal {
         uint256 epochToFinalize = type(uint256).max;
         for (uint256 i = 0; i < currentEpoch; i++) {
             GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(i);
@@ -243,7 +255,10 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
         );
     }
 
-    function _doExecute(GovernanceVoter voter, uint256 currentEpoch) internal {
+    function _doExecute(
+        GovernanceVoter voter,
+        uint256 currentEpoch
+    ) internal {
         uint256 epochToExecute = type(uint256).max;
         for (uint256 i = 0; i < currentEpoch; i++) {
             GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(i);
@@ -275,7 +290,9 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
         console.log("  Executed successfully");
     }
 
-    function _doForceExecute(GovernanceVoter voter) internal {
+    function _doForceExecute(
+        GovernanceVoter voter
+    ) internal {
         uint256 epochToForce = vm.envOr("FORCE_EPOCH", uint256(0));
         GovernanceVoter.EpochInfo memory info = voter.getEpochInfo(epochToForce);
 

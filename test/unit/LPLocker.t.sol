@@ -7,7 +7,10 @@ import {IV4PositionManager} from "src/interfaces/IV4PositionManager.sol";
 
 /// @dev Mock PositionManager that accepts modifyLiquidities calls (replaces MockUniversalRouter)
 contract MockPositionManager {
-    function modifyLiquidities(bytes calldata, uint256) external payable {}
+    function modifyLiquidities(
+        bytes calldata,
+        uint256
+    ) external payable {}
 
     // ERC721 support — needed for safeTransferFrom tests
     mapping(uint256 => address) public ownerOf;
@@ -16,7 +19,10 @@ contract MockPositionManager {
     address public poolC0;
     address public poolC1;
 
-    function setPool(address c0, address c1) external {
+    function setPool(
+        address c0,
+        address c1
+    ) external {
         poolC0 = c0;
         poolC1 = c1;
     }
@@ -27,11 +33,18 @@ contract MockPositionManager {
         return (IV4PositionManager.PoolKey(poolC0, poolC1, 0, 0, address(0)), 0);
     }
 
-    function mint(address to, uint256 tokenId) external {
+    function mint(
+        address to,
+        uint256 tokenId
+    ) external {
         ownerOf[tokenId] = to;
     }
 
-    function safeTransferFrom(address from, address to, uint256 tokenId) external {
+    function safeTransferFrom(
+        address from,
+        address to,
+        uint256 tokenId
+    ) external {
         require(ownerOf[tokenId] == from, "Not owner");
         ownerOf[tokenId] = to;
         // Mirrors the OZ ERC721 contract: invoke onERC721Received if `to` is a contract; revert
@@ -44,14 +57,19 @@ contract MockPositionManager {
                 )
             );
             require(
-                success && ret.length >= 4 && bytes4(ret) == bytes4(keccak256("onERC721Received(address,address,uint256,bytes)")),
+                success && ret.length >= 4
+                    && bytes4(ret) == bytes4(keccak256("onERC721Received(address,address,uint256,bytes)")),
                 "Transfer rejected"
             );
         }
     }
 
     /// @notice Non-safe ERC-721 transfer. Does NOT invoke `onERC721Received` on the receiver.
-    function transferFrom(address from, address to, uint256 tokenId) external {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 tokenId
+    ) external {
         require(ownerOf[tokenId] == from, "Not owner");
         ownerOf[tokenId] = to;
     }
@@ -66,21 +84,31 @@ contract MockGovernanceVoterForLocker {
     address public POOL_HOOKS;
     bool public poolHooksSet = true;
 
-    constructor(address _treasury) {
+    constructor(
+        address _treasury
+    ) {
         treasury = _treasury;
     }
 
-    function setTreasury(address _treasury) external {
+    function setTreasury(
+        address _treasury
+    ) external {
         treasury = _treasury;
     }
 
-    function setPoolParams(uint24 fee, int24 tickSpacing, address hooks) external {
+    function setPoolParams(
+        uint24 fee,
+        int24 tickSpacing,
+        address hooks
+    ) external {
         POOL_FEE = fee;
         POOL_TICK_SPACING = tickSpacing;
         POOL_HOOKS = hooks;
     }
 
-    function setPoolHooksSet(bool v) external {
+    function setPoolHooksSet(
+        bool v
+    ) external {
         poolHooksSet = v;
     }
 }
@@ -103,13 +131,7 @@ contract LPLockerTest is Test {
     function setUp() public {
         positionManager = new MockPositionManager();
         mockGovernanceVoter = new MockGovernanceVoterForLocker(treasury);
-        locker = new LPLocker(
-            address(positionManager),
-            address(mockGovernanceVoter),
-            currency0,
-            currency1,
-            registrar
-        );
+        locker = new LPLocker(address(positionManager), address(mockGovernanceVoter), currency0, currency1, registrar);
         // Default: positions report the locker's pool so registerPosition's pool-key check passes.
         positionManager.setPool(currency0, currency1);
     }

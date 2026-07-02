@@ -75,19 +75,12 @@ contract DeployGovernance is Script {
         //    disabled — no standing privileged role); override via LP_REGISTRAR on chains that
         //    actually run a launcher flow.
         LPLocker lpLocker = new LPLocker(
-            v4PositionManager,
-            address(governanceVoter),
-            address(0),
-            bmx,
-            vm.envOr("LP_REGISTRAR", address(0))
+            v4PositionManager, address(governanceVoter), address(0), bmx, vm.envOr("LP_REGISTRAR", address(0))
         );
         console.log("LPLocker deployed to:", address(lpLocker));
 
         // 3. Deploy ParticipationDistributor pointing to GovernanceVoter
-        ParticipationDistributor participationDistributor = new ParticipationDistributor(
-            bmx,
-            address(governanceVoter)
-        );
+        ParticipationDistributor participationDistributor = new ParticipationDistributor(bmx, address(governanceVoter));
         console.log("ParticipationDistributor deployed to:", address(participationDistributor));
 
         // 4. Wire peers (one-time, validates bidirectional references). The revenue depositor is
@@ -98,7 +91,11 @@ contract DeployGovernance is Script {
 
         console.log("");
         console.log("Next steps:");
-        console.log("1. Call FeeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(", address(governanceVoter), ")))");
+        console.log(
+            "1. Call FeeCollector.signalAction(ACTION_SET_GOVERNANCE_VAULT, keccak256(abi.encode(",
+            address(governanceVoter),
+            ")))"
+        );
         console.log("2. After 7-day timelock, call FeeCollector.executeSetGovernanceVault(...)");
 
         vm.stopBroadcast();

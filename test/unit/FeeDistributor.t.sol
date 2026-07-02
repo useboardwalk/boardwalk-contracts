@@ -190,7 +190,10 @@ contract MockIntegratorFeeCollector {
         shouldRevert = _v;
     }
 
-    function receiveFees(address tokenAddr, uint256 amount) external {
+    function receiveFees(
+        address tokenAddr,
+        uint256 amount
+    ) external {
         if (shouldRevert) revert("MockIntegratorFeeCollector: forced revert");
         IERC20(tokenAddr).transferFrom(msg.sender, address(this), amount);
         lastToken = tokenAddr;
@@ -255,7 +258,10 @@ contract MockERC20 is ERC20 {
     }
 
     /// @dev FeeDistributor calls updateExempt during BoardwalkFeeCollector migration.
-    function updateExempt(address account, bool exempt) external {
+    function updateExempt(
+        address account,
+        bool exempt
+    ) external {
         isExempt[account] = exempt;
     }
 }

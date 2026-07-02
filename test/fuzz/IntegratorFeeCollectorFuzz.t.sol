@@ -13,7 +13,10 @@ import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 contract MockERC20 is ERC20 {
     constructor() ERC20("M", "M") {}
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         _mint(to, amount);
     }
 }
@@ -22,15 +25,22 @@ contract MockERC20 is ERC20 {
 contract MockLaunchToken is ERC20 {
     address public feeDistributor;
 
-    constructor(address _fd) ERC20("LaunchT", "LT") {
+    constructor(
+        address _fd
+    ) ERC20("LaunchT", "LT") {
         feeDistributor = _fd;
     }
 
-    function setFeeDistributor(address _fd) external {
+    function setFeeDistributor(
+        address _fd
+    ) external {
         feeDistributor = _fd;
     }
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         _mint(to, amount);
     }
 }
@@ -39,11 +49,16 @@ contract MockFactory {
     mapping(address => bool) public isLaunchToken;
     address public INTEGRATOR_COLLECTOR;
 
-    function setLaunchToken(address token, bool ok) external {
+    function setLaunchToken(
+        address token,
+        bool ok
+    ) external {
         isLaunchToken[token] = ok;
     }
 
-    function setIntegratorCollector(address c) external {
+    function setIntegratorCollector(
+        address c
+    ) external {
         INTEGRATOR_COLLECTOR = c;
     }
 }
@@ -54,15 +69,21 @@ contract MockRouter {
     bool public quoteReverts;
     uint256 public outputMultiplier = 1; // amountOut = amountIn * outputMultiplier
 
-    constructor(address _raiseToken) {
+    constructor(
+        address _raiseToken
+    ) {
         RAISE_TOKEN_ADDR = _raiseToken;
     }
 
-    function setQuoteReverts(bool v) external {
+    function setQuoteReverts(
+        bool v
+    ) external {
         quoteReverts = v;
     }
 
-    function setOutputMultiplier(uint256 m) external {
+    function setOutputMultiplier(
+        uint256 m
+    ) external {
         outputMultiplier = m;
     }
 
@@ -70,11 +91,10 @@ contract MockRouter {
         return address(0);
     }
 
-    function getAmountsOut(uint256 amountIn, address[] calldata path)
-        external
-        view
-        returns (uint256[] memory amounts)
-    {
+    function getAmountsOut(
+        uint256 amountIn,
+        address[] calldata path
+    ) external view returns (uint256[] memory amounts) {
         if (quoteReverts) revert("QUOTE_REVERT");
         amounts = new uint256[](path.length);
         amounts[0] = amountIn;
@@ -179,7 +199,11 @@ contract IntegratorFeeCollectorFuzzTest is Test {
         c.setFactory(address(factory));
     }
 
-    function _receiveFees(IntegratorFeeCollector c, MockLaunchToken token, uint256 amount) internal {
+    function _receiveFees(
+        IntegratorFeeCollector c,
+        MockLaunchToken token,
+        uint256 amount
+    ) internal {
         token.mint(feeDistributor, amount);
         vm.prank(feeDistributor);
         token.approve(address(c), amount);

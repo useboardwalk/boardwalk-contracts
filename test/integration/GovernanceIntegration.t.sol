@@ -12,17 +12,49 @@ contract MockTracker {
     uint256 private _totalSupply;
     mapping(address => mapping(address => uint256)) private _depositBalances;
 
-    function setBalance(address account, uint256 amount) external { _balances[account] = amount; }
-    function setTotalSupply(uint256 amount) external { _totalSupply = amount; }
-    function setDepositBalance(address account, address token, uint256 amount) external {
+    function setBalance(
+        address account,
+        uint256 amount
+    ) external {
+        _balances[account] = amount;
+    }
+
+    function setTotalSupply(
+        uint256 amount
+    ) external {
+        _totalSupply = amount;
+    }
+
+    function setDepositBalance(
+        address account,
+        address token,
+        uint256 amount
+    ) external {
         _depositBalances[account][token] = amount;
     }
-    function balanceOf(address account) external view returns (uint256) { return _balances[account]; }
-    function totalSupply() external view returns (uint256) { return _totalSupply; }
-    function depositBalances(address account, address token) external view returns (uint256) {
+
+    function balanceOf(
+        address account
+    ) external view returns (uint256) {
+        return _balances[account];
+    }
+
+    function totalSupply() external view returns (uint256) {
+        return _totalSupply;
+    }
+
+    function depositBalances(
+        address account,
+        address token
+    ) external view returns (uint256) {
         return _depositBalances[account][token];
     }
-    function stakedAmounts(address) external pure returns (uint256) { return 0; }
+
+    function stakedAmounts(
+        address
+    ) external pure returns (uint256) {
+        return 0;
+    }
 }
 
 /// @dev Minimal ERC20 with mint/transferFrom
@@ -30,17 +62,35 @@ contract SimpleERC20 {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    function mint(address to, uint256 amount) external { balanceOf[to] += amount; }
-    function approve(address spender, uint256 amount) external returns (bool) {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
+        balanceOf[to] += amount;
+    }
+
+    function approve(
+        address spender,
+        uint256 amount
+    ) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
-    function transfer(address to, uint256 amount) external returns (bool) {
+
+    function transfer(
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
     }
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         if (allowance[from][msg.sender] != type(uint256).max) allowance[from][msg.sender] -= amount;
         balanceOf[from] -= amount;
         balanceOf[to] += amount;
@@ -48,14 +98,21 @@ contract SimpleERC20 {
     }
 
     // WETH-like functions for native ETH v4 pool support
-    function withdraw(uint256 amount) external {
+    function withdraw(
+        uint256 amount
+    ) external {
         balanceOf[msg.sender] -= amount;
         (bool ok,) = msg.sender.call{value: amount}("");
         require(ok);
     }
 
-    function deposit() external payable { balanceOf[msg.sender] += msg.value; }
-    receive() external payable { balanceOf[msg.sender] += msg.value; }
+    function deposit() external payable {
+        balanceOf[msg.sender] += msg.value;
+    }
+
+    receive() external payable {
+        balanceOf[msg.sender] += msg.value;
+    }
 }
 
 /// @dev Mock Universal Router — simulates V4_SWAP by minting BMX at 2:1 rate
@@ -64,12 +121,19 @@ contract MockUniversalRouter {
     SimpleERC20 public raiseToken;
     uint256 public executeCallCount;
 
-    constructor(address _bmx, address _raise) {
+    constructor(
+        address _bmx,
+        address _raise
+    ) {
         bmxToken = SimpleERC20(payable(_bmx));
         raiseToken = SimpleERC20(payable(_raise));
     }
 
-    function execute(bytes calldata commands, bytes[] calldata, uint256) external payable {
+    function execute(
+        bytes calldata commands,
+        bytes[] calldata,
+        uint256
+    ) external payable {
         executeCallCount++;
         if (commands.length > 0 && commands[0] == 0x10) {
             // Simulate swap: voter sends ETH via msg.value (native ETH v4 pool)
@@ -89,9 +153,16 @@ contract MockParticipationDistributor {
     uint256 public lastAmount;
     uint256 public streamCount;
 
-    constructor(address _governanceVoter) { GOVERNANCE_VOTER = _governanceVoter; }
+    constructor(
+        address _governanceVoter
+    ) {
+        GOVERNANCE_VOTER = _governanceVoter;
+    }
 
-    function createStream(uint256 epoch, uint256 bmxAmount) external {
+    function createStream(
+        uint256 epoch,
+        uint256 bmxAmount
+    ) external {
         lastEpoch = epoch;
         lastAmount = bmxAmount;
         streamCount++;
@@ -138,7 +209,9 @@ contract GovernanceIntegrationTest is Test {
 
     event Voted(uint256 indexed epoch, address indexed voter, uint8 option, uint256 weight);
     event EpochFinalized(uint256 indexed epoch, uint8 winningOption, bool quorumMet, uint256 budget);
-    event EpochExecuted(uint256 indexed epoch, uint8 option, uint256 raiseTokenAmount, bool forced, address destination);
+    event EpochExecuted(
+        uint256 indexed epoch, uint8 option, uint256 raiseTokenAmount, bool forced, address destination
+    );
     event PeersInitialized(address lpLocker, address participationDistributor, address feeCollector);
 
     function setUp() public {
@@ -152,23 +225,26 @@ contract GovernanceIntegrationTest is Test {
         universalRouter = new MockUniversalRouter(address(bmx), address(raiseToken));
         positionManager = new MockPositionManager();
 
-        voter = new GovernanceVoter(owner, GovernanceVoter.DeployParams({
-            sbfBmx: address(sbfBmx),
-            stakedBmxTracker: address(stakedBmxTracker),
-            bnBmx: bnBmx,
-            bmx: address(bmx),
-            weth: address(raiseToken),
-            universalRouter: address(universalRouter),
-            v4PositionManager: address(positionManager),
-            treasury: treasury,
-            fallbackTreasury: fallbackTreasury,
-            epochZero: epochZero,
-            epochDuration: EPOCH_DURATION,
-            poolFee: uint24(3000),
-            poolTickSpacing: int24(60),
-            poolHooks: address(0),
-            keeper: keeper
-        }));
+        voter = new GovernanceVoter(
+            owner,
+            GovernanceVoter.DeployParams({
+                sbfBmx: address(sbfBmx),
+                stakedBmxTracker: address(stakedBmxTracker),
+                bnBmx: bnBmx,
+                bmx: address(bmx),
+                weth: address(raiseToken),
+                universalRouter: address(universalRouter),
+                v4PositionManager: address(positionManager),
+                treasury: treasury,
+                fallbackTreasury: fallbackTreasury,
+                epochZero: epochZero,
+                epochDuration: EPOCH_DURATION,
+                poolFee: uint24(3000),
+                poolTickSpacing: int24(60),
+                poolHooks: address(0),
+                keeper: keeper
+            })
+        );
 
         // Deploy LPLocker pointed at the real voter (cross-contract wiring)
         (address c0, address c1) = address(bmx) < address(raiseToken)
@@ -196,7 +272,10 @@ contract GovernanceIntegrationTest is Test {
 
     // ============ Helpers ============
 
-    function _setupVoter(address user, uint256 weight) internal {
+    function _setupVoter(
+        address user,
+        uint256 weight
+    ) internal {
         sbfBmx.setBalance(user, weight);
         stakedBmxTracker.setDepositBalance(user, address(bmx), weight);
         sbfBmx.setDepositBalance(user, bnBmx, weight / 10);
@@ -210,7 +289,10 @@ contract GovernanceIntegrationTest is Test {
         voter.execute(0, 0, 0, block.timestamp);
     }
 
-    function _voteOption(address user, uint8 option) internal {
+    function _voteOption(
+        address user,
+        uint8 option
+    ) internal {
         vm.prank(user);
         voter.vote(option);
     }
@@ -218,7 +300,9 @@ contract GovernanceIntegrationTest is Test {
     /// @dev Funding the voter requires the depositor to call `depositRevenue`,
     ///      which credits the current epoch's `epochRevenue`. Bare WETH transfers no longer
     ///      contribute to `e.budget` at finalize time.
-    function _fundVoter(uint256 amount) internal {
+    function _fundVoter(
+        uint256 amount
+    ) internal {
         raiseToken.mint(feeCollector, amount);
         vm.startPrank(feeCollector);
         raiseToken.approve(address(voter), amount);
@@ -373,23 +457,26 @@ contract GovernanceIntegrationTest is Test {
 
     function test_PeerInitialization_RejectsWrongWiring() public {
         // Deploy a new voter (peers not initialized yet)
-        GovernanceVoter voter2 = new GovernanceVoter(owner, GovernanceVoter.DeployParams({
-            sbfBmx: address(sbfBmx),
-            stakedBmxTracker: address(stakedBmxTracker),
-            bnBmx: bnBmx,
-            bmx: address(bmx),
-            weth: address(raiseToken),
-            universalRouter: address(universalRouter),
-            v4PositionManager: address(positionManager),
-            treasury: treasury,
-            fallbackTreasury: fallbackTreasury,
-            epochZero: epochZero,
-            epochDuration: EPOCH_DURATION,
-            poolFee: uint24(3000),
-            poolTickSpacing: int24(60),
-            poolHooks: address(0),
-            keeper: keeper
-        }));
+        GovernanceVoter voter2 = new GovernanceVoter(
+            owner,
+            GovernanceVoter.DeployParams({
+                sbfBmx: address(sbfBmx),
+                stakedBmxTracker: address(stakedBmxTracker),
+                bnBmx: bnBmx,
+                bmx: address(bmx),
+                weth: address(raiseToken),
+                universalRouter: address(universalRouter),
+                v4PositionManager: address(positionManager),
+                treasury: treasury,
+                fallbackTreasury: fallbackTreasury,
+                epochZero: epochZero,
+                epochDuration: EPOCH_DURATION,
+                poolFee: uint24(3000),
+                poolTickSpacing: int24(60),
+                poolHooks: address(0),
+                keeper: keeper
+            })
+        );
 
         // locker.GOVERNANCE_VOTER() == address(voter), not voter2 -> mismatch
         vm.prank(owner);
@@ -942,23 +1029,26 @@ contract GovernanceIntegrationTest is Test {
 
     function test_ExecuteWithoutPeers_Reverts() public {
         // Deploy a new voter without peers initialized
-        GovernanceVoter voter2 = new GovernanceVoter(owner, GovernanceVoter.DeployParams({
-            sbfBmx: address(sbfBmx),
-            stakedBmxTracker: address(stakedBmxTracker),
-            bnBmx: bnBmx,
-            bmx: address(bmx),
-            weth: address(raiseToken),
-            universalRouter: address(universalRouter),
-            v4PositionManager: address(positionManager),
-            treasury: treasury,
-            fallbackTreasury: fallbackTreasury,
-            epochZero: epochZero,
-            epochDuration: EPOCH_DURATION,
-            poolFee: uint24(3000),
-            poolTickSpacing: int24(60),
-            poolHooks: address(0),
-            keeper: keeper
-        }));
+        GovernanceVoter voter2 = new GovernanceVoter(
+            owner,
+            GovernanceVoter.DeployParams({
+                sbfBmx: address(sbfBmx),
+                stakedBmxTracker: address(stakedBmxTracker),
+                bnBmx: bnBmx,
+                bmx: address(bmx),
+                weth: address(raiseToken),
+                universalRouter: address(universalRouter),
+                v4PositionManager: address(positionManager),
+                treasury: treasury,
+                fallbackTreasury: fallbackTreasury,
+                epochZero: epochZero,
+                epochDuration: EPOCH_DURATION,
+                poolFee: uint24(3000),
+                poolTickSpacing: int24(60),
+                poolHooks: address(0),
+                keeper: keeper
+            })
+        );
 
         vm.warp(epochZero + EPOCH_DURATION);
         vm.prank(keeper);

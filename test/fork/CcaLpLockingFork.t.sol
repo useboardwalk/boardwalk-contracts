@@ -40,7 +40,12 @@ contract MockVoterTreasury {
     address public POOL_HOOKS;
     bool public constant poolHooksSet = true;
 
-    constructor(address t, uint24 fee, int24 tickSpacing, address hooks) {
+    constructor(
+        address t,
+        uint24 fee,
+        int24 tickSpacing,
+        address hooks
+    ) {
         treasury = t;
         POOL_FEE = fee;
         POOL_TICK_SPACING = tickSpacing;
@@ -77,8 +82,22 @@ contract CcaLpLockingForkTest is Test {
     event LPLocked(uint256 indexed tokenId);
     event FeesClaimed(uint256 indexed tokenId);
 
+    bool internal forked;
+
+    modifier onlyFork() {
+        if (!forked) vm.skip(true);
+        _;
+    }
+
     function setUp() public {
-        require(BASE_POSITION_MANAGER.code.length > 0, "not a Base fork");
+        // Run with --fork-url, or self-fork from BASE_RPC_URL; without either the suite skips
+        // (CI runs with no RPC configured).
+        if (BASE_POSITION_MANAGER.code.length == 0) {
+            string memory rpcUrl = vm.envOr("BASE_RPC_URL", string(""));
+            if (bytes(rpcUrl).length == 0) return;
+            vm.createSelectFork(rpcUrl);
+        }
+        forked = true;
 
         // Find a live v4 position: EOA-owned, nonzero liquidity (a zero-liquidity poke reverts
         // CannotUpdateEmptyPosition in claimFees), hookless pool (a hook with remove-liquidity
@@ -119,7 +138,7 @@ contract CcaLpLockingForkTest is Test {
         assertEq(pm.ownerOf(tokenId), address(locker), "locker owns position");
     }
 
-    function testFork_RegisterPosition_LocksCcaLp() public {
+    function testFork_RegisterPosition_LocksCcaLp() public onlyFork {
         assertFalse(locker.lockedPositions(tokenId), "not locked before register");
 
         vm.expectEmit(true, true, true, true);
@@ -133,14 +152,14 @@ contract CcaLpLockingForkTest is Test {
         assertEq(ids[0], tokenId, "tracked id");
     }
 
-    function testFork_RegisterPosition_RevertWhen_NotOwnedByLocker() public {
+    function testFork_RegisterPosition_RevertWhen_NotOwnedByLocker() public onlyFork {
         // A live but non-locker-owned id cannot be registered (picked in setUp so ownerOf succeeds).
         vm.prank(registrar);
         vm.expectRevert(LPLocker.NotPositionOwner.selector);
         locker.registerPosition(foreignTokenId);
     }
 
-    function testFork_ClaimFees_OnRegisteredCcaLp() public {
+    function testFork_ClaimFees_OnRegisteredCcaLp() public onlyFork {
         vm.prank(registrar);
         locker.registerPosition(tokenId);
 
@@ -150,7 +169,7 @@ contract CcaLpLockingForkTest is Test {
         locker.claimFees(tokenId, block.timestamp);
     }
 
-    function testFork_Registrar_CanRenounceAfterLocking() public {
+    function testFork_Registrar_CanRenounceAfterLocking() public onlyFork {
         vm.prank(registrar);
         locker.registerPosition(tokenId);
 

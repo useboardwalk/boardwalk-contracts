@@ -19,7 +19,11 @@ contract MockFeeDistributor {
     uint256 public callbackToBalance;
     uint256 public callbackFeeDistributorBalance;
 
-    function setBalanceObservation(BoardwalkToken token_, address from_, address to_) external {
+    function setBalanceObservation(
+        BoardwalkToken token_,
+        address from_,
+        address to_
+    ) external {
         observeBalances = true;
         observedToken = token_;
         observedFrom = from_;
@@ -195,7 +199,13 @@ contract BoardwalkTokenTest is Test {
 
         vm.expectEmit(true, true, true, true, address(t));
         emit TokenInitialized(
-            "MyToken", "MT", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(mockFeeDistributor), presaleManager
+            "MyToken",
+            "MT",
+            BASE_TAX_BPS,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager
         );
 
         t.initialize(
@@ -638,9 +648,7 @@ contract BoardwalkTokenTest is Test {
 
         assertEq(mockFeeDistributor.callbackFromBalance(), 0, "sender should be fully debited before callback");
         assertEq(
-            mockFeeDistributor.callbackToBalance(),
-            amount - expectedTax,
-            "recipient should be credited before callback"
+            mockFeeDistributor.callbackToBalance(), amount - expectedTax, "recipient should be credited before callback"
         );
         assertEq(
             mockFeeDistributor.callbackFeeDistributorBalance(),
@@ -939,7 +947,9 @@ contract BoardwalkTokenTest is Test {
         MockFeeDistributor fdA = new MockFeeDistributor();
         BoardwalkToken tokenA = _deployUninitializedToken();
         address[] memory noExempt = new address[](0);
-        tokenA.initialize("A", "A", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(fdA), presaleManager, noExempt);
+        tokenA.initialize(
+            "A", "A", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(fdA), presaleManager, noExempt
+        );
 
         vm.startPrank(presaleManager);
         tokenA.mint(alice, amount);
@@ -954,7 +964,9 @@ contract BoardwalkTokenTest is Test {
         // ---- Token B: transfer at seedTime + t2 ----
         MockFeeDistributor fdB = new MockFeeDistributor();
         BoardwalkToken tokenB = _deployUninitializedToken();
-        tokenB.initialize("B", "B", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(fdB), presaleManager, noExempt);
+        tokenB.initialize(
+            "B", "B", BASE_TAX_BPS, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(fdB), presaleManager, noExempt
+        );
 
         vm.startPrank(presaleManager);
         tokenB.mint(alice, amount);
@@ -982,7 +994,14 @@ contract BoardwalkTokenTest is Test {
         BoardwalkToken t = _deployUninitializedToken();
         address[] memory exempts = new address[](0);
         t.initialize(
-            "Test", "T", bps, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(mockFeeDistributor), presaleManager, exempts
+            "Test",
+            "T",
+            bps,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
         );
 
         assertEq(t.baseTaxBps(), bps, "baseTaxBps should be stored correctly for any valid value");
@@ -1001,7 +1020,14 @@ contract BoardwalkTokenTest is Test {
         // Since we hold antiWhaleTaxBps == 4000, the bound on bps guarantees InvalidBaseTaxBps.
         vm.expectRevert(BoardwalkToken.InvalidBaseTaxBps.selector);
         t.initialize(
-            "Test", "T", bps, ANTI_WHALE_TAX_BPS, ANTI_WHALE_DURATION, address(mockFeeDistributor), presaleManager, exempts
+            "Test",
+            "T",
+            bps,
+            ANTI_WHALE_TAX_BPS,
+            ANTI_WHALE_DURATION,
+            address(mockFeeDistributor),
+            presaleManager,
+            exempts
         );
     }
 

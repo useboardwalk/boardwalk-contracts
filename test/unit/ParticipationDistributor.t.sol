@@ -10,22 +10,35 @@ contract MockBMXToken {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         balanceOf[to] += amount;
     }
 
-    function approve(address spender, uint256 amount) external returns (bool) {
+    function approve(
+        address spender,
+        uint256 amount
+    ) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
 
-    function transfer(address to, uint256 amount) external returns (bool) {
+    function transfer(
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         if (allowance[from][msg.sender] != type(uint256).max) {
             allowance[from][msg.sender] -= amount;
         }
@@ -39,11 +52,19 @@ contract MockGovernanceVoter {
     mapping(uint256 => IGovernanceVoter.EpochInfo) private _epochInfos;
     mapping(uint256 => mapping(address => IGovernanceVoter.UserVote)) private _userVotes;
 
-    function setEpochInfo(uint256 epoch, uint256 totalVoteWeight) external {
+    function setEpochInfo(
+        uint256 epoch,
+        uint256 totalVoteWeight
+    ) external {
         _epochInfos[epoch].totalVoteWeight = totalVoteWeight;
     }
 
-    function setUserVote(uint256 epoch, address user, uint8 option, uint256 weight) external {
+    function setUserVote(
+        uint256 epoch,
+        address user,
+        uint8 option,
+        uint256 weight
+    ) external {
         _userVotes[epoch][user] = IGovernanceVoter.UserVote({weight: uint248(weight), option: option});
     }
 
@@ -53,7 +74,10 @@ contract MockGovernanceVoter {
         return _epochInfos[epoch];
     }
 
-    function getUserVote(uint256 epoch, address user) external view returns (IGovernanceVoter.UserVote memory) {
+    function getUserVote(
+        uint256 epoch,
+        address user
+    ) external view returns (IGovernanceVoter.UserVote memory) {
         return _userVotes[epoch][user];
     }
 }
@@ -79,7 +103,10 @@ contract ParticipationDistributorTest is Test {
         mockVoter.setUserVote(0, bob, 2, 300e18);
     }
 
-    function _createStream(uint256 epoch, uint256 amount) internal {
+    function _createStream(
+        uint256 epoch,
+        uint256 amount
+    ) internal {
         bmx.mint(address(mockVoter), amount);
         vm.startPrank(address(mockVoter));
         bmx.approve(address(distributor), amount);

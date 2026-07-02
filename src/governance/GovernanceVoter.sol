@@ -62,7 +62,7 @@ contract GovernanceVoter is Ownable2Step, Timelocked {
 
     uint24 public immutable POOL_FEE;
     int24 public immutable POOL_TICK_SPACING;
-    
+
     address public POOL_HOOKS;
 
     struct EpochInfo {

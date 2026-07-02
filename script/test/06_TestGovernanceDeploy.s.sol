@@ -82,8 +82,7 @@ contract TestGovernanceDeployScript is BaseTestScript {
         _recordTx("Deploy LPLocker");
 
         // 3. Deploy ParticipationDistributor
-        ParticipationDistributor participationDistributor =
-            new ParticipationDistributor(bmx, address(governanceVoter));
+        ParticipationDistributor participationDistributor = new ParticipationDistributor(bmx, address(governanceVoter));
         _recordTx("Deploy ParticipationDistributor");
 
         // 4. Wire peers (one-time, validates bidirectional references). The feeCollector in
