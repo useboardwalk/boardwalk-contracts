@@ -38,11 +38,12 @@ interface ICcaAuctionIntrospect {
 /// - CCA_END_BLOCK (ArbSys L2 block num)
 /// - CCA_CLAIM_BLOCK (ArbSys L2 block num)
 /// - CCA_MIGRATION_BLOCK (ArbSys L2 block num)
-/// - CCA_TICK_SPACING_Q96: Q96 token price
-/// - CCA_FLOOR_PRICE_Q96: Q96 token price
-/// - CCA_REQUIRED_CURRENCY_RAISED: graduation threshold (wei; 0 needs CCA_ZERO_GRADUATION_ATTESTED=true)
 /// - CCA_AUCTION_STEPS: packed hex, 8 bytes/step (uint24 mps + uint40 blockDelta; mps*delta = 1e7, deltas span start..end)
-/// Optional:
+/// Optional (defaults are the announced launch values / canonical addresses in ArbitrumConfig):
+/// - CCA_TICK_SPACING_Q96: Q96 token price (default: 1% of the floor)
+/// - CCA_FLOOR_PRICE_Q96: Q96 token price (default: 0.00025 ETH per BWS)
+/// - CCA_REQUIRED_CURRENCY_RAISED: graduation threshold in wei (default: full supply clearing at
+///   the floor, ~54.8665 ETH; 0 needs CCA_ZERO_GRADUATION_ATTESTED=true)
 /// - CCA_LIQUIDITY_LAUNCHER (default: ArbitrumConfig)
 /// - CCA_LBP_STRATEGY (default: ArbitrumConfig)
 /// - CCA_LAUNCH_SALT (default: 0)
@@ -299,9 +300,10 @@ contract LaunchBwsCca is Script {
         cfg.endBlock = _envU64("CCA_END_BLOCK");
         cfg.claimBlock = _envU64("CCA_CLAIM_BLOCK");
         cfg.migrationBlock = _envU64("CCA_MIGRATION_BLOCK");
-        cfg.tickSpacingQ96 = vm.envUint("CCA_TICK_SPACING_Q96");
-        cfg.floorPriceQ96 = vm.envUint("CCA_FLOOR_PRICE_Q96");
-        cfg.requiredCurrencyRaised = _envU128("CCA_REQUIRED_CURRENCY_RAISED");
+        cfg.tickSpacingQ96 = vm.envOr("CCA_TICK_SPACING_Q96", ArbitrumConfig.CCA_TICK_SPACING_Q96);
+        cfg.floorPriceQ96 = vm.envOr("CCA_FLOOR_PRICE_Q96", ArbitrumConfig.CCA_FLOOR_PRICE_Q96);
+        cfg.requiredCurrencyRaised =
+            _envU128("CCA_REQUIRED_CURRENCY_RAISED", ArbitrumConfig.CCA_REQUIRED_CURRENCY_RAISED);
         cfg.zeroGraduationAttested = vm.envOr("CCA_ZERO_GRADUATION_ATTESTED", false);
         cfg.auctionStepsData = vm.envBytes("CCA_AUCTION_STEPS");
         cfg.salt = vm.envOr("CCA_LAUNCH_SALT", bytes32(0));
@@ -316,9 +318,10 @@ contract LaunchBwsCca is Script {
     }
 
     function _envU128(
-        string memory name
+        string memory name,
+        uint128 defaultValue
     ) internal view returns (uint128) {
-        uint256 v = vm.envUint(name);
+        uint256 v = vm.envOr(name, uint256(defaultValue));
         if (v > type(uint128).max) revert EnvValueTooLarge(name, v);
         return uint128(v);
     }

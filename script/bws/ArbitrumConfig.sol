@@ -67,6 +67,22 @@ library ArbitrumConfig {
     uint24 internal constant POOL_FEE = 10_000;
     int24 internal constant POOL_TICK_SPACING = 200;
 
+    // --- BWS CCA launch parameters (announced July 2026) ---
+    // Auction window: July 6 2026 15:00 UTC -> July 11 2026 06:59 UTC. The block numbers and the
+    // step schedule are NOT defaulted here: they depend on the live L2 block rate and are pinned
+    // on launch day (see 06_LaunchBwsCca.s.sol).
+
+    /// @notice Bid tick spacing: 1% of the floor price, so the floor sits on exactly the 100th
+    ///         tick. Same floor:tick ratio as Uniswap's reference launch.
+    uint256 internal constant CCA_TICK_SPACING_Q96 = (uint256(1) << 96) / 400_000;
+    /// @notice Auction floor: 0.00025 ETH per BWS as a Q96 wei-per-wei price (tick-aligned; exact
+    ///         to 22 significant digits).
+    uint256 internal constant CCA_FLOOR_PRICE_Q96 = CCA_TICK_SPACING_Q96 * 100;
+    /// @notice Graduation threshold: the full auction supply clearing at the floor (announced as
+    ///         54.8665 ETH, floored to the exact wei the tick-aligned floor price can raise - a
+    ///         threshold even 1 wei higher would make a complete floor-price sell-out refund).
+    uint128 internal constant CCA_REQUIRED_CURRENCY_RAISED = uint128((CCA_AUCTION_SUPPLY * CCA_FLOOR_PRICE_Q96) >> 96);
+
     // The CCA launch runs through the LiquidityLauncher (06_LaunchBwsCca.s.sol), which sets
     // tokensRecipient = UnsoldBurner and requiredCurrencyRaised at auction creation. Deploy
     // UnsoldBurner via 05_DeployUnsoldBurner.s.sol before the auction. All four addresses below

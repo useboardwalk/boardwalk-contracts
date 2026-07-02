@@ -185,6 +185,37 @@ contract LaunchBwsCcaTest is Test {
         assertEq(MockLaunchCcaAuction(auction).auctionParameters().requiredCurrencyRaised, 0, "zero threshold kept");
     }
 
+    // ---- launch defaults ----
+
+    /// @dev Pins the announced launch values (0.00025 ETH/BWS floor, 1%-of-floor ticks, ~54.8665
+    ///      ETH graduation threshold) as literals, plus the CCA constructor constraints they must
+    ///      satisfy - a typo'd default would otherwise only surface in the launch simulation.
+    function test_Config_LaunchDefaultsMatchAnnouncedValues() public pure {
+        assertEq(ArbitrumConfig.CCA_TICK_SPACING_Q96, 198_070_406_285_660_843_983_859, "tick = (1<<96)/400000");
+        assertEq(ArbitrumConfig.CCA_FLOOR_PRICE_Q96, 19_807_040_628_566_084_398_385_900, "floor = 100 ticks");
+        assertEq(ArbitrumConfig.CCA_REQUIRED_CURRENCY_RAISED, 54_866_499_999_999_999_999, "threshold ~54.8665 ETH");
+
+        // TickStorage constraints: floor on a tick boundary and above the minimums.
+        assertEq(ArbitrumConfig.CCA_FLOOR_PRICE_Q96 % ArbitrumConfig.CCA_TICK_SPACING_Q96, 0, "floor tick-aligned");
+        assertGe(ArbitrumConfig.CCA_FLOOR_PRICE_Q96, (uint256(1) << 32) + 1, "floor >= MIN_FLOOR_PRICE");
+        assertGe(ArbitrumConfig.CCA_TICK_SPACING_Q96, 2, "tick >= MIN_TICK_SPACING");
+
+        // MaxBidPriceLib bound for the fixed auction supply.
+        uint256 maxBid = ((uint256(1) << 154) / AUCTION_SUPPLY) ** 2;
+        uint256 currencyBound = (uint256(1) << 222) / AUCTION_SUPPLY;
+        if (currencyBound < maxBid) maxBid = currencyBound;
+        assertLe(
+            ArbitrumConfig.CCA_FLOOR_PRICE_Q96,
+            maxBid - ArbitrumConfig.CCA_TICK_SPACING_Q96,
+            "floor + tick within max bid price"
+        );
+
+        // A complete sell-out at the floor price must graduate: the threshold cannot exceed the
+        // exact wei that clearing the whole supply at the floor raises.
+        uint256 fullRaiseAtFloor = (AUCTION_SUPPLY * ArbitrumConfig.CCA_FLOOR_PRICE_Q96) >> 96;
+        assertLe(ArbitrumConfig.CCA_REQUIRED_CURRENCY_RAISED, fullRaiseAtFloor, "floor sell-out graduates");
+    }
+
     // ---- launch() + check() reverts ----
 
     function test_RevertWhen_WalletIsNotTheScript() public {
