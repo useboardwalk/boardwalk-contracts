@@ -71,8 +71,9 @@ contract LaunchBwsCcaTest is Test {
         cfg.recipient = recipient;
         cfg.startBlock = uint64(block.number + 10);
         cfg.endBlock = uint64(block.number + 110);
-        cfg.claimBlock = uint64(block.number + 120);
-        cfg.migrationBlock = uint64(block.number + 130);
+        // Per Uniswap's guidance, claims and migration both open the block after close.
+        cfg.claimBlock = cfg.endBlock + 1;
+        cfg.migrationBlock = cfg.endBlock + 1;
         cfg.tickSpacingQ96 = uint256(1) << 96;
         cfg.floorPriceQ96 = uint256(1000) << 96;
         cfg.requiredCurrencyRaised = uint128(1 ether);
@@ -265,8 +266,8 @@ contract LaunchBwsCcaTest is Test {
     function test_Launch_WithDefaultSchedule() public {
         LaunchBwsCca.LaunchConfig memory cfg = _cfg();
         cfg.endBlock = cfg.startBlock + 10_000;
-        cfg.claimBlock = cfg.endBlock;
-        cfg.migrationBlock = cfg.endBlock + 20;
+        cfg.claimBlock = cfg.endBlock + 1;
+        cfg.migrationBlock = cfg.endBlock + 1;
         cfg.auctionStepsData = launchScript.defaultAuctionSchedule(cfg.startBlock, cfg.endBlock);
 
         address auction = launchScript.launch(cfg);

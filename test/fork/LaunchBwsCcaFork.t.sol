@@ -137,8 +137,9 @@ contract LaunchBwsCcaForkTest is Test {
         cfg.recipient = treasury;
         cfg.startBlock = baseBlock + 10;
         cfg.endBlock = baseBlock + 10 + 10_000;
-        cfg.claimBlock = cfg.endBlock;
-        cfg.migrationBlock = cfg.endBlock + 20;
+        // Per Uniswap's guidance, claims and migration both open the block after close.
+        cfg.claimBlock = cfg.endBlock + 1;
+        cfg.migrationBlock = cfg.endBlock + 1;
         cfg.tickSpacingQ96 = TICK_Q96;
         cfg.floorPriceQ96 = FLOOR_Q96;
         cfg.requiredCurrencyRaised = REQUIRED_RAISE;

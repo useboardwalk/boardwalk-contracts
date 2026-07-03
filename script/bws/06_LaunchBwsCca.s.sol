@@ -36,9 +36,9 @@ interface ICcaAuctionIntrospect {
 /// - LAUNCH_RECIPIENT: treasury (leftovers + entire LP seed on non-graduation)
 /// - CCA_START_BLOCK (ArbSys L2 block num)
 /// - CCA_END_BLOCK (ArbSys L2 block num)
-/// - CCA_CLAIM_BLOCK (ArbSys L2 block num)
-/// - CCA_MIGRATION_BLOCK (ArbSys L2 block num)
 /// Optional (defaults are the announced launch values / canonical addresses in ArbitrumConfig):
+/// - CCA_CLAIM_BLOCK (default: endBlock + 1, per Uniswap's guidance)
+/// - CCA_MIGRATION_BLOCK (default: endBlock + 1, per Uniswap's guidance)
 /// - CCA_AUCTION_STEPS: packed hex, 8 bytes/step (uint24 mps + uint40 blockDelta; mps*delta = 1e7,
 ///   deltas span start..end). Default: generated from start/end per Uniswap's uniswap-cca plugin
 ///   defaults - 12 equal-token steps on a convex t^1.2 ramp, then ~30% of supply in the final block
@@ -351,8 +351,9 @@ contract LaunchBwsCca is Script {
         cfg.recipient = vm.envAddress("LAUNCH_RECIPIENT");
         cfg.startBlock = _envU64("CCA_START_BLOCK");
         cfg.endBlock = _envU64("CCA_END_BLOCK");
-        cfg.claimBlock = _envU64("CCA_CLAIM_BLOCK");
-        cfg.migrationBlock = _envU64("CCA_MIGRATION_BLOCK");
+        // Both endBlock + 1, per Uniswap's guidance: claims and migration open the block after close.
+        cfg.claimBlock = _envU64("CCA_CLAIM_BLOCK", cfg.endBlock + 1);
+        cfg.migrationBlock = _envU64("CCA_MIGRATION_BLOCK", cfg.endBlock + 1);
         cfg.tickSpacingQ96 = vm.envOr("CCA_TICK_SPACING_Q96", ArbitrumConfig.CCA_TICK_SPACING_Q96);
         cfg.floorPriceQ96 = vm.envOr("CCA_FLOOR_PRICE_Q96", ArbitrumConfig.CCA_FLOOR_PRICE_Q96);
         cfg.requiredCurrencyRaised =
@@ -369,6 +370,15 @@ contract LaunchBwsCca is Script {
         string memory name
     ) internal view returns (uint64) {
         uint256 v = vm.envUint(name);
+        if (v > type(uint64).max) revert EnvValueTooLarge(name, v);
+        return uint64(v);
+    }
+
+    function _envU64(
+        string memory name,
+        uint64 defaultValue
+    ) internal view returns (uint64) {
+        uint256 v = vm.envOr(name, uint256(defaultValue));
         if (v > type(uint64).max) revert EnvValueTooLarge(name, v);
         return uint64(v);
     }

@@ -68,10 +68,10 @@ library ArbitrumConfig {
     int24 internal constant POOL_TICK_SPACING = 200;
 
     // --- BWS CCA launch parameters (announced July 2026) ---
-    // Auction window: July 6 2026 15:00 UTC -> July 11 2026 06:59 UTC. The block numbers are NOT
-    // defaulted here: they depend on the live L2 block rate and are pinned on launch day. The step
-    // schedule defaults to the convex uniswap-cca shape the script generates from start/end
-    // (see 06_LaunchBwsCca.s.sol, defaultAuctionSchedule).
+    // Auction window: July 6 2026 15:00 UTC -> July 11 2026 06:59 UTC. The start/end blocks are NOT
+    // defaulted here: they depend on the live L2 block rate and are pinned on launch day. Claim and
+    // migration blocks default to endBlock + 1 (per Uniswap's guidance) and the step schedule to
+    // the convex uniswap-cca shape, both derived in 06_LaunchBwsCca.s.sol from start/end.
 
     /// @notice Bid tick spacing: 1% of the floor price, so the floor sits on exactly the 100th
     ///         tick. Same floor:tick ratio as Uniswap's reference launch.
