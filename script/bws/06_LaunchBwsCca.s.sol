@@ -109,7 +109,10 @@ contract LaunchBwsCca is Script {
 
         // A forked simulation cannot execute the ArbSys precompile (its on-chain code is the 0xfe
         // stub), which the CCA constructor calls; mock it to the RPC block number (on Arbitrum
-        // eth_blockNumber == arbBlockNumber). Simulation-only - broadcast txs use the real precompile.
+        // eth_blockNumber == arbBlockNumber). This covers run()'s own execution, where all the
+        // validation lives. Forge's post-run gas-estimation replay runs cheatcode-free and still
+        // hits the raw stub, so broadcast with --skip-simulation; the node estimates gas against
+        // the real precompile. Proven on the 2026-07-06 launch.
         (bool arbSysOk,) = ARB_SYS.staticcall(abi.encodeWithSelector(ARB_BLOCK_NUMBER_SELECTOR));
         if (!arbSysOk) {
             vm.mockCall(ARB_SYS, abi.encodeWithSelector(ARB_BLOCK_NUMBER_SELECTOR), abi.encode(block.number));
