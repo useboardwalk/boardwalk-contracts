@@ -8,14 +8,16 @@ import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
 
-/// @title TestGovernanceDeploy - Deploy governance stack on Base for backend testing
-/// @notice Deploys GovernanceVoter + LPLocker + ParticipationDistributor using real Base addresses.
+/// @title TestGovernanceDeploy - Deploy the governance stack for backend testing
+/// @notice Deploys GovernanceVoter + LPLocker + ParticipationDistributor. Defaults target the legacy
+///         Base/BMX addresses; override via env to test the live Arbitrum/BWS wiring (see
+///         script/bws/02_DeployBwsGovernance.s.sol for the production variant).
 ///         Uses short epoch durations so backend devs can test the full lifecycle quickly.
 ///
 /// Required env:
 ///   DEPLOYER_PRIVATE_KEY    — deployer key (becomes owner/keeper/treasury)
 ///
-/// Optional env (defaults to known Base mainnet addresses):
+/// Optional env (defaults to the legacy Base/BMX mainnet addresses):
 ///   BMX_ADDRESS,
 ///   SBF_BMX, STAKED_BMX_TRACKER, BN_BMX, UNIVERSAL_ROUTER, V4_POSITION_MANAGER,
 ///   WETH_ADDRESS, EPOCH_DURATION (default 10 minutes),
@@ -76,12 +78,11 @@ contract TestGovernanceDeployScript is BaseTestScript {
         _recordTx("Deploy GovernanceVoter");
 
         // 2. Deploy LPLocker — v4 pools use native ETH (address(0)), always currency0
-        LPLocker lpLocker = new LPLocker(v4PositionManager, address(governanceVoter), address(0), bmx);
+        LPLocker lpLocker = new LPLocker(v4PositionManager, address(governanceVoter), address(0), bmx, deployer);
         _recordTx("Deploy LPLocker");
 
         // 3. Deploy ParticipationDistributor
-        ParticipationDistributor participationDistributor =
-            new ParticipationDistributor(bmx, address(governanceVoter));
+        ParticipationDistributor participationDistributor = new ParticipationDistributor(bmx, address(governanceVoter));
         _recordTx("Deploy ParticipationDistributor");
 
         // 4. Wire peers (one-time, validates bidirectional references). The feeCollector in
@@ -102,7 +103,7 @@ contract TestGovernanceDeployScript is BaseTestScript {
         console.log("TREASURY:", treasury);
         console.log("KEEPER:", keeper);
         console.log("");
-        console.log("Voter must hold sbfBMX to vote. Epoch duration:", epochDuration, "seconds.");
+        console.log("Voter must hold the sbf fee-tracker token to vote. Epoch duration:", epochDuration, "seconds.");
         console.log("Send WETH to GovernanceVoter to simulate governance revenue before finalizing.");
         console.log("Next: run 07_TestGovernanceVoteAndExecute.s.sol");
 

@@ -1,6 +1,8 @@
 # Boardwalk Launchpad: Technical Spec
 
-A permissionless token launch protocol. Each launch deploys 4–5 EIP-1167 clones from shared implementation templates; singletons are deployed once per chain. Launches feature an embedded transfer tax, time-weighted presale, permanently locked liquidity, LP staking with multiplier points, and (on Base) onchain governance over protocol revenue.
+A permissionless token launch protocol. Each launch deploys 4–5 EIP-1167 clones from shared implementation templates; singletons are deployed once per chain. Launches feature an embedded transfer tax, time-weighted presale, permanently locked liquidity, LP staking with multiplier points, and (on Arbitrum) onchain governance over protocol revenue.
+
+The protocol token is BWS, home chain Arbitrum. It replaced BMX (home: Base) via a 1:1 migration; governance and the revenue hub moved with it. See *BWS token and migration*. Governance-related contract identifiers keep their legacy `Bmx` names (`sbfBmx`, `SET_BMX_BURN`, …) — they are wired to the BWS equivalents on Arbitrum.
 
 Targeted chains: Ethereum, Base, Katana, Fraxtal, Ink, Arbitrum. The raise token (WETH, frxUSD, etc.) is set per chain at deployment.
 
@@ -17,7 +19,7 @@ Targeted chains: Ethereum, Base, Katana, Fraxtal, Ink, Arbitrum. The raise token
 
 **Singletons** (deployed once per chain):
 - `LaunchFactory`, `BoardwalkLPManager`, `BoardwalkFeeCollector`, `IntegratorFeeCollector`, `BoostBurn`
-- Base only: `GovernanceVoter`, `LPLocker`, `ParticipationDistributor`
+- Arbitrum only: `GovernanceVoter`, `LPLocker`, `ParticipationDistributor`, plus the token/migration set (`BWS`, `BwsMigration`, `UnsoldBurner` — see *BWS token and migration*)
 
 Each clone is initialised exactly once. `LPStaking` and `VestingStream` use a two-step `setInitializer` → `initialize` lock so only `PresaleManager` can initialise them at seed time; the rest use OZ `Initializable`. Express launches deploy 4 clones (no `VestingStream`); Advanced launches deploy 5 when `presalePercent < 50%`, otherwise 4.
 
@@ -130,13 +132,13 @@ Factory parameters (`issuer + boardwalk + incentive + INTEGRATOR_BPS` = `total` 
 
 | Chain | `issuer` | `boardwalk` | `referrer` | `incentive` | `integrators` |
 | ----- | -------- | ----------- | ---------- | ----------- | ---------------- |
-| Base (8453), Katana (747474), Ink (57073) | 30 | 35 | 5 | 23 | 27 |
+| Base (8453), Katana (747474), Ink (57073), Arbitrum (42161) | 30 | 35 | 5 | 23 | 27 |
 | Fraxtal (252) | 30 | 35 | 5 | 25 | 25 |
 | Ethereum (1) | 35 | 35 | 5 | 25 | 20 |
 
 **Effective splits at launch** (add 0.1% DEX fee on swaps):
 
-| Path | Base / Katana / Ink | Fraxtal | Ethereum |
+| Path | Base / Katana / Ink / Arbitrum | Fraxtal | Ethereum |
 | ---- | ------------------- | ------- | -------- |
 | **Advanced** (referrer set) | 0.30% issuer, 0.30% Boardwalk, 0.05% referrer, 0.23% LP incentives, 0.27% integrators | 0.30% issuer, 0.30% Boardwalk, 0.05% referrer, 0.25% LP incentives, 0.25% integrators | 0.35% issuer, 0.30% Boardwalk, 0.05% referrer, 0.25% LP incentives, 0.20% integrators |
 | **Express** (no referrer) | 0.30% issuer, 0.35% Boardwalk, 0.23% LP incentives, 0.27% integrators | 0.30% issuer, 0.35% Boardwalk, 0.25% LP incentives, 0.25% integrators | 0.35% issuer, 0.35% Boardwalk, 0.25% LP incentives, 0.20% integrators |
@@ -265,7 +267,7 @@ Claims revert before `cliffEnd`. Vesting amounts, schedule, and labels are immut
 ### 1. Launch creation (`LaunchFactory.createLaunch`)
 
 1. Validate config (path, presale percent divisibility, vesting required when `presalePercent < 50%`, splits sum, address bounds, distinct-address invariant against immutable exempt singletons).
-2. Burn `_effectiveCost(bmxBurnAmount, memberLaunchDiscountBps, issuer)` BMX from issuer to dead.
+2. Burn `_effectiveCost(bmxBurnAmount, memberLaunchDiscountBps, issuer)` BWS from issuer to dead.
 3. Deploy clones (token, feeDistributor, presale, lpStaking; vesting if Advanced + needs vesting).
 4. Lock `LPStaking.initAuthorizer = presale`. Lock `VestingStream.initAuthorizer = presale, issuer = issuer`.
 5. Initialise token (name, ticker, baseTaxBps, antiWhaleTaxBps, antiWhaleDuration, feeDistributor, presale, exempt addresses including `INTEGRATOR_COLLECTOR` when `integratorBps > 0`).
@@ -300,9 +302,9 @@ Claims revert before `cliffEnd`. Vesting amounts, schedule, and labels are immut
 
 1. Keeper calls `swapToRaiseToken(tokens[], minAmountsOut[], deadline)`. For bridge-only revenue with no swaps to perform, the keeper calls `forwardRevenue()` instead (no-op on zero balance).
 2. For each token: read balance, lazy `forceApprove(router, max)` if undersized allowance, swap, clear `accumulatedFees[token]`. `RAISE_TOKEN` entries are silently skipped (passing them to the router would revert with `[X, X]`).
-3. Forward the collector's full raise-token balance (swap output PLUS any pre-existing balance such as bridged revenue or residual) to `treasury` (or split 30/70 with `GovernanceVoter` on Base).
+3. Forward the collector's full raise-token balance (swap output PLUS any pre-existing balance such as bridged revenue or residual) to `treasury` (or split 30/70 with `GovernanceVoter` on Arbitrum).
 
-### 6. Governance vote → finalize → execute (Base only)
+### 6. Governance vote → finalize → execute (Arbitrum)
 
 See *Governance* below.
 
@@ -350,14 +352,18 @@ the other deployment chains over Chainlink CCIP, hub-and-spoke with Base as the 
 
 ## Cross-chain revenue bridging
 
-Protocol revenue accrues on each non-Base chain in that chain's raise token (WETH on Ethereum/Ink,
+Protocol revenue accrues on each source chain in that chain's raise token (WETH on Ethereum/Ink,
 KAT on Katana, frxUSD on Fraxtal), aggregated by that chain's `BoardwalkFeeCollector`. Weekly, an
-automated keeper consolidates it to Base, landing as **WETH** in the Base `BoardwalkFeeCollector`.
-Revenue flows only through onchain bridging contracts the keeper triggers.
+automated keeper consolidates it to the governance hub, landing as **WETH** in the hub's
+`BoardwalkFeeCollector`. Revenue flows only through onchain bridging contracts the keeper triggers.
+
+The hub is Arbitrum since the BWS migration. The mesh below was built with Base as hub (contract
+names and the `destinationChainId` pin still say so); it is redeployed with the delivery leg
+re-pinned to Arbitrum at the migration cutover, and Base's BMX governance sunsets.
 
 Two contracts (`src/crosschain/`):
 
-- **`RevenueBridger`** (every non-Base lane: Ethereum, Ink, Arbitrum, Katana, Fraxtal): generic. Holds the raise
+- **`RevenueBridger`** (every source lane): generic. Holds the raise
   token (it is the source FeeCollector `treasury`). The bridge keeper calls
   `bridgeToBase(amount, lifiCalldata)`, forwarding keeper-built LiFi route calldata to the per-chain
   LiFi Diamond. ETH/Ink/Arbitrum use a pure Across V4 route; Katana a composed Symbiosis route; Fraxtal a
@@ -365,16 +371,16 @@ Two contracts (`src/crosschain/`):
   fee in native FRAX) is the keeper's `msg.value`, forwarded to the Diamond with any unconsumed excess
   refunded to the keeper; pure ERC20 lanes pass `msg.value == 0`. An unconditional `receive()` accepts
   the Diamond's excess-fee refund.
-- **`BaseRevenueSwapper`** (Base): delivery target for all lanes (rescue-capable, so a wrong asset is
+- **`BaseRevenueSwapper`** (hub; the name predates the move): delivery target for all lanes (rescue-capable, so a wrong asset is
   recoverable — at the rescue-less FeeCollector it would be stuck). Swaps the delivered raise token
   (`tokenIn`, any non-WETH ERC20; e.g. the frxUSD from Fraxtal) → WETH via the 0x AllowanceHolder
-  (`swapAndForward`), then forwards its entire WETH balance to the Base FeeCollector — bridged-in WETH
-  (ETH/Ink/Katana) rides along. Permissionless, `forwardWeth()` is the if-needed sweep.
+  (`swapAndForward`), then forwards its entire WETH balance to the hub FeeCollector — bridged-in WETH
+  rides along. Permissionless, `forwardWeth()` is the if-needed sweep.
 
 Per-chain config (LiFi Diamond, facet selectors, raise/delivered frxUSD, AllowanceHolder, WETH) lives in
 [script/CrossChainConfig.sol](script/CrossChainConfig.sol); deploy via
-[script/06_DeployRevenueBridging.s.sol](script/06_DeployRevenueBridging.s.sol). Deploy order: Base swapper 
-first, then each non-Base lane pinned to it as `BASE_DESTINATION`.
+[script/06_DeployRevenueBridging.s.sol](script/06_DeployRevenueBridging.s.sol). Deploy order: hub swapper 
+first, then each source lane pinned to it as `BASE_DESTINATION`.
 
 ### Security controls (`RevenueBridger`)
 
@@ -401,7 +407,7 @@ unconditional `receive()` accepts the Diamond's excess-fee refund):
 
 ### Trust statement (per lane)
 
-- **Ethereum / Ink / Arbitrum**: delivery (recipient + output asset + origin refund) is **pinned on-chain**
+- **Ethereum / Ink / Arbitrum**: delivery (recipient + output asset + origin refund) is **pinned onchain**
   (Across V4 facet-data). Residual = the bounded relayer-fee spread (`MAX_FEE_BPS`) plus LiFi-Diamond
   upgrade risk against the standing balance.
 - **Katana / Fraxtal**: delivery is **keeper-trusted** end-to-end (the composed Symbiosis / Glacis
@@ -415,12 +421,37 @@ Emergency response = `revokeKeeper` + halt the accrual cron (both instant); keep
 
 ### Invariants (new)
 
-- **Source `governanceVault == address(0)` forever** (Ethereum, Ink, Arbitrum, Katana, Fraxtal): a set vault
-  diverts 70% of `forwardRevenue` to the vault, silently bypassing the bridger. All four are zero
+- **Source `governanceVault == address(0)` forever** (Ethereum, Ink, Katana, Fraxtal): a set vault
+  diverts 70% of `forwardRevenue` to the vault, silently bypassing the bridger. All are zero
   onchain; never call `executeSetGovernanceVault` there; alert on `GovernanceVaultUpdated`.
-- **Nothing but WETH addressed to the Base FeeCollector**: it can only swap Boardwalk-DEX-listed
+  BWS-migration carve-out: Arbitrum becomes the governance home — at the migration cutover its
+  FeeCollector's `governanceVault` is set to the BWS `GovernanceVoter` (existing 7d timelock; the
+  one legitimate `GovernanceVaultUpdated`), Arbitrum leaves the source-chain set, and the revenue
+  mesh re-homes to Arbitrum as hub (net-new deployment; Base BMX governance sunsets).
+- **Nothing but WETH addressed to the hub FeeCollector**: it can only swap Boardwalk-DEX-listed
   tokens and has no rescue. Made structural — all lanes deliver to the rescue-capable swapper; only
   its WETH (`swapAndForward`'s full-balance forward / `forwardWeth`) ever reaches the FeeCollector.
+
+---
+
+## BWS token and migration
+
+BMX migrated 1:1 to BWS and the protocol's governance/revenue home moved from Base to Arbitrum. Three contracts in `src/token/`, all Arbitrum-only.
+
+**BWS** ([src/token/BWS.sol](src/token/BWS.sol)): fixed-supply ERC20, `3_150_000e18` minted once at deployment. No minter, owner, or pause. Cross-chain via Chainlink CCT with a LockReleaseTokenPool on Arbitrum, so the token itself never mints or burns; `getCCIPAdmin()` exists only for `TokenAdminRegistry` registration. Supply split: 2,711,068 migration pool, 219,466 CCA auction, 219,466 LP seed.
+
+**Migration** ([src/token/BwsMigration.sol](src/token/BwsMigration.sol)): one-way, permissionless, once per source address, all-or-nothing. `migrate(destination, snapshotBmx, snapshotPoints, proof)` reads the caller's entire Arbitrum BMX balance, sends it to dead, and stakes an equal amount of BWS for `destination` through the three reward trackers (mirroring the staking router's tier flow). Every migrator earns a voter-point credit of 16% of the migrated amount, minted as bnBWS into the fee tracker. A merkle leaf exists only to carry a prior Base staker's points, scaled by how much of the staked position they bring back:
+
+```
+points = brought * 16%
+       + snapshotPoints * 116% * min(brought, snapshotBmx) / snapshotBmx   // stakers only
+```
+
+The root is one-shot (`setMerkleRoot`); post-publication corrections go through owner-only `creditPoints`, which can add points but has no path to BWS. `migrate` reverts while the voter is finalizing an epoch, and after `CLAIM_DEADLINE`; past the deadline the owner sweeps the unclaimed pool. The migrator can never over-distribute — payouts are 1:1 against a fixed pre-funded pool, and an underfunded pool makes `migrate` revert rather than short-pay. The snapshot is built by the pipeline in [snapshot/](snapshot/) (stakers-only leaves; exclusions are an explicit allowlist — no bytecode check, contract-held stakes migrate too; validated against the trackers' `totalDepositSupply` before publishing).
+
+**Launch** ([src/token/UnsoldBurner.sol](src/token/UnsoldBurner.sol) + [script/bws/06_LaunchBwsCca.s.sol](script/bws/06_LaunchBwsCca.s.sol)): the 438,932 market-formation bucket launches through Uniswap's LiquidityLauncher + LBPStrategy (continuous clearing auction, native ETH raise) — never the raw CCA factory, whose auctions the strategy cannot sweep. `UnsoldBurner` is the auction's `tokensRecipient`: no admin, and BWS can only ever leave to dead. Anyone calls `sweep(auction)` once the auction ends; a non-graduated auction returns its full offered supply. The LP positions mint to `LPLocker`; the registrar registers each one (`registerPosition`, full pool key pinned to the voter's) and renounces. The pool's hook is only knowable post-launch, so `GovernanceVoter.POOL_HOOKS` is one-shot settable via owner-only `setPoolHooks` (open only when deployed unset), and `execute()` blocks options 2/3/4 until it is committed.
+
+Deploy scripts live in [script/bws/](script/bws/): `01` token, `02` governance, `03` migrator (root before funding — a funded migrator locks the pool until `CLAIM_DEADLINE`), `05` burner, `06` the CCA launch itself (sanity-checks the wiring, then funds via Permit2 and batches the launcher's `depositToken` + `distributeToken` in one `multicall`; prints and verifies the CREATE2-predicted auction address). `04_AssertBwsDeploy.s.sol` is the go-live gate: `assertAll` reverts unless the whole wiring holds — pool funded and root set, tracker handler/minter/distributor/private-mode wiring, staking gov custody, claim-window plausibility, and the post-launch one-shots (hook committed, registrar renounced, burner and locker bound to the real auction and voter).
 
 ---
 
@@ -438,16 +469,19 @@ Emergency response = `revokeKeeper` + halt the accrual cron (both instant); keep
 | `BoardwalkFeeCollector` | singleton | [src/core/BoardwalkFeeCollector.sol](src/core/BoardwalkFeeCollector.sol) | `Ownable2Step + Timelocked` |
 | `IntegratorFeeCollector` | singleton (per chain) | [src/core/IntegratorFeeCollector.sol](src/core/IntegratorFeeCollector.sol) | `Ownable2Step + Timelocked`; the only `onlyOwner` function is one-shot `setFactory`; each slot rotates its own address |
 | `BoostBurn` | singleton | [src/core/BoostBurn.sol](src/core/BoostBurn.sol) | `Ownable2Step + Timelocked + MembershipDiscount` |
+| `BWS` (Arbitrum) | singleton | [src/token/BWS.sol](src/token/BWS.sol) | No owner, minter, or pause; fixed supply |
+| `BwsMigration` (Arbitrum) | singleton | [src/token/BwsMigration.sol](src/token/BwsMigration.sol) | `Ownable2Step` (owner = 21-day governance timelock); one-shot `setMerkleRoot`; not `Timelocked` |
+| `UnsoldBurner` (Arbitrum) | singleton | [src/token/UnsoldBurner.sol](src/token/UnsoldBurner.sol) | No admin; BWS can only move to dead |
 | `BoardwalkClubLockbox` (Base) | singleton | [src/nft/BoardwalkClubLockbox.sol](src/nft/BoardwalkClubLockbox.sol) | `Ownable2Step + Timelocked`; generic admin + burn disabled; one-shot `initializePeers`; instant `removePeer` kill switch |
 | `BoardwalkClubMirror` (spokes) | singleton (per spoke) | [src/nft/BoardwalkClubMirror.sol](src/nft/BoardwalkClubMirror.sol) | `Ownable2Step + Timelocked`; peer pinned to the Base selector; instant `removePeer` kill switch |
 | `BoardwalkClubBridgeBase` | base | [src/nft/BoardwalkClubBridgeBase.sol](src/nft/BoardwalkClubBridgeBase.sol) | CCIP peer registry + send/receive plumbing; typed timelocked `SET_PEER` |
-| `RevenueBridger` | singleton (every non-Base lane) | [src/crosschain/RevenueBridger.sol](src/crosschain/RevenueBridger.sol) | `Ownable2Step + Timelocked + ReentrancyGuardTransient`; generic admin + burn disabled; typed `SET_KEEPER` / `SET_SELECTOR` / `RESCUE` (ERC20 or native); payable carve-out (native LiFi route fee via `msg.value`, excess refunded; unconditional `receive()`); instant `revokeKeeper` kill switch |
-| `BaseRevenueSwapper` | singleton (Base) | [src/crosschain/BaseRevenueSwapper.sol](src/crosschain/BaseRevenueSwapper.sol) | as `RevenueBridger` (non-payable); typed `SET_KEEPER` / `RESCUE` (ERC20 or native); permissionless `nonReentrant` `forwardWeth`; `tokenIn != WETH` swap guard |
+| `RevenueBridger` | singleton (every source lane) | [src/crosschain/RevenueBridger.sol](src/crosschain/RevenueBridger.sol) | `Ownable2Step + Timelocked + ReentrancyGuardTransient`; generic admin + burn disabled; typed `SET_KEEPER` / `SET_SELECTOR` / `RESCUE` (ERC20 or native); payable carve-out (native LiFi route fee via `msg.value`, excess refunded; unconditional `receive()`); instant `revokeKeeper` kill switch |
+| `BaseRevenueSwapper` | singleton (hub) | [src/crosschain/BaseRevenueSwapper.sol](src/crosschain/BaseRevenueSwapper.sol) | as `RevenueBridger` (non-payable); typed `SET_KEEPER` / `RESCUE` (ERC20 or native); permissionless `nonReentrant` `forwardWeth`; `tokenIn != WETH` swap guard |
 | `Timelocked` | base | [src/base/Timelocked.sol](src/base/Timelocked.sol) | Generic signal/execute/burn pattern; per-action delay via `_actionDelay` virtual hook |
 | `MembershipDiscount` | base | [src/base/MembershipDiscount.sol](src/base/MembershipDiscount.sol) | NFT membership check + BPS discount helpers |
-| `GovernanceVoter` (Base) | singleton | [src/governance/GovernanceVoter.sol](src/governance/GovernanceVoter.sol) | `Ownable2Step + Timelocked`; keeper-or-owner for finalize/execute |
-| `LPLocker` (Base) | singleton | [src/governance/LPLocker.sol](src/governance/LPLocker.sol) | `lockPosition` only callable by `GovernanceVoter`; no `onERC721Received` |
-| `ParticipationDistributor` (Base) | singleton | [src/governance/ParticipationDistributor.sol](src/governance/ParticipationDistributor.sol) | `createStream` only callable by `GovernanceVoter` |
+| `GovernanceVoter` (Arbitrum) | singleton | [src/governance/GovernanceVoter.sol](src/governance/GovernanceVoter.sol) | `Ownable2Step + Timelocked`; keeper-or-owner for finalize/execute; one-shot owner `setPoolHooks` |
+| `LPLocker` (Arbitrum) | singleton | [src/governance/LPLocker.sol](src/governance/LPLocker.sol) | `lockPosition` only callable by `GovernanceVoter`; renounceable launch registrar for `registerPosition`; no `onERC721Received` |
+| `ParticipationDistributor` (Arbitrum) | singleton | [src/governance/ParticipationDistributor.sol](src/governance/ParticipationDistributor.sol) | `createStream` only callable by `GovernanceVoter` |
 
 ---
 
@@ -457,7 +491,7 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 
 | Contract | Action | Delay | Constraints |
 | -------- | ------ | ----- | ----------- |
-| LaunchFactory | `SET_BMX_BURN` | 7d | ≤ 200e18; burnable |
+| LaunchFactory | `SET_BMX_BURN` | 7d | ≤ 200e18 (the launch cost, burned in BWS; action name predates the migration); burnable |
 | LaunchFactory | `SET_GRADUATION_EXPRESS / _ADVANCED` | 7d | > 0 |
 | LaunchFactory | `SET_EXPRESS_DURATION` | 7d | > 0 |
 | LaunchFactory | `SET_ADVANCED_DURATION` | 7d | 2–14 days |
@@ -470,7 +504,7 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 | BoardwalkFeeCollector | `SET_TREASURY / _KEEPER` | 7d | non-zero |
 | BoardwalkFeeCollector | `SET_GOVERNANCE_VAULT` | 7d | may be zero (disables governance split); on non-zero, enforces `IGovernanceVoter(vault).WETH() == RAISE_TOKEN` |
 | BoardwalkFeeCollector | `MIGRATE_COLLECTOR` | 7d | non-zero `newCollector`; both args committed in hash |
-| BoostBurn | `SET_BMX_COST` | 7d | 0–1 BMX |
+| BoostBurn | `SET_BMX_COST` | 7d | 0–1 BWS |
 | BoostBurn | `SET_NFT_COLLECTION / _MEMBER_BOOST_DISCOUNT` | 7d | as LaunchFactory analogues |
 | FeeDistributor | `CHANGE_ISSUER(idx) / CHANGE_REFERRER` | 7d | per-recipient self-signal; non-zero in execute; not burnable |
 | IntegratorFeeCollector | `CHANGE_ADDRESS(slotIdx)` | **14d** | per-slot self-signal (`msg.sender == integrators[slotIdx]`); execute permissionless with explicit `slotIdx`; rejects zero address and addresses already taken by another slot; not burnable |
@@ -480,21 +514,24 @@ All admin actions go through `Timelocked.signalAction(action, dataHash) → type
 | BoardwalkClubLockbox | `FORCE_UNLOCK(tokenId)` | **30d** | recipient committed in hash (verified off-chain as the current spoke holder — secondary sales move the claim); requires the token escrowed at signal time; execute permissionless; legitimate release clears any pending signal (bridging back defeats a wrongful one); sole path that releases a `locked` original — backstop for vacuous-SUCCESS deliveries and deprecated lanes, never for FAILED-replayable messages |
 | GovernanceVoter | `SET_TREASURY / _KEEPER` | 7d | non-zero |
 | GovernanceVoter | `SET_FEE_COLLECTOR` | 7d | non-zero; pair with `BoardwalkFeeCollector.MIGRATE_COLLECTOR` |
-| GovernanceVoter | `SET_GOVERNANCE_BURN` | **21d** | 0–1 BMX |
+| GovernanceVoter | `SET_GOVERNANCE_BURN` | **21d** | 0–1 BWS |
 | GovernanceVoter | `SET_FALLBACK_TREASURY` | **21d** | non-zero; setter itself burnable |
+| GovernanceVoter | `setPoolHooks` | none (one-shot) | owner-only, outside `Timelocked`; open only when deployed with `poolHooks == 0`; `execute()` blocks options 2/3/4 until committed |
 | RevenueBridger / BaseRevenueSwapper | `SET_KEEPER` | 7d | non-zero; instant owner `revokeKeeper` is the kill switch (documented exception to the all-admin-Timelocked rule, precedent: lockbox `removePeer`) |
 | RevenueBridger | `SET_SELECTOR(selector)` | 7d | add/remove a LiFi facet selector; one shape per lane matching `HAS_SOURCE_SWAPS` |
 | RevenueBridger / BaseRevenueSwapper | `RESCUE(token)` | 7d | `token == address(0)` rescues native, else the ERC20; recipient + amount committed in hash; execute permissionless |
 
-`BoardwalkToken`, `LPStaking`, `PresaleManager`, `BoardwalkLPManager`, `LPLocker`, and `ParticipationDistributor` have no admin functions.
+`BoardwalkToken`, `LPStaking`, `PresaleManager`, `BoardwalkLPManager`, and `ParticipationDistributor` have no admin functions. `LPLocker`'s only privileged role is the launch registrar, renounced after the CCA position is registered. `BwsMigration` is plain `Ownable2Step` (owner = the 21-day timelock): one-shot `setMerkleRoot`, points-only `creditPoints`, and deadline-gated `sweepUnclaimed`.
 
 ---
 
-## Governance (Base only)
+## Governance (Arbitrum)
 
-`BoardwalkFeeCollector` splits the post-swap raise-token output **30% to treasury / 70% to `GovernanceVoter`** when `governanceVault` is set; if `governanceVault == address(0)`, 100% routes to treasury. `GovernanceVoter` is a merged voter + executor + vault. Peers (`lpLocker`, `participationDistributor`, `feeCollector`) are wired once via `initializePeers(lpLocker, participationDistributor, feeCollector)` after deployment and validated bidirectionally. The `feeCollector` is the sole address authorised to call `depositRevenue` (`BoardwalkFeeCollector` on Base). Required deploy order: `GovernanceVoter` → `LPLocker(voter)` → `ParticipationDistributor(voter)` → `initializePeers`.
+`BoardwalkFeeCollector` splits the post-swap raise-token output **30% to treasury / 70% to `GovernanceVoter`** when `governanceVault` is set; if `governanceVault == address(0)`, 100% routes to treasury. `GovernanceVoter` is a merged voter + executor + vault. Peers (`lpLocker`, `participationDistributor`, `feeCollector`) are wired once via `initializePeers(lpLocker, participationDistributor, feeCollector)` after deployment and validated bidirectionally. The `feeCollector` is the sole address authorised to call `depositRevenue` (`BoardwalkFeeCollector` on Arbitrum). Required deploy order: `GovernanceVoter` → `LPLocker(voter)` → `ParticipationDistributor(voter)` → `initializePeers`.
 
-`BoardwalkFeeCollector.executeSetGovernanceVault(vault)` enforces `IGovernanceVoter(vault).WETH() == RAISE_TOKEN` for any non-zero vault: `depositRevenue` pulls WETH while the collector forwards `RAISE_TOKEN`, so the wiring is only valid where the raise token is WETH (currently Base only).
+Voting weight comes from the BWS staking trackers (sbfBWS balances, bnBWS multiplier points); the voter's `Bmx`-named fields point at them.
+
+`BoardwalkFeeCollector.executeSetGovernanceVault(vault)` enforces `IGovernanceVoter(vault).WETH() == RAISE_TOKEN` for any non-zero vault: `depositRevenue` pulls WETH while the collector forwards `RAISE_TOKEN`, so the wiring is only valid where the raise token is WETH (Arbitrum; previously Base).
 
 ### Collector migration choreography
 
@@ -513,8 +550,8 @@ After all four execute, the new collector is the sole `depositRevenue` caller, t
 
 Votes in epoch `N` decide the winner of epoch `N+1`. Epoch 0 always defaults to treasury (no prior votes).
 
-1. **`vote(option)`**: sbfBMX holders cast a vote weighted by `sbfBMX.balanceOf(voter)` at vote time. Voting requires `stakedMP >= stakedBMX * 1.5%` (participation-points gate, read from external sbfBMX contracts). Optional `governanceBurn` BMX burn per vote (0–1 BMX, 21-day timelocked, starts at 0). Reverts during finalization.
-2. **`finalize(epoch, maxBatch)`**: keeper-or-owner. Re-validates epoch `N-1` voters in batches (re-reads `sbfBMX.balanceOf(voter)`, reduces option weights for voters whose balance dropped). When all batches done: closes the finalization window, applies quorum and consecutive-win cap, picks the winner. Sets `e.budget = epochRevenue[N]`, the WETH that `BoardwalkFeeCollector` deposited via `depositRevenue` while epoch `N` was current. Per-epoch revenue invariant: governance budget follows when WETH enters the governance vault; keeper-driven swap timing controls the attribution.
+1. **`vote(option)`**: sbfBWS holders cast a vote weighted by `sbfBWS.balanceOf(voter)` at vote time. Voting requires `stakedMP >= stakedBWS * 1.5%` (participation-points gate, read from the external staking trackers). Optional `governanceBurn` BWS burn per vote (0–1 BWS, 21-day timelocked, starts at 0). Reverts during finalization.
+2. **`finalize(epoch, maxBatch)`**: keeper-or-owner. Re-validates epoch `N-1` voters in batches (re-reads `sbfBWS.balanceOf(voter)`, reduces option weights for voters whose balance dropped). When all batches done: closes the finalization window, applies quorum and consecutive-win cap, picks the winner. Sets `e.budget = epochRevenue[N]`, the WETH that `BoardwalkFeeCollector` deposited via `depositRevenue` while epoch `N` was current. Per-epoch revenue invariant: governance budget follows when WETH enters the governance vault; keeper-driven swap timing controls the attribution.
 3. **`execute(epoch, amountOutMin, liquidity, deadline)`**: keeper-or-owner. Executes the finalized winner with caller-supplied slippage protection. `liquidity` is used by Option 3 (Buy & Burn LP); ignored otherwise. Decrements `accountedBudget` by the consumed amount.
 4. **`forceMarkExecuted(epoch)`**: permissionless, callable 14 days after `finalizedAt[epoch]`. The window is anchored to the finalize timestamp (not epoch end) so the keeper always has a full 14 days to retry execute even after a late finalize. Routes the budget to `fallbackTreasury`, decrements `accountedBudget`, marks executed. Deadlock resolver only.
 
@@ -522,8 +559,8 @@ Votes in epoch `N` decide the winner of epoch `N+1`. Epoch 0 always defaults to 
 
 ### Quorum and winner selection
 
-- `snapshotTotalWeight` = `sbfBMX.totalSupply()` snapshotted at finalize-time of the prior epoch (or first vote if missed).
-- `quorumBase = max(snapshotTotalWeight, sbfBMX.totalSupply() at finalize)`. A first voter who deflated supply pre-snapshot cannot lower quorum below the live supply at finalize.
+- `snapshotTotalWeight` = `sbfBWS.totalSupply()` snapshotted at finalize-time of the prior epoch (or first vote if missed).
+- `quorumBase = max(snapshotTotalWeight, sbfBWS.totalSupply() at finalize)`. A first voter who deflated supply pre-snapshot cannot lower quorum below the live supply at finalize.
 - Quorum threshold: `eligibleVoteWeight >= quorumBase * 51%`. `eligibleVoteWeight` excludes votes for any option that is ineligible at finalize time, so majority votes for an option that becomes ineligible no longer inflate quorum on behalf of a minority option.
 - Zero supply or zero `eligibleVoteWeight` → quorum fails safely (no division by zero).
 - Ineligible options (consecutive-win cap reached) are skipped during winner selection.
@@ -536,13 +573,15 @@ Votes in epoch `N` decide the winner of epoch `N+1`. Epoch 0 always defaults to 
 | Option | Action |
 | ------ | ------ |
 | 1. Treasury | Send raise token to `treasury` |
-| 2. Buy & Burn BMX | Unwrap WETH → ETH, swap ETH→BMX via Universal Router (v4 native ETH), burn to dead |
-| 3. Buy & Burn LP | Split 50/50. Swap half to BMX via Universal Router (`V4_SWAP`). Mint a Uniswap v4 LP position (ETH/BMX, currency0 = `address(0)`) by calling `PositionManager.modifyLiquidities()` directly. Action sequence: `MINT_POSITION + SETTLE(ETH, OPEN_DELTA) + SETTLE(BMX, OPEN_DELTA) + SWEEP(ETH→voter) + SWEEP(BMX→voter)`. BMX is pre-funded to the PositionManager so `SETTLE(payerIsUser=false)` pays from PM's own balance. Tick bounds are `TickMath.{min,max}UsableTick(POOL_TICK_SPACING)`. Send NFT to `LPLocker`. Residual BMX → DEAD, residual ETH → treasury via WETH wrap. Caller supplies `liquidity` and slippage. |
-| 4. Participation | Swap to BMX (via ETH), stream to eligible voters (`ParticipationDistributor`, 7-day linear, eligibility = voted in prior epoch) |
+| 2. Buy & Burn BWS | Unwrap WETH → ETH, swap ETH→BWS via Universal Router (v4 native ETH), burn to dead |
+| 3. Buy & Burn LP | Split 50/50. Swap half to BWS via Universal Router (`V4_SWAP`). Mint a Uniswap v4 LP position (ETH/BWS, currency0 = `address(0)`) by calling `PositionManager.modifyLiquidities()` directly. Action sequence: `MINT_POSITION + SETTLE(ETH, OPEN_DELTA) + SETTLE(BWS, OPEN_DELTA) + SWEEP(ETH→voter) + SWEEP(BWS→voter)`. BWS is pre-funded to the PositionManager so `SETTLE(payerIsUser=false)` pays from PM's own balance. Tick bounds are `TickMath.{min,max}UsableTick(POOL_TICK_SPACING)`. Send NFT to `LPLocker`. Residual BWS → DEAD, residual ETH → treasury via WETH wrap. Caller supplies `liquidity` and slippage. |
+| 4. Participation | Swap to BWS (via ETH), stream to eligible voters (`ParticipationDistributor`, 7-day linear, eligibility = voted in prior epoch) |
+
+Options 2, 3, and 4 all trade through the pool key built from `POOL_FEE / POOL_TICK_SPACING / POOL_HOOKS`; `execute()` reverts `PoolHooksNotSet` for all three until the one-shot `setPoolHooks` commits the hook (see *BWS token and migration*).
 
 ### Native ETH (v4)
 
-Uniswap v4 pools on Base use native ETH (`address(0)`), not WETH. `GovernanceVoter` unwraps WETH via `IWETH(WETH).withdraw()` before swaps and mints, sends ETH via `msg.value`, and uses `address(0)` as currency0 in pool keys. The `receive()` function accepts ETH from WETH and PositionManager only. Leftover ETH from Option 3 is `SWEEP`-recovered, re-wrapped, and forwarded to treasury.
+Uniswap v4 pools use native ETH (`address(0)`), not WETH. `GovernanceVoter` unwraps WETH via `IWETH(WETH).withdraw()` before swaps and mints, sends ETH via `msg.value`, and uses `address(0)` as currency0 in pool keys. The `receive()` function accepts ETH from WETH and PositionManager only. Leftover ETH from Option 3 is `SWEEP`-recovered, re-wrapped, and forwarded to treasury.
 
 ### Batch-finalization invariants
 
@@ -553,9 +592,9 @@ Uniswap v4 pools on Base use native ETH (`address(0)`), not WETH. `GovernanceVot
 
 ### Supporting contracts
 
-- **LPLocker**: permanent holder of Uniswap v4 LP NFTs. `lockPosition(tokenId)` is callable only by `GovernanceVoter` after an Option 3 mint and is the sole registration path; no `onERC721Received` is implemented, so external `safeTransferFrom` reverts at the destination. `claimFees(tokenId)` (and the batch `claimAllFees()`) call `PositionManager.modifyLiquidities()` with `DECREASE_LIQUIDITY(liquidity=0) + TAKE_PAIR`; the ETH portion is sent natively to `GovernanceVoter.treasury()` (read live).
-- **ParticipationDistributor**: 7-day linear BMX streams per epoch. Pull-based: voters from the prior epoch call `claim(epoch)` for their proportional share. `claimAll(epochs[])` reverts if nothing is claimable across the entire batch.
+- **LPLocker**: permanent holder of Uniswap v4 LP NFTs. Two registration paths: `lockPosition(tokenId)`, callable only by `GovernanceVoter` after an Option 3 mint, and registrar-gated `registerPosition(tokenId)` for the CCA launch positions — the locker must own the NFT, the voter's hook must be committed, and the full pool key (currencies, fee, tick spacing, hooks) must match the voter's pool; the registrar renounces after the launch. No `onERC721Received` is implemented, so external `safeTransferFrom` reverts at the destination. `claimFees(tokenId)` (and the batch `claimAllFees()`) call `PositionManager.modifyLiquidities()` with `DECREASE_LIQUIDITY(liquidity=0) + TAKE_PAIR`; the ETH portion is sent natively to `GovernanceVoter.treasury()` (read live).
+- **ParticipationDistributor**: 7-day linear BWS streams per epoch. Pull-based: voters from the prior epoch call `claim(epoch)` for their proportional share. `claimAll(epochs[])` reverts if nothing is claimable across the entire batch.
 
 ### Deployment caveats
 
-The default Base deployment targets `UniversalRouter = 0x6fF5693b99212Da76ad316178A184AB56D299b43`, and `_swapRaiseTokenForBmx` encodes the `V4_SWAP` path with the `0x140`-length `ExactInputSingleParams` layout used by that router revision. Overriding `UNIVERSAL_ROUTER` to a newer revision (some newer UR builds expect an extra `minHopPriceX36` field) MUST update `_swapRaiseTokenForBmx`'s calldata accordingly, or swaps will silently revert.
+Deployments target the chain's canonical v4 `UniversalRouter` (Arbitrum `0xA51afAFe0263b40EdaEf0Df8781eA9aa03E381a3`, Base `0x6fF5693b99212Da76ad316178A184AB56D299b43`), and `_swapRaiseTokenForBmx` encodes the `V4_SWAP` path with the `0x140`-length `ExactInputSingleParams` layout used by those router revisions. Overriding `UNIVERSAL_ROUTER` to a newer revision (some newer UR builds expect an extra `minHopPriceX36` field) MUST update `_swapRaiseTokenForBmx`'s calldata accordingly, or swaps will silently revert.

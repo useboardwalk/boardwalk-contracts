@@ -1144,15 +1144,7 @@ contract LPStakingTest is Test {
         // Warp past vesting end
         vm.warp(seedTime + VESTING_DELAY + VESTING_DURATION + 1 days);
 
-        (
-            ,
-            ,
-            uint256 vestingPerSecond,
-            uint256 vestingRemaining,
-            ,
-            ,
-            ,
-        ) = evenStaking.getPoolStats();
+        (,, uint256 vestingPerSecond, uint256 vestingRemaining,,,,) = evenStaking.getPoolStats();
 
         assertEq(vestingPerSecond, 0, "vestingPerSecond should be 0 after vesting ends");
         assertEq(vestingRemaining, 0, "vestingRemaining should be 0 with exact division");

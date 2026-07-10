@@ -41,7 +41,7 @@ library CrossChainConfig {
     address internal constant FRAXTAL_FRXUSD = 0xFc00000000000000000000000000000000000001;
     address internal constant BASE_FRXUSD = 0xe5020A6d073a794B6E7f05678707dE47986Fb0b6;
 
-    /// @notice Default Across `outputAmount` floor (BPS). Size per ETH/Ink at build.
+    /// @notice Default Across `outputAmount` floor (BPS). Size per ETH/Ink/Arbitrum at build.
     uint256 internal constant DEFAULT_MAX_FEE_BPS = 30;
 
     error UnsupportedChainId(uint256 chainId);
@@ -70,8 +70,8 @@ library CrossChainConfig {
         revert UnsupportedChainId(chainId);
     }
 
-    /// @notice The lane's `HAS_SOURCE_SWAPS` immutable. ETH/Ink are `false` (pure Across V4 via the
-    ///         fee-0 integrator); re-verify before locking it in.
+    /// @notice The lane's `HAS_SOURCE_SWAPS` immutable. ETH/Ink/Arbitrum are `false` (pure Across V4
+    ///         via the fee-0 integrator); re-verify before locking it in.
     function hasSourceSwaps(
         uint256 chainId
     ) internal pure returns (bool) {

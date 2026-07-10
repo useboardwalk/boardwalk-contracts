@@ -146,7 +146,10 @@ contract MockLPStaking {
 contract MockNFT {
     mapping(address => uint256) public balanceOf;
 
-    function mint(address to, uint256 count) external {
+    function mint(
+        address to,
+        uint256 count
+    ) external {
         balanceOf[to] += count;
     }
 }
@@ -299,9 +302,8 @@ contract LaunchFactoryTest is Test {
         _integrators[0] = integratorAddress;
         uint256[] memory _splits = new uint256[](1);
         _splits[0] = 10_000;
-        integratorCollector = new IntegratorFeeCollector(
-            address(this), address(weth), boardwalkRouter, _integrators, _splits
-        );
+        integratorCollector =
+            new IntegratorFeeCollector(address(this), address(weth), boardwalkRouter, _integrators, _splits);
 
         // Deploy factory
         factory = new LaunchFactory(
@@ -1319,14 +1321,8 @@ contract LaunchFactoryTest is Test {
         vm.warp(block.timestamp + TIMELOCK_DELAY);
         factory.executeSetFeeDefaults(newDefaults);
 
-        (
-            uint256 issuerBps,
-            uint256 boardwalkBps,
-            uint256 incentiveBps,
-            uint256 referrerBps,
-            ,
-            uint256 totalBps
-        ) = factory.currentFeeBps();
+        (uint256 issuerBps, uint256 boardwalkBps, uint256 incentiveBps, uint256 referrerBps,, uint256 totalBps) =
+            factory.currentFeeBps();
         assertEq(issuerBps, newDefaults.issuer, "issuer BPS mismatch");
         assertEq(boardwalkBps, newDefaults.boardwalk, "boardwalk BPS mismatch");
         assertEq(incentiveBps, newDefaults.incentive, "incentive BPS mismatch");
@@ -1568,13 +1564,8 @@ contract LaunchFactoryTest is Test {
 
     /// @dev Deploy a new LaunchFactory with integratorCollector==address(0) and INTEGRATOR_BPS==0.
     function _deployFactoryWithoutIntegrator() internal returns (LaunchFactory f) {
-        LaunchFactory.FeeBpsDefaults memory noIntegrator = LaunchFactory.FeeBpsDefaults({
-            issuer: 40,
-            boardwalk: 47,
-            incentive: 28,
-            referrer: 5,
-            total: 115
-        });
+        LaunchFactory.FeeBpsDefaults memory noIntegrator =
+            LaunchFactory.FeeBpsDefaults({issuer: 40, boardwalk: 47, incentive: 28, referrer: 5, total: 115});
         f = new LaunchFactory(
             owner,
             LaunchFactory.DeployParams({
@@ -2516,7 +2507,6 @@ contract LaunchFactoryTest is Test {
         factory.executeSetFeeCollector(newCollector);
     }
 
-
     // ============ executeSetFeeCollector duplicate-role revert paths ============
 
     function test_RevertWhen_ExecuteSetFeeCollector_DuplicateLpManager() public {
@@ -2909,13 +2899,8 @@ contract LaunchFactoryTest is Test {
     /// @notice Constructor reverts when integrator BPS > 0 but integratorCollector is zero.
     function test_RevertWhen_Constructor_IntegratorBpsNonZeroCollectorZero() public {
         // Integrator BPS = 2, total includes it: 40 + 45 + 28 + 2 = 115.
-        LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
-            issuer: 40,
-            boardwalk: 45,
-            incentive: 28,
-            referrer: 5,
-            total: 115
-        });
+        LaunchFactory.FeeBpsDefaults memory feeBps =
+            LaunchFactory.FeeBpsDefaults({issuer: 40, boardwalk: 45, incentive: 28, referrer: 5, total: 115});
         vm.expectRevert(LaunchFactory.IntegratorCollectorMismatch.selector);
         new LaunchFactory(
             owner,
@@ -2952,13 +2937,8 @@ contract LaunchFactoryTest is Test {
     ///         tax-exempt status + max-allowance on every future launch despite never being reached.
     function test_RevertWhen_Constructor_IntegratorBpsZeroCollectorNonZero() public {
         // Integrator BPS = 0, total = 40 + 47 + 28 + 0 = 115. Collector wired to a stray address.
-        LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
-            issuer: 40,
-            boardwalk: 47,
-            incentive: 28,
-            referrer: 5,
-            total: 115
-        });
+        LaunchFactory.FeeBpsDefaults memory feeBps =
+            LaunchFactory.FeeBpsDefaults({issuer: 40, boardwalk: 47, incentive: 28, referrer: 5, total: 115});
         vm.expectRevert(LaunchFactory.IntegratorCollectorMismatch.selector);
         new LaunchFactory(
             owner,
@@ -2993,13 +2973,8 @@ contract LaunchFactoryTest is Test {
     /// @notice Constructor succeeds when integrator BPS == 0 and integratorCollector is zero.
     function test_Constructor_IntegratorBpsZeroCollectorZero_Succeeds() public {
         // Integrator BPS = 0, so total = issuer + boardwalk + incentive + 0 = 115.
-        LaunchFactory.FeeBpsDefaults memory feeBps = LaunchFactory.FeeBpsDefaults({
-            issuer: 40,
-            boardwalk: 47,
-            incentive: 28,
-            referrer: 5,
-            total: 115
-        });
+        LaunchFactory.FeeBpsDefaults memory feeBps =
+            LaunchFactory.FeeBpsDefaults({issuer: 40, boardwalk: 47, incentive: 28, referrer: 5, total: 115});
         LaunchFactory f = new LaunchFactory(
             owner,
             LaunchFactory.DeployParams({
@@ -3044,13 +3019,8 @@ contract LaunchFactoryTest is Test {
 
         // The new defaults have no `integrator` field — that's now immutable. Total must equal
         // issuer + boardwalk + incentive + INTEGRATOR_BPS == 0. So total = 40 + 42 + 28 = 110.
-        LaunchFactory.FeeBpsDefaults memory newFees = LaunchFactory.FeeBpsDefaults({
-            issuer: 40,
-            boardwalk: 42,
-            incentive: 28,
-            referrer: 5,
-            total: 110
-        });
+        LaunchFactory.FeeBpsDefaults memory newFees =
+            LaunchFactory.FeeBpsDefaults({issuer: 40, boardwalk: 42, incentive: 28, referrer: 5, total: 110});
 
         vm.prank(owner);
         f.signalAction(ACTION_SET_FEE_DEFAULTS, keccak256(abi.encode(newFees)));

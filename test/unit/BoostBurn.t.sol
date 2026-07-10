@@ -9,16 +9,26 @@ contract MockBMX {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         balanceOf[to] += amount;
     }
 
-    function approve(address spender, uint256 amount) external returns (bool) {
+    function approve(
+        address spender,
+        uint256 amount
+    ) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
 
-    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) external returns (bool) {
         require(balanceOf[from] >= amount, "Insufficient balance");
         require(allowance[from][msg.sender] >= amount, "Insufficient allowance");
         balanceOf[from] -= amount;
@@ -32,7 +42,10 @@ contract MockNFT {
     mapping(address => uint256) public balanceOf;
     uint256 private _nextId;
 
-    function mint(address to, uint256 count) external {
+    function mint(
+        address to,
+        uint256 count
+    ) external {
         balanceOf[to] += count;
         _nextId += count;
     }
@@ -401,7 +414,10 @@ contract BoostBurnTest is Test {
 
     // ============ Fuzz ============
 
-    function testFuzz_BoostDeboostScoreTracking(uint8 boostCount, uint8 deboostCount) public {
+    function testFuzz_BoostDeboostScoreTracking(
+        uint8 boostCount,
+        uint8 deboostCount
+    ) public {
         boostCount = uint8(bound(boostCount, 0, 10));
         deboostCount = uint8(bound(deboostCount, 0, 10));
 

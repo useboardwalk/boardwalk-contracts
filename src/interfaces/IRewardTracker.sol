@@ -18,4 +18,14 @@ interface IRewardTracker {
     function stakedAmounts(
         address account
     ) external view returns (uint256);
+
+    /// @notice Stakes `amount` of `depositToken` pulled from `fundingAccount`, crediting `account`.
+    /// @dev Handler-gated on the tracker. Used by the migration contract to build staked positions
+    ///      on behalf of a destination, mirroring `RewardRouterV5._stakeBmx`.
+    function stakeForAccount(
+        address fundingAccount,
+        address account,
+        address depositToken,
+        uint256 amount
+    ) external;
 }

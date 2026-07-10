@@ -488,8 +488,7 @@ contract BoardwalkFeeCollectorTest is Test {
         vm.prank(owner);
         feeCollector.signalAction(ACTION_SET_TREASURY, keccak256(abi.encode(newTreasury)));
 
-        (bool isPending, uint256 executeTime, uint256 expiresAt) =
-            feeCollector.getPendingChange(ACTION_SET_TREASURY);
+        (bool isPending, uint256 executeTime, uint256 expiresAt) = feeCollector.getPendingChange(ACTION_SET_TREASURY);
         assertTrue(isPending, "Change should be pending");
         assertEq(executeTime, block.timestamp + TIMELOCK_DELAY, "Execute time should be delay from now");
         assertEq(expiresAt, executeTime + TIMELOCK_EXPIRY, "Expiry should be delay + expiry");
@@ -596,8 +595,7 @@ contract BoardwalkFeeCollectorTest is Test {
         vm.prank(owner);
         feeCollector.signalAction(ACTION_SET_KEEPER, keccak256(abi.encode(newKeeper)));
 
-        (bool isPending, uint256 executeTime, uint256 expiresAt) =
-            feeCollector.getPendingChange(ACTION_SET_KEEPER);
+        (bool isPending, uint256 executeTime, uint256 expiresAt) = feeCollector.getPendingChange(ACTION_SET_KEEPER);
         assertTrue(isPending, "Change should be pending");
         assertEq(executeTime, block.timestamp + TIMELOCK_DELAY, "Execute time should be delay from now");
     }
@@ -735,9 +733,7 @@ contract BoardwalkFeeCollectorTest is Test {
 
         // Signal
         vm.prank(owner);
-        feeCollector.signalAction(
-            ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0)))
-        );
+        feeCollector.signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0))));
 
         (bool isPending, uint256 executeTime, uint256 expiresAt) =
             feeCollector.getPendingChange(ACTION_MIGRATE_COLLECTOR);
@@ -764,16 +760,12 @@ contract BoardwalkFeeCollectorTest is Test {
 
         vm.prank(alice);
         vm.expectRevert();
-        feeCollector.signalAction(
-            ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0)))
-        );
+        feeCollector.signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0))));
     }
 
     function test_RevertWhen_ExecuteMigrateCollector_ZeroAddress() public {
         vm.prank(owner);
-        feeCollector.signalAction(
-            ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(address(0), new address[](0)))
-        );
+        feeCollector.signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(address(0), new address[](0))));
 
         vm.warp(block.timestamp + TIMELOCK_DELAY);
         vm.expectRevert(IBoardwalkFeeCollector.ZeroAddress.selector);
@@ -820,9 +812,7 @@ contract BoardwalkFeeCollectorTest is Test {
 
         // Signal
         vm.prank(owner);
-        feeCollector.signalAction(
-            ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0)))
-        );
+        feeCollector.signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0))));
 
         bytes32 action = ACTION_MIGRATE_COLLECTOR;
         (bool isPending,,) = feeCollector.getPendingChange(action);
@@ -860,9 +850,7 @@ contract BoardwalkFeeCollectorTest is Test {
         address newCollector = makeAddr("newCollector");
 
         vm.prank(owner);
-        feeCollector.signalAction(
-            ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0)))
-        );
+        feeCollector.signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0))));
 
         vm.expectRevert(abi.encodeWithSelector(Timelocked.TimelockTooEarly.selector, block.timestamp + TIMELOCK_DELAY));
         feeCollector.executeMigrateCollector(newCollector, new address[](0));
@@ -872,9 +860,7 @@ contract BoardwalkFeeCollectorTest is Test {
         address newCollector = makeAddr("newCollector");
 
         vm.prank(owner);
-        feeCollector.signalAction(
-            ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0)))
-        );
+        feeCollector.signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0))));
 
         vm.warp(block.timestamp + TIMELOCK_DELAY + TIMELOCK_EXPIRY + 1);
 
@@ -887,9 +873,7 @@ contract BoardwalkFeeCollectorTest is Test {
         address wrongCollector = makeAddr("wrongCollector");
 
         vm.prank(owner);
-        feeCollector.signalAction(
-            ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0)))
-        );
+        feeCollector.signalAction(ACTION_MIGRATE_COLLECTOR, keccak256(abi.encode(newCollector, new address[](0))));
 
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
@@ -1069,9 +1053,7 @@ contract BoardwalkFeeCollectorTest is Test {
         // Vault is mocked → its `depositRevenue` ignores the pull, so the governance share remains
         // sitting on the collector with a standing max-allowance to the vault.
         assertEq(weth.balanceOf(address(feeCollector)), governanceExpected, "governance share held pending pull");
-        assertEq(
-            weth.allowance(address(feeCollector), vault), type(uint256).max, "vault approved to max"
-        );
+        assertEq(weth.allowance(address(feeCollector), vault), type(uint256).max, "vault approved to max");
     }
 
     /// @notice With a zero balance, `forwardRevenue` is a silent no-op so a periodic keeper cron

@@ -1,0 +1,29 @@
+{
+  "name": "bws-migration-snapshot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Off-chain snapshot + merkle pipeline for the BMX->BWS migration (BwsMigration.sol).",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:fixture": "tsx src/buildFixture.ts",
+    "snapshot": "tsx src/index.ts",
+    "tree": "tsx src/buildTree.ts",
+    "proof": "tsx src/genProof.ts",
+    "eligibility": "tsx src/checkEligibility.ts",
+    "validate": "tsx src/validate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openzeppelin/merkle-tree": "^1.0.7",
+    "dotenv": "^16.4.5",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}

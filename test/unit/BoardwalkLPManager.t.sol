@@ -383,14 +383,7 @@ contract BoardwalkLPManagerTest is Test {
 
         vm.prank(alice);
         (,, uint256 liquidity) = lpManager.addLiquidity(
-            address(tokenA),
-            address(tokenB),
-            amountA,
-            amountB,
-            MIN_AMOUNT,
-            MIN_AMOUNT,
-            bob,
-            DEADLINE
+            address(tokenA), address(tokenB), amountA, amountB, MIN_AMOUNT, MIN_AMOUNT, bob, DEADLINE
         );
 
         assertGt(liquidity, 0, "liquidity should be minted");

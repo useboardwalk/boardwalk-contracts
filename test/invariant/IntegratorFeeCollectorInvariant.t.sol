@@ -13,7 +13,10 @@ import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 contract MockERC20 is ERC20 {
     constructor() ERC20("M", "M") {}
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         _mint(to, amount);
     }
 }
@@ -21,11 +24,16 @@ contract MockERC20 is ERC20 {
 contract MockLaunchToken is ERC20 {
     address public feeDistributor;
 
-    constructor(address _fd) ERC20("LT", "LT") {
+    constructor(
+        address _fd
+    ) ERC20("LT", "LT") {
         feeDistributor = _fd;
     }
 
-    function mint(address to, uint256 amount) external {
+    function mint(
+        address to,
+        uint256 amount
+    ) external {
         _mint(to, amount);
     }
 }
@@ -34,11 +42,16 @@ contract MockFactory {
     mapping(address => bool) public isLaunchToken;
     address public INTEGRATOR_COLLECTOR;
 
-    function setLaunchToken(address token, bool ok) external {
+    function setLaunchToken(
+        address token,
+        bool ok
+    ) external {
         isLaunchToken[token] = ok;
     }
 
-    function setIntegratorCollector(address c) external {
+    function setIntegratorCollector(
+        address c
+    ) external {
         INTEGRATOR_COLLECTOR = c;
     }
 }
@@ -46,7 +59,9 @@ contract MockFactory {
 contract MockRouter {
     address public RAISE_TOKEN_ADDR;
 
-    constructor(address _raiseToken) {
+    constructor(
+        address _raiseToken
+    ) {
         RAISE_TOKEN_ADDR = _raiseToken;
     }
 
@@ -54,11 +69,10 @@ contract MockRouter {
         return address(0);
     }
 
-    function getAmountsOut(uint256 amountIn, address[] calldata path)
-        external
-        pure
-        returns (uint256[] memory amounts)
-    {
+    function getAmountsOut(
+        uint256 amountIn,
+        address[] calldata path
+    ) external pure returns (uint256[] memory amounts) {
         amounts = new uint256[](path.length);
         amounts[0] = amountIn;
         amounts[1] = amountIn;
@@ -132,7 +146,10 @@ contract IntegratorFeeCollectorHandler is Test {
 
     // ============ Action functions (fuzzed by Foundry) ============
 
-    function receiveFees(uint256 tokenSeed, uint256 amount) external {
+    function receiveFees(
+        uint256 tokenSeed,
+        uint256 amount
+    ) external {
         amount = bound(amount, 0, 1e24);
         if (amount == 0) return;
         MockLaunchToken token = tokens[bound(tokenSeed, 0, 2)];
@@ -146,7 +163,10 @@ contract IntegratorFeeCollectorHandler is Test {
         ghost_totalReceivedPerToken[address(token)] += amount;
     }
 
-    function claim(uint256 slotSeed, uint256 tokenSeed) external {
+    function claim(
+        uint256 slotSeed,
+        uint256 tokenSeed
+    ) external {
         uint256 slotIdx = bound(slotSeed, 0, collector.slotCount() - 1);
         address actor = collector.integrators(slotIdx);
         MockLaunchToken token = tokens[bound(tokenSeed, 0, 2)];
@@ -156,7 +176,9 @@ contract IntegratorFeeCollectorHandler is Test {
         try collector.claim(address(token), 0, type(uint256).max) {} catch {}
     }
 
-    function claimBatch(uint256 slotSeed) external {
+    function claimBatch(
+        uint256 slotSeed
+    ) external {
         uint256 slotIdx = bound(slotSeed, 0, collector.slotCount() - 1);
         address actor = collector.integrators(slotIdx);
 
@@ -170,7 +192,10 @@ contract IntegratorFeeCollectorHandler is Test {
         try collector.claimBatch(tokenAddrs, mins, type(uint256).max) {} catch {}
     }
 
-    function signalChangeAddress(uint256 slotSeed, uint256 newAddrSeed) external {
+    function signalChangeAddress(
+        uint256 slotSeed,
+        uint256 newAddrSeed
+    ) external {
         uint256 slotIdx = bound(slotSeed, 0, collector.slotCount() - 1);
         address actor = collector.integrators(slotIdx);
 
@@ -186,7 +211,9 @@ contract IntegratorFeeCollectorHandler is Test {
         } catch {}
     }
 
-    function executeChangeAddress(uint256 sigSeed) external {
+    function executeChangeAddress(
+        uint256 sigSeed
+    ) external {
         if (_pendingSignals.length == 0) return;
         uint256 idx = bound(sigSeed, 0, _pendingSignals.length - 1);
         PendingSignal memory sig = _pendingSignals[idx];
@@ -202,14 +229,18 @@ contract IntegratorFeeCollectorHandler is Test {
         } catch {}
     }
 
-    function cancelChangeAddress(uint256 slotSeed) external {
+    function cancelChangeAddress(
+        uint256 slotSeed
+    ) external {
         uint256 slotIdx = bound(slotSeed, 0, collector.slotCount() - 1);
         address actor = collector.integrators(slotIdx);
         vm.prank(actor);
         try collector.cancelChangeAddress() {} catch {}
     }
 
-    function warpTime(uint256 secs) external {
+    function warpTime(
+        uint256 secs
+    ) external {
         secs = bound(secs, 1, 30 days);
         vm.warp(block.timestamp + secs);
     }

@@ -23,53 +23,49 @@ contract LPLockerForkTest is Test {
     address public governanceVoter;
     address public treasury;
 
+    bool internal forked;
+
+    modifier onlyFork() {
+        if (!forked) vm.skip(true);
+        _;
+    }
+
     function setUp() public {
-        // Verify we're on a Base fork
-        uint256 chainId;
-        assembly { chainId := chainid() }
-        // Base mainnet = 8453, but fork tests may report a different chain ID
-        // Instead verify the PositionManager exists
-        uint256 codeSize;
-        assembly { codeSize := extcodesize(BASE_POSITION_MANAGER) }
-        require(codeSize > 0, "Not a Base fork or PositionManager not deployed");
+        // Run with --fork-url, or self-fork from BASE_RPC_URL; without either the suite skips
+        // (CI runs with no RPC configured).
+        if (BASE_POSITION_MANAGER.code.length == 0) {
+            string memory rpcUrl = vm.envOr("BASE_RPC_URL", string(""));
+            if (bytes(rpcUrl).length == 0) return;
+            vm.createSelectFork(rpcUrl);
+        }
+        forked = true;
 
         governanceVoter = makeAddr("governanceVoter");
         treasury = makeAddr("treasury");
 
         // Mock GovernanceVoter.treasury() to return our treasury address
-        vm.mockCall(
-            governanceVoter,
-            abi.encodeWithSelector(IGovernanceVoter.treasury.selector),
-            abi.encode(treasury)
-        );
+        vm.mockCall(governanceVoter, abi.encodeWithSelector(IGovernanceVoter.treasury.selector), abi.encode(treasury));
 
         // Sort currencies for the pool (WETH < USDC by address)
-        (address c0, address c1) = BASE_WETH < BASE_USDC
-            ? (BASE_WETH, BASE_USDC)
-            : (BASE_USDC, BASE_WETH);
+        (address c0, address c1) = BASE_WETH < BASE_USDC ? (BASE_WETH, BASE_USDC) : (BASE_USDC, BASE_WETH);
 
-        locker = new LPLocker(
-            BASE_POSITION_MANAGER,
-            governanceVoter,
-            c0,
-            c1
-        );
+        locker = new LPLocker(BASE_POSITION_MANAGER, governanceVoter, c0, c1, address(this));
     }
 
     /// @notice Verify that the PositionManager is live and callable
-    function test_PositionManager_IsLive() public view {
+    function test_PositionManager_IsLive() public onlyFork {
         uint256 nextId = IV4PositionManager(BASE_POSITION_MANAGER).nextTokenId();
         assertGt(nextId, 0, "PositionManager should have minted positions");
     }
 
     /// @notice Verify that LPLocker is correctly wired to the real PositionManager
-    function test_LPLocker_WiredToRealPM() public view {
+    function test_LPLocker_WiredToRealPM() public onlyFork {
         assertEq(locker.POSITION_MANAGER(), BASE_POSITION_MANAGER);
         assertEq(locker.GOVERNANCE_VOTER(), governanceVoter);
     }
 
     /// @notice Verify that lockPosition works when called by governance voter
-    function test_LockPosition_FromGovernanceVoter() public {
+    function test_LockPosition_FromGovernanceVoter() public onlyFork {
         uint256 tokenId = 12345;
         vm.prank(governanceVoter);
         locker.lockPosition(tokenId);
@@ -80,7 +76,7 @@ contract LPLockerForkTest is Test {
     ///         by testing against the real PositionManager.
     ///         The call should fail with a PositionManager-level error (not an ABI error),
     ///         proving the encoding is compatible with the live contract.
-    function test_ClaimFees_EncodingCompatibleWithRealPM() public {
+    function test_ClaimFees_EncodingCompatibleWithRealPM() public onlyFork {
         // Lock a fake position
         uint256 fakeTokenId = 999999999;
         vm.prank(governanceVoter);
@@ -109,18 +105,13 @@ contract LPLockerForkTest is Test {
 
     /// @notice Verify the full encoding structure matches what modifyLiquidities expects.
     ///         This encodes the same call as _claimFees and checks the structure.
-    function test_ClaimFees_EncodingStructure() public view {
-        (address c0, address c1) = BASE_WETH < BASE_USDC
-            ? (BASE_WETH, BASE_USDC)
-            : (BASE_USDC, BASE_WETH);
+    function test_ClaimFees_EncodingStructure() public onlyFork {
+        (address c0, address c1) = BASE_WETH < BASE_USDC ? (BASE_WETH, BASE_USDC) : (BASE_USDC, BASE_WETH);
 
         uint256 tokenId = 1;
 
         // Build the same encoding as LPLocker._claimFees
-        bytes memory actions = abi.encodePacked(
-            uint8(Actions.DECREASE_LIQUIDITY),
-            uint8(Actions.TAKE_PAIR)
-        );
+        bytes memory actions = abi.encodePacked(uint8(Actions.DECREASE_LIQUIDITY), uint8(Actions.TAKE_PAIR));
         bytes[] memory params = new bytes[](2);
         params[0] = abi.encode(tokenId, uint256(0), uint128(0), uint128(0), "");
         params[1] = abi.encode(c0, c1, treasury);
@@ -140,7 +131,7 @@ contract LPLockerForkTest is Test {
     ///         Uses position #1 which should exist on Base mainnet.
     ///         Expected: revert because LPLocker doesn't own position #1,
     ///         but the modifyLiquidities call itself is properly formatted.
-    function test_ClaimFees_RealPositionId_RevertsNotOwner() public {
+    function test_ClaimFees_RealPositionId_RevertsNotOwner() public onlyFork {
         // Position #1 definitely exists (PM has minted >2M positions)
         uint256 realTokenId = 1;
         vm.prank(governanceVoter);
