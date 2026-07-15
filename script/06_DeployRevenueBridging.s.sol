@@ -39,7 +39,14 @@ import {CrossChainConfig} from "script/CrossChainConfig.sol";
 ///      RAISE_TOKEN. Optional: OWNER (default deployer), MAX_FEE_BPS, RAISE_TOKEN (ETH/Ink/Arbitrum
 ///      default to canonical WETH, Fraxtal to frxUSD).
 contract DeployRevenueBridging is Script {
+    error EthereumLaneRetired();
+
     function run() external {
+        // The Ethereum lane is retired for the BWLK era: Ethereum is the governance home, and a
+        // Base-pinned bridger there would ship the hub's own revenue away from the voter. Guard
+        // first, before any env read, so the revert needs no setup to hit.
+        if (block.chainid == CrossChainConfig.CHAIN_ETHEREUM) revert EthereumLaneRetired();
+
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
         address owner = vm.envOr("OWNER", deployer);
