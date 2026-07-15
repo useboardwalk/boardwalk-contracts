@@ -3,25 +3,25 @@ pragma solidity =0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {BWS} from "src/token/BWS.sol";
-import {BwsMigration} from "src/token/BwsMigration.sol";
-import {ArbitrumConfig} from "script/bws/ArbitrumConfig.sol";
+import {BWLK} from "src/token/BWLK.sol";
+import {BwlkMigration} from "src/token/BwlkMigration.sol";
+import {EthereumConfig} from "script/bwlk/EthereumConfig.sol";
 import {
     MockRewardTrackerFull,
     MockBnToken,
     MockMintableERC20,
     NotFinalizingVoter
-} from "test/bws/MockMorphexStaking.sol";
+} from "test/bwlk/MockMorphexStaking.sol";
 
-/// @title BwsMigrationMerkleTest
+/// @title BwlkMigrationMerkleTest
 /// @notice Cross-language leaf round-trip. The merkle root and proofs below were generated off-chain by
 ///         the `snapshot` pipeline (OpenZeppelin StandardMerkleTree, leaf encoding
 ///         ["address","uint256","uint256"]) and checked into
 ///         `snapshot/fixtures/solidity-fixture.txt`. The tests feed those exact proofs into
-///         on-chain `BwsMigration.migrate`. If the contract's leaf encoding
+///         on-chain `BwlkMigration.migrate`. If the contract's leaf encoding
 ///         (`keccak256(bytes.concat(keccak256(abi.encode(account, snapshotBmx, snapshotPoints))))`)
 ///         drifts from the pipeline's, `migrate` rejects the proof and these tests fail.
-contract BwsMigrationMerkleTest is Test {
+contract BwlkMigrationMerkleTest is Test {
     // ---- Pipeline-generated fixture (snapshot/fixtures/solidity-fixture.txt) ----
     bytes32 internal constant MERKLE_ROOT = 0xf03e3fed1b9eeb74c54825c153a32e78623de91d20a4e2f9a52d7797d02b33fe;
 
@@ -33,14 +33,14 @@ contract BwsMigrationMerkleTest is Test {
     uint256 internal constant SNAPSHOT_BMX_3 = 25000000000000000000000;
     uint256 internal constant SNAPSHOT_POINTS_3 = 10000000000000000000000;
 
-    BWS internal bws;
+    BWLK internal bwlk;
     MockMintableERC20 internal bmx;
     MockRewardTrackerFull internal staked;
     MockRewardTrackerFull internal bonus;
     MockRewardTrackerFull internal fee;
-    MockBnToken internal bnBws;
+    MockBnToken internal bnBwlk;
     NotFinalizingVoter internal voter;
-    BwsMigration internal migrator;
+    BwlkMigration internal migrator;
 
     address internal escrow = makeAddr("escrow");
     address internal dest = makeAddr("dest");
@@ -59,45 +59,45 @@ contract BwsMigrationMerkleTest is Test {
 
     function setUp() public {
         vm.prank(escrow);
-        bws = new BWS(escrow, makeAddr("ccipAdmin"));
+        bwlk = new BWLK(escrow, makeAddr("ccipAdmin"));
 
         bmx = new MockMintableERC20("BMX", "BMX");
-        staked = new MockRewardTrackerFull("Staked BWS", "sBWS");
-        bonus = new MockRewardTrackerFull("Bonus BWS", "snBWS");
-        fee = new MockRewardTrackerFull("Staked + Bonus + Fee BWS", "sbfBWS");
-        bnBws = new MockBnToken("Bonus BWS", "bnBWS");
+        staked = new MockRewardTrackerFull("Staked BWLK", "sBWLK");
+        bonus = new MockRewardTrackerFull("Bonus BWLK", "snBWLK");
+        fee = new MockRewardTrackerFull("Staked + Bonus + Fee BWLK", "sbfBWLK");
+        bnBwlk = new MockBnToken("Bonus BWLK", "bnBWLK");
         voter = new NotFinalizingVoter();
 
-        migrator = new BwsMigration(
+        migrator = new BwlkMigration(
             address(this),
             address(bmx),
-            address(bws),
+            address(bwlk),
             address(staked),
             address(bonus),
             address(fee),
-            address(bnBws),
+            address(bnBwlk),
             address(voter),
             block.timestamp + 365 days
         );
 
         // Fund the pool and wire the staking exactly as the deploy runbook does.
         vm.prank(escrow);
-        IERC20(address(bws)).transfer(address(migrator), ArbitrumConfig.MIGRATION_POOL);
+        IERC20(address(bwlk)).transfer(address(migrator), EthereumConfig.MIGRATION_POOL);
 
         staked.setHandler(address(migrator), true);
         bonus.setHandler(address(migrator), true);
         fee.setHandler(address(migrator), true);
-        bnBws.setMinter(address(migrator), true);
+        bnBwlk.setMinter(address(migrator), true);
         staked.setHandler(address(bonus), true);
         bonus.setHandler(address(fee), true);
-        staked.setDepositToken(address(bws), true);
+        staked.setDepositToken(address(bwlk), true);
         bonus.setDepositToken(address(staked), true);
         fee.setDepositToken(address(bonus), true);
-        fee.setDepositToken(address(bnBws), true);
-        // Production wiring: bnBWS in private transfer mode with the fee tracker as handler, so
+        fee.setDepositToken(address(bnBwlk), true);
+        // Production wiring: bnBWLK in private transfer mode with the fee tracker as handler, so
         // every migrate() here exercises the handler-bypass pull under private mode.
-        bnBws.setInPrivateTransferMode(true);
-        bnBws.setHandler(address(fee), true);
+        bnBwlk.setInPrivateTransferMode(true);
+        bnBwlk.setHandler(address(fee), true);
 
         // Owner sets the one-shot root to the pipeline-published value.
         migrator.setMerkleRoot(MERKLE_ROOT);
@@ -124,8 +124,8 @@ contract BwsMigrationMerkleTest is Test {
         assertTrue(migrator.migrated(ACCOUNT_1), "entry 1 migrated (proof accepted)");
         // Points = 16% of (snapshotBmx + snapshotPoints) at full ratio = 160e18.
         uint256 expected = (SNAPSHOT_BMX_1 + SNAPSHOT_POINTS_1) * 1_600 / 10_000;
-        assertEq(fee.depositBalances(dest, address(bnBws)), expected, "entry 1 points credited");
-        assertEq(staked.depositBalances(dest, address(bws)), SNAPSHOT_BMX_1, "entry 1 principal staked");
+        assertEq(fee.depositBalances(dest, address(bnBwlk)), expected, "entry 1 points credited");
+        assertEq(staked.depositBalances(dest, address(bwlk)), SNAPSHOT_BMX_1, "entry 1 principal staked");
     }
 
     /// @notice A second independent entry under the same root also verifies.
@@ -135,7 +135,7 @@ contract BwsMigrationMerkleTest is Test {
         assertTrue(migrator.migrated(ACCOUNT_3), "entry 3 migrated (proof accepted)");
         // points = snapshotPoints + 16%*(snapshotBmx+snapshotPoints) at full ratio.
         uint256 expected = SNAPSHOT_POINTS_3 + (SNAPSHOT_BMX_3 + SNAPSHOT_POINTS_3) * 1_600 / 10_000;
-        assertEq(fee.depositBalances(dest, address(bnBws)), expected, "entry 3 points credited");
+        assertEq(fee.depositBalances(dest, address(bnBwlk)), expected, "entry 3 points credited");
     }
 
     /// @notice A tampered snapshot value (proof no longer matches the leaf) is rejected.
@@ -143,7 +143,7 @@ contract BwsMigrationMerkleTest is Test {
         bmx.mint(ACCOUNT_1, SNAPSHOT_BMX_1);
         vm.startPrank(ACCOUNT_1);
         IERC20(address(bmx)).approve(address(migrator), SNAPSHOT_BMX_1);
-        vm.expectRevert(BwsMigration.InvalidProof.selector);
+        vm.expectRevert(BwlkMigration.InvalidProof.selector);
         migrator.migrate(dest, SNAPSHOT_BMX_1 - 1, SNAPSHOT_POINTS_1, proof1());
         vm.stopPrank();
     }
@@ -153,7 +153,7 @@ contract BwsMigrationMerkleTest is Test {
         bmx.mint(ACCOUNT_3, SNAPSHOT_BMX_1);
         vm.startPrank(ACCOUNT_3);
         IERC20(address(bmx)).approve(address(migrator), SNAPSHOT_BMX_1);
-        vm.expectRevert(BwsMigration.InvalidProof.selector);
+        vm.expectRevert(BwlkMigration.InvalidProof.selector);
         migrator.migrate(dest, SNAPSHOT_BMX_1, SNAPSHOT_POINTS_1, proof1());
         vm.stopPrank();
     }

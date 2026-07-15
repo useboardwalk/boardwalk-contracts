@@ -3,13 +3,13 @@ pragma solidity =0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @dev Test doubles for the morphex-contracts GMX-style staking surface the BWS migration deploy depends on: a
-///      3-tier `RewardTracker`, a `MintableBaseToken` (bnBWS), and a plain BMX ERC20. Cover the parts the
+/// @dev Test doubles for the morphex-contracts GMX-style staking surface the BWLK migration deploy depends on: a
+///      3-tier `RewardTracker`, a `MintableBaseToken` (bnBWLK), and a plain BMX ERC20. Cover the parts the
 ///      migrator and go-live assertions exercise: handler-gated `stakeForAccount`, the handler transfer
 ///      bypass between tiers, deposit-token gating, the `isHandler`/`isDepositToken`/`isMinter`/`gov`
 ///      getters, and private transfer mode.
 
-/// @notice Mock of a BWS staking `RewardTracker`. Three instances share one bytecode (and one codehash),
+/// @notice Mock of a BWLK staking `RewardTracker`. Three instances share one bytecode (and one codehash),
 ///         which the D-4 byte-match assertion relies on.
 contract MockRewardTrackerFull {
     string public name;
@@ -167,7 +167,7 @@ contract MockRewardTrackerFull {
     }
 }
 
-/// @notice Mock of the BWS staking bnBWS `MintableBaseToken` (multiplier points).
+/// @notice Mock of the BWLK staking bnBWLK `MintableBaseToken` (multiplier points).
 contract MockBnToken {
     string public name;
     string public symbol;
@@ -332,7 +332,7 @@ contract MockMintableERC20 {
     }
 }
 
-/// @notice Mock of a BWS staking `RewardDistributor`: only the back-pointer the go-live gate reads.
+/// @notice Mock of a BWLK staking `RewardDistributor`: only the back-pointer the go-live gate reads.
 contract MockRewardDistributor {
     address public rewardTracker;
 

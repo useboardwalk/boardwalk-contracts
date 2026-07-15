@@ -6,13 +6,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ICcaAuction} from "../interfaces/ICcaAuction.sol";
 
 /// @title UnsoldBurner
-/// @notice Burns unsold BWS from the Uniswap CCA launch.
+/// @notice Burns unsold BWLK from the Uniswap CCA launch.
 contract UnsoldBurner {
     using SafeERC20 for IERC20;
 
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
-    IERC20 public immutable BWS;
+    IERC20 public immutable BWLK;
 
     event Burned(address indexed caller, uint256 amount);
 
@@ -20,13 +20,13 @@ contract UnsoldBurner {
     error NothingToBurn();
 
     constructor(
-        address bws
+        address bwlk
     ) {
-        if (bws == address(0)) revert ZeroAddress();
-        BWS = IERC20(bws);
+        if (bwlk == address(0)) revert ZeroAddress();
+        BWLK = IERC20(bwlk);
     }
 
-    /// @notice Sweep the auction's unsold BWS into this contract, then burn the whole balance.
+    /// @notice Sweep the auction's unsold BWLK into this contract, then burn the whole balance.
     function sweep(
         address auction
     ) external {
@@ -34,13 +34,13 @@ contract UnsoldBurner {
             // solhint-disable-next-line no-empty-blocks
             try ICcaAuction(auction).sweepUnsoldTokens() {} catch {}
         }
-        uint256 balance = BWS.balanceOf(address(this));
+        uint256 balance = BWLK.balanceOf(address(this));
         if (balance != 0) _burn(balance);
     }
 
-    /// @notice Burn the contract's entire BWS balance. Reverts if there is nothing to burn.
+    /// @notice Burn the contract's entire BWLK balance. Reverts if there is nothing to burn.
     function burn() external {
-        uint256 balance = BWS.balanceOf(address(this));
+        uint256 balance = BWLK.balanceOf(address(this));
         if (balance == 0) revert NothingToBurn();
         _burn(balance);
     }
@@ -48,7 +48,7 @@ contract UnsoldBurner {
     function _burn(
         uint256 amount
     ) private {
-        BWS.safeTransfer(DEAD, amount);
+        BWLK.safeTransfer(DEAD, amount);
         emit Burned(msg.sender, amount);
     }
 }

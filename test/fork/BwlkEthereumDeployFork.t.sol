@@ -4,39 +4,43 @@ pragma solidity =0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import {BWS} from "src/token/BWS.sol";
-import {BwsMigration} from "src/token/BwsMigration.sol";
+import {BWLK} from "src/token/BWLK.sol";
+import {BwlkMigration} from "src/token/BwlkMigration.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
-import {AssertBwsDeploy} from "script/bws/04_AssertBwsDeploy.s.sol";
-import {ArbitrumConfig} from "script/bws/ArbitrumConfig.sol";
-import {MockRewardTrackerFull, MockRewardDistributor, MockBnToken} from "test/bws/MockMorphexStaking.sol";
+import {AssertBwlkDeploy} from "script/bwlk/04_AssertBwlkDeploy.s.sol";
+import {EthereumConfig} from "script/bwlk/EthereumConfig.sol";
+import {MockRewardTrackerFull, MockRewardDistributor, MockBnToken} from "test/bwlk/MockMorphexStaking.sol";
+import {MockERC20} from "test/bwlk/UnsoldBurnerMocks.sol";
 
-/// @title BwsArbitrumDeployForkTest
-/// @notice BWS migration deploy + go-live gate on an Arbitrum One fork, against real Uniswap v4 infra
-///         (WETH / UniversalRouter / PositionManager) and the legacy BMX token. The BWS staking
-///         trackers + bnBWS are not deployed yet (a separate 0.6.12 repo), so doubles stand in for them;
-///         everything else is production code. Covers: the stack deploys and wires end-to-end;
-///         `AssertBwsDeploy.assertAll` passes on the wired deployment and reverts on injected violations;
-///         Arbitrum BMX is a non-fee-on-transfer ERC20 (D-5).
+/// @title BwlkEthereumDeployForkTest
+/// @notice BWLK migration deploy + go-live gate on an Ethereum mainnet fork, against real Uniswap v4
+///         infra (WETH / UniversalRouter / PositionManager). The BWLK staking trackers + bnBWLK are
+///         not deployed yet (a separate 0.6.12 repo), so doubles stand in for them; everything else
+///         is production code. Covers: the stack deploys and wires end-to-end;
+///         `AssertBwlkDeploy.assertAll` passes on the wired deployment and reverts on injected
+///         violations; the surrendered token is a non-fee-on-transfer ERC20 (D-5).
 ///
-/// @dev Run: forge test --match-contract BwsArbitrumDeployForkTest --fork-url https://arb1.arbitrum.io/rpc
-///      (also self-forks via ARBITRUM_RPC_URL when run without --fork-url).
-contract BwsArbitrumDeployForkTest is Test {
-    AssertBwsDeploy internal gate;
+/// @dev The Ethereum-side migration source is still being re-scoped: pass BMX_ADDRESS to run the
+///      D-5 transfer-delta proof against the real token; unset, an 18-dec mock stands in and the
+///      real-token proof re-runs once the source is decided.
+///      Run: forge test --match-contract BwlkEthereumDeployForkTest --fork-url https://ethereum-rpc.publicnode.com
+///      (also self-forks via ETHEREUM_RPC_URL when run without --fork-url).
+contract BwlkEthereumDeployForkTest is Test {
+    AssertBwlkDeploy internal gate;
 
-    BWS internal bws;
+    BWLK internal bwlk;
     MockRewardTrackerFull internal staked;
     MockRewardTrackerFull internal bonus;
     MockRewardTrackerFull internal fee;
-    MockBnToken internal bnBws;
+    MockBnToken internal bnBwlk;
     GovernanceVoter internal voter;
     LPLocker internal lpLocker;
     ParticipationDistributor internal pd;
-    BwsMigration internal migrator;
+    BwlkMigration internal migrator;
 
-    address internal constant BMX = ArbitrumConfig.ARB_BMX;
+    address internal BMX;
     address internal escrow = makeAddr("escrow");
     address internal timelock = makeAddr("timelock");
     address internal keeper = makeAddr("keeper");
@@ -52,30 +56,33 @@ contract BwsArbitrumDeployForkTest is Test {
     }
 
     function setUp() public {
-        // Run with --fork-url, or self-fork from ARBITRUM_RPC_URL; without either the suite skips
+        // Run with --fork-url, or self-fork from ETHEREUM_RPC_URL; without either the suite skips
         // (CI runs with no RPC configured).
-        if (ArbitrumConfig.ARB_WETH.code.length == 0) {
-            string memory rpcUrl = vm.envOr("ARBITRUM_RPC_URL", string(""));
+        if (EthereumConfig.ETH_WETH.code.length == 0) {
+            string memory rpcUrl = vm.envOr("ETHEREUM_RPC_URL", string(""));
             if (bytes(rpcUrl).length == 0) return;
             vm.createSelectFork(rpcUrl);
         }
         forked = true;
-        require(BMX.code.length > 0, "BMX missing on fork");
+        // Migration source: real token when BMX_ADDRESS is set AND live on this fork; an 18-dec
+        // mock otherwise (also covers a stale env from the Arbitrum era).
+        BMX = vm.envOr("BMX_ADDRESS", address(0));
+        if (BMX.code.length == 0) BMX = address(new MockERC20("Legacy BMX", "BMX"));
 
-        gate = new AssertBwsDeploy();
+        gate = new AssertBwlkDeploy();
         deadline = block.timestamp + 365 days;
         // The gate requires the timelock to be a contract (an EOA gives no delay).
         vm.etch(timelock, hex"00");
 
-        // 1. BWS minted to escrow.
+        // 1. BWLK minted to escrow.
         vm.prank(escrow);
-        bws = new BWS(escrow, makeAddr("ccipAdmin"));
+        bwlk = new BWLK(escrow, makeAddr("ccipAdmin"));
 
-        // 2. Staking doubles (real BWS staking trackers are deployed separately).
-        staked = new MockRewardTrackerFull("Staked BWS", "sBWS");
-        bonus = new MockRewardTrackerFull("Bonus BWS", "snBWS");
-        fee = new MockRewardTrackerFull("Staked + Bonus + Fee BWS", "sbfBWS");
-        bnBws = new MockBnToken("Bonus BWS", "bnBWS");
+        // 2. Staking doubles (real BWLK staking trackers are deployed separately).
+        staked = new MockRewardTrackerFull("Staked BWLK", "sBWLK");
+        bonus = new MockRewardTrackerFull("Bonus BWLK", "snBWLK");
+        fee = new MockRewardTrackerFull("Staked + Bonus + Fee BWLK", "sbfBWLK");
+        bnBwlk = new MockBnToken("Bonus BWLK", "bnBWLK");
         staked.initialize(address(new MockRewardDistributor(address(staked))));
         bonus.initialize(address(new MockRewardDistributor(address(bonus))));
         fee.initialize(address(new MockRewardDistributor(address(fee))));
@@ -92,24 +99,24 @@ contract BwsArbitrumDeployForkTest is Test {
             GovernanceVoter.DeployParams({
                 sbfBmx: address(fee),
                 stakedBmxTracker: address(staked),
-                bnBmx: address(bnBws),
-                bmx: address(bws),
-                weth: ArbitrumConfig.ARB_WETH,
-                universalRouter: ArbitrumConfig.ARB_UNIVERSAL_ROUTER,
-                v4PositionManager: ArbitrumConfig.ARB_POSITION_MANAGER,
+                bnBmx: address(bnBwlk),
+                bmx: address(bwlk),
+                weth: EthereumConfig.ETH_WETH,
+                universalRouter: EthereumConfig.ETH_UNIVERSAL_ROUTER,
+                v4PositionManager: EthereumConfig.ETH_POSITION_MANAGER,
                 treasury: makeAddr("treasury"),
                 fallbackTreasury: makeAddr("fallback"),
                 epochZero: block.timestamp,
                 epochDuration: 7 days,
-                poolFee: ArbitrumConfig.POOL_FEE,
-                poolTickSpacing: ArbitrumConfig.POOL_TICK_SPACING,
+                poolFee: EthereumConfig.POOL_FEE,
+                poolTickSpacing: EthereumConfig.POOL_TICK_SPACING,
                 poolHooks: address(0),
                 keeper: keeper
             })
         );
         lpLocker =
-            new LPLocker(ArbitrumConfig.ARB_POSITION_MANAGER, address(voter), address(0), address(bws), lpRegistrar);
-        pd = new ParticipationDistributor(address(bws), address(voter));
+            new LPLocker(EthereumConfig.ETH_POSITION_MANAGER, address(voter), address(0), address(bwlk), lpRegistrar);
+        pd = new ParticipationDistributor(address(bwlk), address(voter));
         voter.initializePeers(address(lpLocker), address(pd), feeCollector);
 
         // Post-launch wiring the gate's A-section checks (hook committed, registrar renounced).
@@ -118,55 +125,55 @@ contract BwsArbitrumDeployForkTest is Test {
         lpLocker.renounceRegistrar();
 
         // 4. Migrator owned by the timelock, funded, root set.
-        migrator = new BwsMigration(
+        migrator = new BwlkMigration(
             timelock,
             BMX,
-            address(bws),
+            address(bwlk),
             address(staked),
             address(bonus),
             address(fee),
-            address(bnBws),
+            address(bnBwlk),
             address(voter),
             deadline
         );
         vm.prank(escrow);
-        IERC20(address(bws)).transfer(address(migrator), ArbitrumConfig.MIGRATION_POOL);
+        IERC20(address(bwlk)).transfer(address(migrator), EthereumConfig.MIGRATION_POOL);
         vm.prank(timelock);
         migrator.setMerkleRoot(keccak256("root"));
 
-        // 5. BWS staking grants (runbook step, executed here by the doubles' gov = this test).
+        // 5. BWLK staking grants (runbook step, executed here by the doubles' gov = this test).
         staked.setHandler(address(migrator), true);
         bonus.setHandler(address(migrator), true);
         fee.setHandler(address(migrator), true);
-        bnBws.setMinter(address(migrator), true);
+        bnBwlk.setMinter(address(migrator), true);
         staked.setHandler(address(bonus), true);
         bonus.setHandler(address(fee), true);
-        staked.setDepositToken(address(bws), true);
+        staked.setDepositToken(address(bwlk), true);
         bonus.setDepositToken(address(staked), true);
         fee.setDepositToken(address(bonus), true);
-        fee.setDepositToken(address(bnBws), true);
+        fee.setDepositToken(address(bnBwlk), true);
     }
 
-    function _cfg() internal view returns (AssertBwsDeploy.Config memory) {
-        return AssertBwsDeploy.Config({
+    function _cfg() internal view returns (AssertBwlkDeploy.Config memory) {
+        return AssertBwlkDeploy.Config({
             migrator: address(migrator),
             voter: address(voter),
-            bws: address(bws),
+            bwlk: address(bwlk),
             bmx: BMX,
-            stakedBwsTracker: address(staked),
-            bonusBwsTracker: address(bonus),
-            feeBwsTracker: address(fee),
-            bnBws: address(bnBws),
+            stakedBwlkTracker: address(staked),
+            bonusBwlkTracker: address(bonus),
+            feeBwlkTracker: address(fee),
+            bnBwlk: address(bnBwlk),
             timelock: timelock,
             stakingGov: address(this),
-            auction: address(0), // no live BWS auction on the fork; run() warns when skipped
+            auction: address(0), // no live BWLK auction on the fork; run() warns when skipped
             burner: address(0),
             // Pre-launch stage: no CCA position exists to register (A-9), so the locker section
-            // is skipped here; BwsDeployAssertion.t.sol covers A-5..A-9 with doubles.
+            // is skipped here; BwlkDeployAssertion.t.sol covers A-5..A-9 with doubles.
             lpLocker: address(0),
-            totalMigratableBmx: ArbitrumConfig.MIGRATION_POOL,
+            totalMigratableBmx: EthereumConfig.MIGRATION_POOL,
             expectedTrackerCodehash: address(staked).codehash,
-            expectedBnTokenCodehash: address(bnBws).codehash,
+            expectedBnTokenCodehash: address(bnBwlk).codehash,
             bmxEmissionsHaltedAttested: true,
             bmxStandardAttested: true
         });
@@ -196,11 +203,11 @@ contract BwsArbitrumDeployForkTest is Test {
 
     /// @notice Injected D-1 violation reverts the gate on the fork.
     function testFork_AssertReverts_OnUndersizedPool() public onlyFork {
-        AssertBwsDeploy.Config memory cfg = _cfg();
-        cfg.totalMigratableBmx = ArbitrumConfig.MIGRATION_POOL + 1;
+        AssertBwlkDeploy.Config memory cfg = _cfg();
+        cfg.totalMigratableBmx = EthereumConfig.MIGRATION_POOL + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
-                AssertBwsDeploy.D1_PoolUndersized.selector, ArbitrumConfig.MIGRATION_POOL, cfg.totalMigratableBmx
+                AssertBwlkDeploy.D1_PoolUndersized.selector, EthereumConfig.MIGRATION_POOL, cfg.totalMigratableBmx
             )
         );
         gate.assertAll(cfg);
@@ -209,7 +216,7 @@ contract BwsArbitrumDeployForkTest is Test {
     /// @notice Injected D-3 violation (migrator loses its handler role) reverts the gate on the fork.
     function testFork_AssertReverts_OnMissingHandler() public onlyFork {
         fee.setHandler(address(migrator), false);
-        vm.expectRevert(abi.encodeWithSelector(AssertBwsDeploy.D3_MigratorNotHandler.selector, address(fee)));
+        vm.expectRevert(abi.encodeWithSelector(AssertBwlkDeploy.D3_MigratorNotHandler.selector, address(fee)));
         gate.assertAll(_cfg());
     }
 }

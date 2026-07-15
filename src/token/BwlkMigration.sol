@@ -10,12 +10,12 @@ import {IRewardTracker} from "../interfaces/IRewardTracker.sol";
 import {IMintable} from "../interfaces/IMintable.sol";
 import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 
-/// @title BwsMigration
-/// @notice BMX holders can swap their tokens 1:1 for staked BWS on Arbitrum.
-///         Migrating burns all your BMX and gives you BWS staked across all reward trackers,
+/// @title BwlkMigration
+/// @notice BMX holders can swap their tokens 1:1 for staked BWLK on Arbitrum.
+///         Migrating burns all your BMX and gives you BWLK staked across all reward trackers,
 ///         plus 16% of the migrated amount as voter points. Snapshot stakers carry over a
 ///         portion of past points; new users still get the 16% credit.
-contract BwsMigration is Ownable2Step, ReentrancyGuard {
+contract BwlkMigration is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
@@ -24,11 +24,11 @@ contract BwsMigration is Ownable2Step, ReentrancyGuard {
     uint256 public constant CREDIT_BPS = 1_600;
 
     IERC20 public immutable BMX;
-    IERC20 public immutable BWS;
-    IRewardTracker public immutable STAKED_BWS_TRACKER;
-    IRewardTracker public immutable BONUS_BWS_TRACKER;
-    IRewardTracker public immutable FEE_BWS_TRACKER;
-    IMintable public immutable BN_BWS;
+    IERC20 public immutable BWLK;
+    IRewardTracker public immutable STAKED_BWLK_TRACKER;
+    IRewardTracker public immutable BONUS_BWLK_TRACKER;
+    IRewardTracker public immutable FEE_BWLK_TRACKER;
+    IMintable public immutable BN_BWLK;
     address public immutable VOTER;
     /// @dev Migration is only possible at or before this timestamp; sweep only after.
     uint256 public immutable CLAIM_DEADLINE;
@@ -50,42 +50,42 @@ contract BwsMigration is Ownable2Step, ReentrancyGuard {
     error DeadlineInPast();
 
     event MerkleRootSet(bytes32 oldRoot, bytes32 newRoot);
-    event Migrated(address indexed account, address indexed destination, uint256 bwsAmount, uint256 pointsCredited);
+    event Migrated(address indexed account, address indexed destination, uint256 bwlkAmount, uint256 pointsCredited);
     event PointsCredited(address indexed destination, uint256 amount);
     event Swept(address indexed to, uint256 amount);
 
     /// @param owner_ Admin: sets the root, credits points, sweeps.
     /// @param bmx Legacy BMX token on this chain.
-    /// @param bws BWS token.
-    /// @param stakedBwsTracker sBWS tracker (staked BWS).
-    /// @param bonusBwsTracker sbBWS tracker (staked + bonus BWS).
-    /// @param feeBwsTracker sbfBWS tracker (staked + bonus + fee BWS).
-    /// @param bnBws Voter points token.
+    /// @param bwlk BWLK token.
+    /// @param stakedBwlkTracker sBWLK tracker (staked BWLK).
+    /// @param bonusBwlkTracker sbBWLK tracker (staked + bonus BWLK).
+    /// @param feeBwlkTracker sbfBWLK tracker (staked + bonus + fee BWLK).
+    /// @param bnBwlk Voter points token.
     /// @param voter GovernanceVoter contract.
     /// @param claimDeadline Last timestamp at which migration is allowed.
     constructor(
         address owner_,
         address bmx,
-        address bws,
-        address stakedBwsTracker,
-        address bonusBwsTracker,
-        address feeBwsTracker,
-        address bnBws,
+        address bwlk,
+        address stakedBwlkTracker,
+        address bonusBwlkTracker,
+        address feeBwlkTracker,
+        address bnBwlk,
         address voter,
         uint256 claimDeadline
     ) Ownable(owner_) {
         if (
-            bmx == address(0) || bws == address(0) || stakedBwsTracker == address(0) || bonusBwsTracker == address(0)
-                || feeBwsTracker == address(0) || bnBws == address(0) || voter == address(0)
+            bmx == address(0) || bwlk == address(0) || stakedBwlkTracker == address(0) || bonusBwlkTracker == address(0)
+                || feeBwlkTracker == address(0) || bnBwlk == address(0) || voter == address(0)
         ) revert ZeroAddress();
         if (claimDeadline <= block.timestamp) revert DeadlineInPast();
 
         BMX = IERC20(bmx);
-        BWS = IERC20(bws);
-        STAKED_BWS_TRACKER = IRewardTracker(stakedBwsTracker);
-        BONUS_BWS_TRACKER = IRewardTracker(bonusBwsTracker);
-        FEE_BWS_TRACKER = IRewardTracker(feeBwsTracker);
-        BN_BWS = IMintable(bnBws);
+        BWLK = IERC20(bwlk);
+        STAKED_BWLK_TRACKER = IRewardTracker(stakedBwlkTracker);
+        BONUS_BWLK_TRACKER = IRewardTracker(bonusBwlkTracker);
+        FEE_BWLK_TRACKER = IRewardTracker(feeBwlkTracker);
+        BN_BWLK = IMintable(bnBwlk);
         VOTER = voter;
         CLAIM_DEADLINE = claimDeadline;
     }
@@ -99,9 +99,9 @@ contract BwsMigration is Ownable2Step, ReentrancyGuard {
         merkleRoot = newRoot;
     }
 
-    /// @notice Migrate the caller's entire BMX balance to a staked BWS position for `destination`.
+    /// @notice Migrate the caller's entire BMX balance to a staked BWLK position for `destination`.
     /// @dev Pass 0 for `snapshotBmx` + `snapshotPoints` and an empty proof for non-stakers.
-    /// @param destination Receives the staked BWS + voter points.
+    /// @param destination Receives the staked BWLK + voter points.
     /// @param snapshotBmx Caller's snapshot staked BMX (the carry ratio denominator).
     /// @param snapshotPoints Caller's snapshot voter points to carry over.
     /// @param proof Merkle proof for the (caller, snapshotBmx, snapshotPoints) leaf.
@@ -136,8 +136,8 @@ contract BwsMigration is Ownable2Step, ReentrancyGuard {
         // Burn the caller's entire BMX balance.
         BMX.safeTransferFrom(msg.sender, DEAD, bmxIn);
 
-        // Build the staked BWS position for `destination`, then credit voter points.
-        _stakeBws(destination, bmxIn);
+        // Build the staked BWLK position for `destination`, then credit voter points.
+        _stakeBwlk(destination, bmxIn);
         if (points != 0) _stakePoints(destination, points);
 
         emit Migrated(msg.sender, destination, bmxIn, points);
@@ -154,40 +154,40 @@ contract BwsMigration is Ownable2Step, ReentrancyGuard {
         emit PointsCredited(destination, amount);
     }
 
-    /// @notice After the claim window closes, sweep the unclaimed BWS pool.
+    /// @notice After the claim window closes, sweep the unclaimed BWLK pool.
     function sweepUnclaimed(
         address to
     ) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
         if (block.timestamp <= CLAIM_DEADLINE) revert ClaimWindowOpen();
-        uint256 bal = BWS.balanceOf(address(this));
-        BWS.safeTransfer(to, bal);
+        uint256 bal = BWLK.balanceOf(address(this));
+        BWLK.safeTransfer(to, bal);
         emit Swept(to, bal);
     }
 
-    /// @dev Stake `amount` of BWS for `account`. Tier-1 sBWS funded by this contract, tiers 2-3 funded from the destination's freshly-minted tracker tokens (pulled via the handler bypass).
-    function _stakeBws(
+    /// @dev Stake `amount` of BWLK for `account`. Tier-1 sBWLK funded by this contract, tiers 2-3 funded from the destination's freshly-minted tracker tokens (pulled via the handler bypass).
+    function _stakeBwlk(
         address account,
         uint256 amount
     ) private {
-        // Exact-approve exactly what sBWS pulls; the tracker consumes it, leaving zero allowance.
-        BWS.forceApprove(address(STAKED_BWS_TRACKER), amount);
-        STAKED_BWS_TRACKER.stakeForAccount(address(this), account, address(BWS), amount);
-        BONUS_BWS_TRACKER.stakeForAccount(account, account, address(STAKED_BWS_TRACKER), amount);
-        FEE_BWS_TRACKER.stakeForAccount(account, account, address(BONUS_BWS_TRACKER), amount);
+        // Exact-approve exactly what sBWLK pulls; the tracker consumes it, leaving zero allowance.
+        BWLK.forceApprove(address(STAKED_BWLK_TRACKER), amount);
+        STAKED_BWLK_TRACKER.stakeForAccount(address(this), account, address(BWLK), amount);
+        BONUS_BWLK_TRACKER.stakeForAccount(account, account, address(STAKED_BWLK_TRACKER), amount);
+        FEE_BWLK_TRACKER.stakeForAccount(account, account, address(BONUS_BWLK_TRACKER), amount);
     }
 
-    /// @dev Mint `amount` of voter points (bnBWS) and stake it into the fee tracker for `account`.
+    /// @dev Mint `amount` of voter points (bnBWLK) and stake it into the fee tracker for `account`.
     function _stakePoints(
         address account,
         uint256 amount
     ) private {
-        BN_BWS.mint(address(this), amount);
-        IERC20(address(BN_BWS)).forceApprove(address(FEE_BWS_TRACKER), amount);
-        FEE_BWS_TRACKER.stakeForAccount(address(this), account, address(BN_BWS), amount);
-        // The real bnBWS transferFrom skips allowance for handlers (the fee tracker is one), so the
+        BN_BWLK.mint(address(this), amount);
+        IERC20(address(BN_BWLK)).forceApprove(address(FEE_BWLK_TRACKER), amount);
+        FEE_BWLK_TRACKER.stakeForAccount(address(this), account, address(BN_BWLK), amount);
+        // The real bnBWLK transferFrom skips allowance for handlers (the fee tracker is one), so the
         // approval above is never consumed - reset it rather than leave a standing allowance.
-        IERC20(address(BN_BWS)).forceApprove(address(FEE_BWS_TRACKER), 0);
+        IERC20(address(BN_BWLK)).forceApprove(address(FEE_BWLK_TRACKER), 0);
     }
 
     /// @dev Calculates points as base + carry:

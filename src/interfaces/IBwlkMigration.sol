@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.28;
 
-interface IBwsMigration {
+interface IBwlkMigration {
     error ZeroAddress();
     error AlreadyMigrated();
     error NothingToMigrate();
@@ -14,7 +14,7 @@ interface IBwsMigration {
     error DeadlineInPast();
 
     event MerkleRootSet(bytes32 oldRoot, bytes32 newRoot);
-    event Migrated(address indexed account, address indexed destination, uint256 bwsAmount, uint256 pointsCredited);
+    event Migrated(address indexed account, address indexed destination, uint256 bwlkAmount, uint256 pointsCredited);
     event PointsCredited(address indexed destination, uint256 amount);
     event Swept(address indexed to, uint256 amount);
 
@@ -44,15 +44,15 @@ interface IBwsMigration {
 
     function BMX() external view returns (address);
 
-    function BWS() external view returns (address);
+    function BWLK() external view returns (address);
 
-    function STAKED_BWS_TRACKER() external view returns (address);
+    function STAKED_BWLK_TRACKER() external view returns (address);
 
-    function BONUS_BWS_TRACKER() external view returns (address);
+    function BONUS_BWLK_TRACKER() external view returns (address);
 
-    function FEE_BWS_TRACKER() external view returns (address);
+    function FEE_BWLK_TRACKER() external view returns (address);
 
-    function BN_BWS() external view returns (address);
+    function BN_BWLK() external view returns (address);
 
     function VOTER() external view returns (address);
 

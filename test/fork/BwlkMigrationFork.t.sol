@@ -3,7 +3,7 @@ pragma solidity =0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {BwsMigration} from "src/token/BwsMigration.sol";
+import {BwlkMigration} from "src/token/BwlkMigration.sol";
 
 /// @dev Live admin surface of the Morphex RewardTracker / MintableBaseToken (Governable).
 interface IStakingAdmin {
@@ -39,15 +39,15 @@ contract NotFinalizingVoter {
     }
 }
 
-/// @title BwsMigrationForkTest
+/// @title BwlkMigrationForkTest
 /// @notice Base mainnet fork test for the migration flow against the deployed Morphex GMX-style staking
-///         (the sbfBMX 3-tier trackers + bnBMX). BWS trackers are not deployed yet, so this exercises
+///         (the sbfBMX 3-tier trackers + bnBMX). BWLK trackers are not deployed yet, so this exercises
 ///         the Migrator's `stakeForAccount` 3-tier + bnBMX point-credit logic against the actual tracker
 ///         bytecode, using BMX as the stand-in staked asset (the live trackers accept BMX as the tier-1
 ///         deposit token). The destination ends with a staked position (sbfBMX balance) and voter points.
 ///
-/// @dev Run with: forge test --match-contract BwsMigrationForkTest --fork-url https://mainnet.base.org -vvv
-contract BwsMigrationForkTest is Test {
+/// @dev Run with: forge test --match-contract BwlkMigrationForkTest --fork-url https://mainnet.base.org -vvv
+contract BwlkMigrationForkTest is Test {
     address constant BMX = 0x548f93779fBC992010C07467cBaf329DD5F059B7;
     address constant BN_BMX = 0x10AB197551BAB91f8B218dC9730AE0e43d893Db2;
     address constant STAKED_TRACKER = 0x3085F25Cbb5F34531229077BAAC20B9ef2AE85CB;
@@ -55,7 +55,7 @@ contract BwsMigrationForkTest is Test {
     address constant FEE_TRACKER = 0x38E5be3501687500E6338217276069d16178077E; // sbfBMX
     address constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
-    BwsMigration public migrator;
+    BwlkMigration public migrator;
     NotFinalizingVoter public voter;
 
     address public owner = makeAddr("owner");
@@ -83,8 +83,8 @@ contract BwsMigrationForkTest is Test {
         voter = new NotFinalizingVoter();
         deadline = block.timestamp + 30 days;
 
-        // bws == BMX here: the live trackers' tier-1 deposit token is BMX, so we stand BMX in for BWS.
-        migrator = new BwsMigration(
+        // bwlk == BMX here: the live trackers' tier-1 deposit token is BMX, so we stand BMX in for BWLK.
+        migrator = new BwlkMigration(
             owner, BMX, BMX, STAKED_TRACKER, BONUS_TRACKER, FEE_TRACKER, BN_BMX, address(voter), deadline
         );
 

@@ -2,7 +2,7 @@
 pragma solidity =0.8.28;
 
 /// @title ILBPStrategy
-/// @notice The Uniswap LBPStrategy surface the BWS CCA launch touches. The strategy is the ONLY
+/// @notice The Uniswap LBPStrategy surface the BWLK CCA launch touches. The strategy is the ONLY
 ///         address allowed to sweep a graduated auction's raise, and it can only sweep auctions it
 ///         registered itself in `initializeDistribution` — which is why the launch must go through
 ///         the LiquidityLauncher and never the raw CCA factory.

@@ -2,12 +2,12 @@
 pragma solidity =0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {LaunchBwsCca} from "script/bws/06_LaunchBwsCca.s.sol";
-import {ArbitrumConfig} from "script/bws/ArbitrumConfig.sol";
+import {LaunchBwlkCca} from "script/bwlk/06_LaunchBwlkCca.s.sol";
+import {EthereumConfig} from "script/bwlk/EthereumConfig.sol";
 import {ILBPStrategy} from "src/interfaces/ILBPStrategy.sol";
 import {ICcaAuctionFactory} from "src/interfaces/ICcaAuctionFactory.sol";
 import {UnsoldBurner} from "src/token/UnsoldBurner.sol";
-import {MockERC20} from "test/bws/UnsoldBurnerMocks.sol";
+import {MockERC20} from "test/bwlk/UnsoldBurnerMocks.sol";
 import {
     MockPermit2,
     MockLiquidityLauncher,
@@ -16,21 +16,21 @@ import {
     MockLaunchCcaAuction,
     MockLaunchVoter,
     MockLaunchLocker
-} from "test/bws/LaunchCcaMocks.sol";
+} from "test/bwlk/LaunchCcaMocks.sol";
 
-/// @title LaunchBwsCcaTest
-/// @notice Unit coverage for script/bws/06_LaunchBwsCca.s.sol against faithful launcher/strategy/
+/// @title LaunchBwlkCcaTest
+/// @notice Unit coverage for script/bwlk/06_LaunchBwlkCca.s.sol against faithful launcher/strategy/
 ///         factory mocks: the full deposit+distribute multicall runs, the captured configData is
 ///         decoded back field by field, and every check() invariant reverts on the exact violation
 ///         it guards.
-contract LaunchBwsCcaTest is Test {
-    uint256 internal constant BUCKET = ArbitrumConfig.CCA_BUCKET;
-    uint256 internal constant AUCTION_SUPPLY = ArbitrumConfig.CCA_AUCTION_SUPPLY;
+contract LaunchBwlkCcaTest is Test {
+    uint256 internal constant BUCKET = EthereumConfig.CCA_BUCKET;
+    uint256 internal constant AUCTION_SUPPLY = EthereumConfig.CCA_AUCTION_SUPPLY;
     uint256 internal constant LP_RESERVE = BUCKET - AUCTION_SUPPLY;
     uint24 internal constant MPS = 1e7;
 
-    LaunchBwsCca internal launchScript;
-    MockERC20 internal bws;
+    LaunchBwlkCca internal launchScript;
+    MockERC20 internal bwlk;
     MockPermit2 internal permit2;
     MockLiquidityLauncher internal launcher;
     MockLaunchCcaFactory internal factory;
@@ -45,24 +45,24 @@ contract LaunchBwsCcaTest is Test {
     address internal poolManager = makeAddr("poolManager");
 
     function setUp() public {
-        launchScript = new LaunchBwsCca();
-        bws = new MockERC20("Boardwalk", "BWS");
-        bws.mint(address(launchScript), BUCKET);
+        launchScript = new LaunchBwlkCca();
+        bwlk = new MockERC20("Boardwalk", "BWLK");
+        bwlk.mint(address(launchScript), BUCKET);
 
         permit2 = new MockPermit2();
         launcher = new MockLiquidityLauncher(address(permit2));
         factory = new MockLaunchCcaFactory();
         strategy = new MockLBPStrategy(address(factory), positionManager, poolManager);
-        voter = new MockLaunchVoter(ArbitrumConfig.POOL_FEE, ArbitrumConfig.POOL_TICK_SPACING);
-        locker = new MockLaunchLocker(address(voter), address(0), address(bws), registrar, positionManager);
-        burner = new UnsoldBurner(address(bws));
+        voter = new MockLaunchVoter(EthereumConfig.POOL_FEE, EthereumConfig.POOL_TICK_SPACING);
+        locker = new MockLaunchLocker(address(voter), address(0), address(bwlk), registrar, positionManager);
+        burner = new UnsoldBurner(address(bwlk));
 
         vm.roll(1000);
     }
 
-    function _cfg() internal view returns (LaunchBwsCca.LaunchConfig memory cfg) {
+    function _cfg() internal view returns (LaunchBwlkCca.LaunchConfig memory cfg) {
         cfg.wallet = address(launchScript);
-        cfg.bws = address(bws);
+        cfg.bwlk = address(bwlk);
         cfg.launcher = address(launcher);
         cfg.strategy = address(strategy);
         cfg.voter = address(voter);
@@ -86,14 +86,14 @@ contract LaunchBwsCcaTest is Test {
     // ---- happy path ----
 
     function test_Launch_ExecutesAtomicallyAndEncodesEveryField() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         address predicted = launchScript.predictAuction(cfg);
 
         address auction = launchScript.launch(cfg);
         assertEq(auction, predicted, "launch returns the CREATE2-predicted auction");
 
         // Deposit leg: pulled from the script wallet via Permit2, exact bucket.
-        assertEq(launcher.lastDepositToken(), address(bws), "deposit token");
+        assertEq(launcher.lastDepositToken(), address(bwlk), "deposit token");
         assertEq(launcher.lastDepositAmount(), uint160(BUCKET), "deposit amount");
         assertEq(launcher.lastDepositCaller(), address(launchScript), "deposit caller preserved by multicall");
         // Both legs ran inside one multicall: tokens parked in the launcher between separate txs
@@ -102,15 +102,15 @@ contract LaunchBwsCcaTest is Test {
         assertTrue(launcher.distributeViaMulticall(), "distribute executed inside the same multicall");
 
         // Permit2 approval: exact-sized for the launcher and fully consumed by the pull.
-        assertEq(permit2.lastApproveToken(), address(bws), "permit2 token");
+        assertEq(permit2.lastApproveToken(), address(bwlk), "permit2 token");
         assertEq(permit2.lastApproveSpender(), address(launcher), "permit2 spender");
         assertEq(permit2.lastApproveAmount(), uint160(BUCKET), "permit2 amount");
-        (uint160 remaining,) = permit2.allowance(address(launchScript), address(bws), address(launcher));
+        (uint160 remaining,) = permit2.allowance(address(launchScript), address(bwlk), address(launcher));
         assertEq(remaining, 0, "permit2 allowance consumed to zero");
-        assertEq(bws.allowance(address(launchScript), address(permit2)), 0, "ERC20 allowance consumed to zero");
+        assertEq(bwlk.allowance(address(launchScript), address(permit2)), 0, "ERC20 allowance consumed to zero");
 
         // Distribute leg capture.
-        assertEq(launcher.lastDistributeToken(), address(bws), "distribute token");
+        assertEq(launcher.lastDistributeToken(), address(bwlk), "distribute token");
         assertEq(launcher.lastStrategy(), address(strategy), "strategy");
         assertEq(launcher.lastAmount(), uint128(BUCKET), "distribution amount");
         assertEq(launcher.lastSalt(), bytes32(0), "salt");
@@ -119,14 +119,14 @@ contract LaunchBwsCcaTest is Test {
         // Decode the captured configData back: outer (MigratorParameters, bytes).
         (ILBPStrategy.MigratorParameters memory mig, bytes memory inner) =
             abi.decode(launcher.lastConfigData(), (ILBPStrategy.MigratorParameters, bytes));
-        assertEq(mig.token, address(bws), "mig.token");
+        assertEq(mig.token, address(bwlk), "mig.token");
         assertEq(mig.currency, address(0), "mig.currency is native ETH");
         assertEq(mig.migrationBlock, cfg.migrationBlock, "mig.migrationBlock");
         assertEq(mig.reservedTokenAmountForLP, uint128(LP_RESERVE), "mig.reservedTokenAmountForLP");
         assertEq(mig.recipient, recipient, "mig.recipient");
         assertEq(mig.positionRecipient, address(locker), "mig.positionRecipient is the locker");
-        assertEq(mig.poolParameters.fee, ArbitrumConfig.POOL_FEE, "pool fee from the voter");
-        assertEq(mig.poolParameters.tickSpacing, ArbitrumConfig.POOL_TICK_SPACING, "pool tickSpacing from the voter");
+        assertEq(mig.poolParameters.fee, EthereumConfig.POOL_FEE, "pool fee from the voter");
+        assertEq(mig.poolParameters.tickSpacing, EthereumConfig.POOL_TICK_SPACING, "pool tickSpacing from the voter");
         assertEq(mig.poolParameters.hook, address(0), "pool hook unset at launch");
 
         // One full-range sentinel definition, no per-position recipient override.
@@ -161,7 +161,7 @@ contract LaunchBwsCcaTest is Test {
 
         // The deployed auction stored the same wiring.
         MockLaunchCcaAuction deployed = MockLaunchCcaAuction(auction);
-        assertEq(deployed.token(), address(bws), "auction token");
+        assertEq(deployed.token(), address(bwlk), "auction token");
         assertEq(deployed.totalSupply(), uint128(AUCTION_SUPPLY), "auction offered supply");
         assertEq(deployed.tokensRecipient(), address(burner), "auction tokensRecipient");
         assertEq(deployed.fundsRecipient(), address(strategy), "auction fundsRecipient");
@@ -172,14 +172,14 @@ contract LaunchBwsCcaTest is Test {
         );
 
         // Token split: auction supply to the auction, LP reserve to the strategy, nothing stranded.
-        assertEq(bws.balanceOf(auction), AUCTION_SUPPLY, "auction holds the offered supply");
-        assertEq(bws.balanceOf(address(strategy)), LP_RESERVE, "strategy holds the LP reserve");
-        assertEq(bws.balanceOf(address(launcher)), 0, "nothing stranded in the launcher");
-        assertEq(bws.balanceOf(address(launchScript)), 0, "bucket fully spent");
+        assertEq(bwlk.balanceOf(auction), AUCTION_SUPPLY, "auction holds the offered supply");
+        assertEq(bwlk.balanceOf(address(strategy)), LP_RESERVE, "strategy holds the LP reserve");
+        assertEq(bwlk.balanceOf(address(launcher)), 0, "nothing stranded in the launcher");
+        assertEq(bwlk.balanceOf(address(launchScript)), 0, "bucket fully spent");
     }
 
     function test_Launch_ZeroThreshold_PassesWhenAttested() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.requiredCurrencyRaised = 0;
         cfg.zeroGraduationAttested = true;
         address auction = launchScript.launch(cfg);
@@ -188,33 +188,20 @@ contract LaunchBwsCcaTest is Test {
 
     // ---- launch defaults ----
 
-    /// @dev Pins the announced launch values (0.00025 ETH/BWS floor, 1%-of-floor ticks, ~54.8665
-    ///      ETH graduation threshold) as literals, plus the CCA constructor constraints they must
-    ///      satisfy - a typo'd default would otherwise only surface in the launch simulation.
-    function test_Config_LaunchDefaultsMatchAnnouncedValues() public pure {
-        assertEq(ArbitrumConfig.CCA_TICK_SPACING_Q96, 198_070_406_285_660_843_983_859, "tick = (1<<96)/400000");
-        assertEq(ArbitrumConfig.CCA_FLOOR_PRICE_Q96, 19_807_040_628_566_084_398_385_900, "floor = 100 ticks");
-        assertEq(ArbitrumConfig.CCA_REQUIRED_CURRENCY_RAISED, 54_866_499_999_999_999_999, "threshold ~54.8665 ETH");
-
-        // TickStorage constraints: floor on a tick boundary and above the minimums.
-        assertEq(ArbitrumConfig.CCA_FLOOR_PRICE_Q96 % ArbitrumConfig.CCA_TICK_SPACING_Q96, 0, "floor tick-aligned");
-        assertGe(ArbitrumConfig.CCA_FLOOR_PRICE_Q96, (uint256(1) << 32) + 1, "floor >= MIN_FLOOR_PRICE");
-        assertGe(ArbitrumConfig.CCA_TICK_SPACING_Q96, 2, "tick >= MIN_TICK_SPACING");
-
-        // MaxBidPriceLib bound for the fixed auction supply.
-        uint256 maxBid = ((uint256(1) << 154) / AUCTION_SUPPLY) ** 2;
-        uint256 currencyBound = (uint256(1) << 222) / AUCTION_SUPPLY;
-        if (currencyBound < maxBid) maxBid = currencyBound;
-        assertLe(
-            ArbitrumConfig.CCA_FLOOR_PRICE_Q96,
-            maxBid - ArbitrumConfig.CCA_TICK_SPACING_Q96,
-            "floor + tick within max bid price"
+    /// @dev Pins the announced BWLK supply split as literals - a typo'd constant would otherwise
+    ///      only surface at deploy time.
+    function test_Config_SupplySplitMatchesAnnouncedValues() public pure {
+        assertEq(EthereumConfig.TOTAL_SUPPLY, 3_150_000e18, "total supply");
+        assertEq(EthereumConfig.MIGRATION_POOL, 2_711_068e18, "migration pool (86.07%)");
+        assertEq(EthereumConfig.CCA_BUCKET, 315_000e18, "CCA bucket (10%)");
+        assertEq(EthereumConfig.CCA_AUCTION_SUPPLY, 157_500e18, "CCA sale (5%)");
+        assertEq(EthereumConfig.CCA_BUCKET - EthereumConfig.CCA_AUCTION_SUPPLY, 157_500e18, "LP seed (5%)");
+        assertEq(EthereumConfig.LP_INCENTIVES, 123_932e18, "LP incentives (3.93%)");
+        assertEq(
+            EthereumConfig.MIGRATION_POOL + EthereumConfig.CCA_BUCKET + EthereumConfig.LP_INCENTIVES,
+            EthereumConfig.TOTAL_SUPPLY,
+            "buckets sum to the fixed supply"
         );
-
-        // A complete sell-out at the floor price must graduate: the threshold cannot exceed the
-        // exact wei that clearing the whole supply at the floor raises.
-        uint256 fullRaiseAtFloor = (AUCTION_SUPPLY * ArbitrumConfig.CCA_FLOOR_PRICE_Q96) >> 96;
-        assertLe(ArbitrumConfig.CCA_REQUIRED_CURRENCY_RAISED, fullRaiseAtFloor, "floor sell-out graduates");
     }
 
     // ---- default supply schedule ----
@@ -264,7 +251,7 @@ contract LaunchBwsCcaTest is Test {
     }
 
     function test_Launch_WithDefaultSchedule() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.endBlock = cfg.startBlock + 10_000;
         cfg.claimBlock = cfg.endBlock + 1;
         cfg.migrationBlock = cfg.endBlock + 1;
@@ -279,118 +266,124 @@ contract LaunchBwsCcaTest is Test {
     }
 
     function test_RevertWhen_DefaultScheduleSpanInvalid() public {
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.ScheduleSpanInvalid.selector, 1000, 1000));
+        vm.expectRevert(abi.encodeWithSelector(LaunchBwlkCca.ScheduleSpanInvalid.selector, 1000, 1000));
         launchScript.defaultAuctionSchedule(1000, 1000);
     }
 
     // ---- launch() + check() reverts ----
 
     function test_RevertWhen_WalletIsNotTheScript() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.wallet = address(this);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.WalletMismatch.selector, address(this), address(launchScript))
+            abi.encodeWithSelector(LaunchBwlkCca.WalletMismatch.selector, address(this), address(launchScript))
         );
         launchScript.launch(cfg);
     }
 
     function test_RevertWhen_WalletMissesTheBucket() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.wallet = makeAddr("poor");
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.WalletBucketMissing.selector, cfg.wallet, 0, BUCKET));
+        vm.expectRevert(abi.encodeWithSelector(LaunchBwlkCca.WalletBucketMissing.selector, cfg.wallet, 0, BUCKET));
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_BurnerBurnsTheWrongToken() public {
         MockERC20 other = new MockERC20("Other", "O");
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.burner = address(new UnsoldBurner(address(other)));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.BurnerBwsMismatch.selector, address(other), address(bws)));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchBwlkCca.BurnerBwlkMismatch.selector, address(other), address(bwlk))
+        );
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_LockerBoundToAnotherVoter() public {
         address otherVoter = makeAddr("otherVoter");
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        cfg.lpLocker = address(new MockLaunchLocker(otherVoter, address(0), address(bws), registrar, positionManager));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.LockerVoterMismatch.selector, otherVoter, address(voter)));
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
+        cfg.lpLocker = address(new MockLaunchLocker(otherVoter, address(0), address(bwlk), registrar, positionManager));
+        vm.expectRevert(abi.encodeWithSelector(LaunchBwlkCca.LockerVoterMismatch.selector, otherVoter, address(voter)));
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_LockerCurrenciesWrong() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.lpLocker =
-            address(new MockLaunchLocker(address(voter), address(bws), address(bws), registrar, positionManager));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.LockerCurrenciesWrong.selector, address(bws), address(bws)));
+            address(new MockLaunchLocker(address(voter), address(bwlk), address(bwlk), registrar, positionManager));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchBwlkCca.LockerCurrenciesWrong.selector, address(bwlk), address(bwlk))
+        );
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_RegistrarAlreadyRenounced() public {
         locker.setRegistrar(address(0));
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        vm.expectRevert(LaunchBwsCca.RegistrarAlreadyRenounced.selector);
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
+        vm.expectRevert(LaunchBwlkCca.RegistrarAlreadyRenounced.selector);
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_PositionManagersDiverge() public {
         address otherPm = makeAddr("otherPm");
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.strategy = address(new MockLBPStrategy(address(factory), otherPm, poolManager));
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.PositionManagerMismatch.selector, otherPm, positionManager));
+        vm.expectRevert(
+            abi.encodeWithSelector(LaunchBwlkCca.PositionManagerMismatch.selector, otherPm, positionManager)
+        );
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_PoolHooksAlreadySet() public {
         voter.setPoolHooks(address(0));
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
-        vm.expectRevert(LaunchBwsCca.PoolHooksAlreadySet.selector);
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
+        vm.expectRevert(LaunchBwlkCca.PoolHooksAlreadySet.selector);
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_StartBlockNotInFuture() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.startBlock = uint64(block.number);
         vm.expectRevert(
-            abi.encodeWithSelector(LaunchBwsCca.StartBlockNotInFuture.selector, cfg.startBlock, block.number)
+            abi.encodeWithSelector(LaunchBwlkCca.StartBlockNotInFuture.selector, cfg.startBlock, block.number)
         );
         launchScript.check(cfg);
     }
 
     function test_RevertWhen_ZeroThresholdUnattested() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         cfg.requiredCurrencyRaised = 0;
-        vm.expectRevert(LaunchBwsCca.GraduationThresholdZeroUnattested.selector);
+        vm.expectRevert(LaunchBwlkCca.GraduationThresholdZeroUnattested.selector);
         launchScript.check(cfg);
     }
 
     // ---- verifyLaunch ----
 
     function test_VerifyLaunch_RevertWhen_AuctionNotDeployed() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
         address ghost = makeAddr("ghost");
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.AuctionNotDeployed.selector, ghost));
+        vm.expectRevert(abi.encodeWithSelector(LaunchBwlkCca.AuctionNotDeployed.selector, ghost));
         launchScript.verifyLaunch(cfg, ghost);
     }
 
     function test_VerifyLaunch_RevertWhen_WiringDiverges() public {
-        LaunchBwsCca.LaunchConfig memory cfg = _cfg();
+        LaunchBwlkCca.LaunchConfig memory cfg = _cfg();
 
         // Wrong tokensRecipient.
         ICcaAuctionFactory.AuctionParameters memory p = launchScript.buildAuctionParameters(cfg);
         p.tokensRecipient = makeAddr("notBurner");
-        address a = address(new MockLaunchCcaAuction(address(bws), uint128(AUCTION_SUPPLY), p));
+        address a = address(new MockLaunchCcaAuction(address(bwlk), uint128(AUCTION_SUPPLY), p));
         vm.expectRevert(
             abi.encodeWithSelector(
-                LaunchBwsCca.AuctionTokensRecipientMismatch.selector, makeAddr("notBurner"), address(burner)
+                LaunchBwlkCca.AuctionTokensRecipientMismatch.selector, makeAddr("notBurner"), address(burner)
             )
         );
         launchScript.verifyLaunch(cfg, a);
 
         // Correctly wired but never registered with the strategy: the stuck-forever case.
         a = address(
-            new MockLaunchCcaAuction(address(bws), uint128(AUCTION_SUPPLY), launchScript.buildAuctionParameters(cfg))
+            new MockLaunchCcaAuction(address(bwlk), uint128(AUCTION_SUPPLY), launchScript.buildAuctionParameters(cfg))
         );
-        vm.expectRevert(abi.encodeWithSelector(LaunchBwsCca.InitializerNotRegisteredWithStrategy.selector, a));
+        vm.expectRevert(abi.encodeWithSelector(LaunchBwlkCca.InitializerNotRegisteredWithStrategy.selector, a));
         launchScript.verifyLaunch(cfg, a);
     }
 }

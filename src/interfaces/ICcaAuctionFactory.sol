@@ -2,7 +2,7 @@
 pragma solidity =0.8.28;
 
 /// @title ICcaAuctionFactory
-/// @notice The Uniswap ContinuousClearingAuctionFactory call the BWS CCA launch script makes: the
+/// @notice The Uniswap ContinuousClearingAuctionFactory call the BWLK CCA launch script makes: the
 ///         CREATE2 address prediction used to print (and post-verify) the auction address the
 ///         LBPStrategy will deploy. The launch itself never calls the factory directly.
 /// @dev    `AuctionParameters` MUST stay byte-identical to Uniswap/continuous-clearing-auction

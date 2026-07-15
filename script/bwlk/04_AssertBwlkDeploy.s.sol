@@ -3,13 +3,13 @@ pragma solidity =0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {BwsMigration} from "src/token/BwsMigration.sol";
+import {BwlkMigration} from "src/token/BwlkMigration.sol";
 import {UnsoldBurner} from "src/token/UnsoldBurner.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
-import {ArbitrumConfig} from "./ArbitrumConfig.sol";
+import {EthereumConfig} from "./EthereumConfig.sol";
 
-/// @dev Introspection surface of a BWS staking `RewardTracker` (solc 0.6.12, Governable). These getters
+/// @dev Introspection surface of a BWLK staking `RewardTracker` (solc 0.6.12, Governable). These getters
 ///      are not part of the minimal production `IRewardTracker`, so they live here for go-live checks.
 interface IRewardTrackerIntrospect {
     function isHandler(
@@ -35,7 +35,7 @@ interface IRewardTrackerIntrospect {
     ) external view returns (uint256);
 }
 
-/// @dev Introspection surface of the bnBWS `MintableBaseToken` (Governable, BaseToken).
+/// @dev Introspection surface of the bnBWLK `MintableBaseToken` (Governable, BaseToken).
 interface IMintableBaseTokenIntrospect {
     function isMinter(
         address
@@ -47,7 +47,7 @@ interface IMintableBaseTokenIntrospect {
     function gov() external view returns (address);
 }
 
-/// @dev Introspection surface of a BWS staking `RewardDistributor` (each tracker's reward source).
+/// @dev Introspection surface of a BWLK staking `RewardDistributor` (each tracker's reward source).
 interface IRewardDistributorIntrospect {
     function rewardTracker() external view returns (address);
 }
@@ -66,31 +66,31 @@ interface IERC20Meta {
     function totalSupply() external view returns (uint256);
 }
 
-/// @title AssertBwsDeploy - The go-live gate for the BMX -> BWS Arbitrum deployment
+/// @title AssertBwlkDeploy - The go-live gate for the BMX -> BWLK Arbitrum deployment
 /// @notice The migration contracts do not assert their deploy-time wiring. This script is that gate:
 ///         `assertAll` reverts unless every D-1..D-5 + F-1 invariant holds. Run it on a fork (or against
 ///         live addresses) immediately before going live; a revert blocks go-live.
 /// @dev `assertAll(Config)` is `view` and takes every input explicitly so it is exercisable from tests
 ///      (pass a correctly-wired config -> passes; corrupt one field -> reverts with the matching
 ///      error). `run()` is the env-driven CLI wrapper.
-contract AssertBwsDeploy is Script {
+contract AssertBwlkDeploy is Script {
     struct Config {
         address migrator;
         address voter;
-        address bws;
+        address bwlk;
         address bmx;
-        address stakedBwsTracker;
-        address bonusBwsTracker;
-        address feeBwsTracker;
-        address bnBws;
+        address stakedBwlkTracker;
+        address bonusBwlkTracker;
+        address feeBwlkTracker;
+        address bnBwlk;
         address timelock; // expected migrator owner (the 21-day governance timelock)
-        address stakingGov; // expected gov of the three trackers + bnBWS (multisig/timelock, NOT a hot key)
+        address stakingGov; // expected gov of the three trackers + bnBWLK (multisig/timelock, NOT a hot key)
         address auction; // CCA auction (0 = skip A-1..A-4; only before the launch exists)
         address burner; // UnsoldBurner (checked with the auction)
         address lpLocker; // LPLocker (0 = skip A-5..A-7; only before the launch exists)
         uint256 totalMigratableBmx; // reconciled global BMX that can be brought to Arbitrum (D-1)
-        bytes32 expectedTrackerCodehash; // BWS staking RewardTracker runtime codehash (D-4)
-        bytes32 expectedBnTokenCodehash; // bnBWS MintableBaseToken runtime codehash (D-4, 0 = skip)
+        bytes32 expectedTrackerCodehash; // BWLK staking RewardTracker runtime codehash (D-4)
+        bytes32 expectedBnTokenCodehash; // bnBWLK MintableBaseToken runtime codehash (D-4, 0 = skip)
         bool bmxEmissionsHaltedAttested; // D-1: BMX has no live minter on any chain (manual attest)
         bool bmxStandardAttested; // D-5: BMX is non-fee-on-transfer (proven in fork test / off-chain)
     }
@@ -105,23 +105,23 @@ contract AssertBwsDeploy is Script {
     error D2_StakedTrackerMismatch(address voterStaked, address migratorStaked);
     error D2_BonusTrackerMismatch(address migratorBonus, address cfgBonus);
     error D2_BnTokenMismatch(address voterBn, address migratorBn);
-    error D2_TokenMismatch(address voterToken, address migratorBws);
+    error D2_TokenMismatch(address voterToken, address migratorBwlk);
     error D2_BmxMismatch(address migratorBmx, address cfgBmx);
     error D2_TrackersNotDistinct();
-    error D2_BwsSupplyWrong(uint256 actual, uint256 expected);
+    error D2_BwlkSupplyWrong(uint256 actual, uint256 expected);
     // ---- D-3 ----
     error D3_MigratorNotHandler(address tracker);
-    error D3_MigratorNotMinter(address bnBws);
+    error D3_MigratorNotMinter(address bnBwlk);
     error D3_TrackerNotWired(address tracker, address expectedHandler);
     error D3_DepositTokenUnset(address tracker, address depositToken);
-    error D3_FeeTrackerNotBnHandler(address bnBws, address feeTracker);
+    error D3_FeeTrackerNotBnHandler(address bnBwlk, address feeTracker);
     error D3_TrackerNotInitialized(address tracker);
     error D3_DistributorMismatch(address tracker, address distributor);
     error D3_TrackerPrivateModeOff(address tracker);
     // ---- D-4 ----
     error D4_NoCode(address target);
     error D4_TrackerCodehashMismatch(address tracker, bytes32 actual, bytes32 expected);
-    error D4_BnTokenCodehashMismatch(address bnBws, bytes32 actual, bytes32 expected);
+    error D4_BnTokenCodehashMismatch(address bnBwlk, bytes32 actual, bytes32 expected);
     error D4_SelectorMissing(address tracker, string selector);
     // ---- D-5 ----
     error D5_BmxNotStandard(address bmx, uint8 decimals);
@@ -134,9 +134,9 @@ contract AssertBwsDeploy is Script {
     error GoLive_ClaimWindowClosed(uint256 deadline, uint256 nowTs);
     error GoLive_ClaimWindowImplausible(uint256 deadline);
     // ---- A (CCA launch wiring; checked when cfg.auction / cfg.lpLocker are set) ----
-    error A1_AuctionTokenMismatch(address auctionToken, address bws);
+    error A1_AuctionTokenMismatch(address auctionToken, address bwlk);
     error A2_TokensRecipientNotBurner(address recipient, address burner);
-    error A3_BurnerBwsMismatch(address burnerBws, address bws);
+    error A3_BurnerBwlkMismatch(address burnerBwlk, address bwlk);
     error A4_AuctionSupplyUnexpected(uint256 auctionSupply, uint256 expected);
     error A5_PoolHooksNotCommitted();
     error A6_RegistrarNotRenounced(address registrar);
@@ -147,18 +147,18 @@ contract AssertBwsDeploy is Script {
     error WrongChain(uint256 chainId);
 
     function run() external view {
-        if (block.chainid != ArbitrumConfig.ARBITRUM_CHAIN_ID) revert WrongChain(block.chainid);
+        if (block.chainid != EthereumConfig.ETHEREUM_CHAIN_ID) revert WrongChain(block.chainid);
         // Field-by-field assignment: a single struct literal with this many env reads is
         // stack-too-deep for the legacy pipeline.
         Config memory cfg;
         cfg.migrator = vm.envAddress("MIGRATOR");
         cfg.voter = vm.envAddress("GOVERNANCE_VOTER");
-        cfg.bws = vm.envAddress("BWS_TOKEN");
-        cfg.bmx = vm.envOr("BMX_ADDRESS", ArbitrumConfig.ARB_BMX);
-        cfg.stakedBwsTracker = vm.envAddress("STAKED_BWS_TRACKER");
-        cfg.bonusBwsTracker = vm.envAddress("BONUS_BWS_TRACKER");
-        cfg.feeBwsTracker = vm.envAddress("FEE_BWS_TRACKER");
-        cfg.bnBws = vm.envAddress("BN_BWS");
+        cfg.bwlk = vm.envAddress("BWLK_TOKEN");
+        cfg.bmx = vm.envAddress("BMX_ADDRESS");
+        cfg.stakedBwlkTracker = vm.envAddress("STAKED_BWLK_TRACKER");
+        cfg.bonusBwlkTracker = vm.envAddress("BONUS_BWLK_TRACKER");
+        cfg.feeBwlkTracker = vm.envAddress("FEE_BWLK_TRACKER");
+        cfg.bnBwlk = vm.envAddress("BN_BWLK");
         cfg.timelock = vm.envAddress("OWNER");
         cfg.stakingGov = vm.envAddress("STAKING_GOV");
         cfg.auction = vm.envOr("CCA_AUCTION", address(0));
@@ -172,15 +172,15 @@ contract AssertBwsDeploy is Script {
         // failure D-1 guards against). Live summed BMX totalSupply was ~3,041,989e18.
         cfg.totalMigratableBmx = vm.envUint("TOTAL_MIGRATABLE_BMX");
         cfg.expectedTrackerCodehash =
-            vm.envOr("EXPECTED_TRACKER_CODEHASH", ArbitrumConfig.REFERENCE_REWARD_TRACKER_CODEHASH);
+            vm.envOr("EXPECTED_TRACKER_CODEHASH", EthereumConfig.REFERENCE_REWARD_TRACKER_CODEHASH);
         cfg.expectedBnTokenCodehash =
-            vm.envOr("EXPECTED_BN_CODEHASH", ArbitrumConfig.REFERENCE_MINTABLE_BASE_TOKEN_CODEHASH);
+            vm.envOr("EXPECTED_BN_CODEHASH", EthereumConfig.REFERENCE_MINTABLE_BASE_TOKEN_CODEHASH);
         cfg.bmxEmissionsHaltedAttested = vm.envOr("BMX_EMISSIONS_HALTED_ATTESTED", false);
         cfg.bmxStandardAttested = vm.envOr("BMX_STANDARD_ATTESTED", false);
 
         assertAll(cfg);
 
-        console.log("BWS migration go-live gate: ALL ASSERTIONS PASSED.");
+        console.log("BWLK migration go-live gate: ALL ASSERTIONS PASSED.");
         if (cfg.auction == address(0)) {
             console.log("WARNING: CCA_AUCTION/UNSOLD_BURNER unset - launch wiring (A-1..A-4) NOT checked.");
         }
@@ -188,7 +188,7 @@ contract AssertBwsDeploy is Script {
             console.log("WARNING: LP_LOCKER unset - governance one-shots (A-5..A-7) NOT checked.");
         }
         console.log("Reminder (F-1, not code-enforceable): after migration + sweep, REVOKE the");
-        console.log("migrator's bnBWS minter role to cap point inflation.");
+        console.log("migrator's bnBWLK minter role to cap point inflation.");
     }
 
     /// @notice Reverts unless every go-live invariant (D-1..D-5, F-1) holds for `cfg`.
@@ -210,7 +210,7 @@ contract AssertBwsDeploy is Script {
     ) internal view {
         // A zeroed/typo'd TOTAL_MIGRATABLE_BMX would make the pool check below vacuously true.
         if (cfg.totalMigratableBmx == 0) revert D1_ZeroMigratable();
-        uint256 poolBalance = IERC20(cfg.bws).balanceOf(cfg.migrator);
+        uint256 poolBalance = IERC20(cfg.bwlk).balanceOf(cfg.migrator);
         if (poolBalance < cfg.totalMigratableBmx) {
             revert D1_PoolUndersized(poolBalance, cfg.totalMigratableBmx);
         }
@@ -219,48 +219,48 @@ contract AssertBwsDeploy is Script {
         if (!cfg.bmxEmissionsHaltedAttested) revert D1_EmissionsNotAttested();
     }
 
-    /// @dev D-2: the voter, migrator, trackers and bnBWS are one coherent deployment.
+    /// @dev D-2: the voter, migrator, trackers and bnBWLK are one coherent deployment.
     function _assertD2(
         Config memory cfg
     ) internal view {
         GovernanceVoter voter = GovernanceVoter(payable(cfg.voter));
-        BwsMigration migrator = BwsMigration(cfg.migrator);
+        BwlkMigration migrator = BwlkMigration(cfg.migrator);
 
-        // Shape check first: cfg.bws must look like the genuine fixed-supply BWS. This cannot
+        // Shape check first: cfg.bwlk must look like the genuine fixed-supply BWLK. This cannot
         // distinguish a byte-identical second deployment - A-1 (auction.token()) is the anchor to
         // the launched instance - but it catches a self-consistent stack built on a wrong token.
-        uint256 bwsSupply = IERC20Meta(cfg.bws).totalSupply();
-        if (bwsSupply != ArbitrumConfig.TOTAL_SUPPLY) {
-            revert D2_BwsSupplyWrong(bwsSupply, ArbitrumConfig.TOTAL_SUPPLY);
+        uint256 bwlkSupply = IERC20Meta(cfg.bwlk).totalSupply();
+        if (bwlkSupply != EthereumConfig.TOTAL_SUPPLY) {
+            revert D2_BwlkSupplyWrong(bwlkSupply, EthereumConfig.TOTAL_SUPPLY);
         }
 
         address voterSbf = address(voter.SBF_BMX());
-        address migratorFee = address(migrator.FEE_BWS_TRACKER());
+        address migratorFee = address(migrator.FEE_BWLK_TRACKER());
         if (voterSbf != migratorFee) revert D2_VoterFeeTrackerMismatch(voterSbf, migratorFee);
-        if (voterSbf != cfg.feeBwsTracker) revert D2_VoterFeeTrackerMismatch(voterSbf, cfg.feeBwsTracker);
+        if (voterSbf != cfg.feeBwlkTracker) revert D2_VoterFeeTrackerMismatch(voterSbf, cfg.feeBwlkTracker);
 
         if (migrator.VOTER() != cfg.voter) revert D2_MigratorVoterMismatch(migrator.VOTER(), cfg.voter);
 
         address voterStaked = address(voter.STAKED_BMX_TRACKER());
-        address migratorStaked = address(migrator.STAKED_BWS_TRACKER());
+        address migratorStaked = address(migrator.STAKED_BWLK_TRACKER());
         if (voterStaked != migratorStaked) revert D2_StakedTrackerMismatch(voterStaked, migratorStaked);
-        if (voterStaked != cfg.stakedBwsTracker) revert D2_StakedTrackerMismatch(voterStaked, cfg.stakedBwsTracker);
+        if (voterStaked != cfg.stakedBwlkTracker) revert D2_StakedTrackerMismatch(voterStaked, cfg.stakedBwlkTracker);
 
         // The bonus tracker is anchored only to the migrator's own immutable (the voter does not
         // reference it), so without this the gate would never tie the middle tier to the migrator -
         // a migrator built with the wrong bonus tracker would pass the gate but revert in `migrate`.
-        address migratorBonus = address(migrator.BONUS_BWS_TRACKER());
-        if (migratorBonus != cfg.bonusBwsTracker) revert D2_BonusTrackerMismatch(migratorBonus, cfg.bonusBwsTracker);
+        address migratorBonus = address(migrator.BONUS_BWLK_TRACKER());
+        if (migratorBonus != cfg.bonusBwlkTracker) revert D2_BonusTrackerMismatch(migratorBonus, cfg.bonusBwlkTracker);
 
         address voterBn = voter.BN_BMX();
-        address migratorBn = address(migrator.BN_BWS());
+        address migratorBn = address(migrator.BN_BWLK());
         if (voterBn != migratorBn) revert D2_BnTokenMismatch(voterBn, migratorBn);
-        if (voterBn != cfg.bnBws) revert D2_BnTokenMismatch(voterBn, cfg.bnBws);
+        if (voterBn != cfg.bnBwlk) revert D2_BnTokenMismatch(voterBn, cfg.bnBwlk);
 
         address voterToken = voter.BMX();
-        address migratorBws = address(migrator.BWS());
-        if (voterToken != migratorBws) revert D2_TokenMismatch(voterToken, migratorBws);
-        if (voterToken != cfg.bws) revert D2_TokenMismatch(voterToken, cfg.bws);
+        address migratorBwlk = address(migrator.BWLK());
+        if (voterToken != migratorBwlk) revert D2_TokenMismatch(voterToken, migratorBwlk);
+        if (voterToken != cfg.bwlk) revert D2_TokenMismatch(voterToken, cfg.bwlk);
 
         // The token D-5 attests must be the one `migrate` actually surrenders.
         address migratorBmx = address(migrator.BMX());
@@ -276,46 +276,46 @@ contract AssertBwsDeploy is Script {
     function _assertD3(
         Config memory cfg
     ) internal view {
-        IRewardTrackerIntrospect staked = IRewardTrackerIntrospect(cfg.stakedBwsTracker);
-        IRewardTrackerIntrospect bonus = IRewardTrackerIntrospect(cfg.bonusBwsTracker);
-        IRewardTrackerIntrospect fee = IRewardTrackerIntrospect(cfg.feeBwsTracker);
+        IRewardTrackerIntrospect staked = IRewardTrackerIntrospect(cfg.stakedBwlkTracker);
+        IRewardTrackerIntrospect bonus = IRewardTrackerIntrospect(cfg.bonusBwlkTracker);
+        IRewardTrackerIntrospect fee = IRewardTrackerIntrospect(cfg.feeBwlkTracker);
 
         // Migrator is a handler on all three trackers (to call stakeForAccount).
-        if (!staked.isHandler(cfg.migrator)) revert D3_MigratorNotHandler(cfg.stakedBwsTracker);
-        if (!bonus.isHandler(cfg.migrator)) revert D3_MigratorNotHandler(cfg.bonusBwsTracker);
-        if (!fee.isHandler(cfg.migrator)) revert D3_MigratorNotHandler(cfg.feeBwsTracker);
+        if (!staked.isHandler(cfg.migrator)) revert D3_MigratorNotHandler(cfg.stakedBwlkTracker);
+        if (!bonus.isHandler(cfg.migrator)) revert D3_MigratorNotHandler(cfg.bonusBwlkTracker);
+        if (!fee.isHandler(cfg.migrator)) revert D3_MigratorNotHandler(cfg.feeBwlkTracker);
 
-        // Migrator is a minter on bnBWS (to mint the point credit).
-        if (!IMintableBaseTokenIntrospect(cfg.bnBws).isMinter(cfg.migrator)) {
-            revert D3_MigratorNotMinter(cfg.bnBws);
+        // Migrator is a minter on bnBWLK (to mint the point credit).
+        if (!IMintableBaseTokenIntrospect(cfg.bnBwlk).isMinter(cfg.migrator)) {
+            revert D3_MigratorNotMinter(cfg.bnBwlk);
         }
 
         // Trackers handler-wired to each other: the bonus tier pulls staked-tracker tokens from the
         // account, and the fee tier pulls bonus-tracker tokens - each via the handler transfer bypass.
-        if (!staked.isHandler(cfg.bonusBwsTracker)) {
-            revert D3_TrackerNotWired(cfg.stakedBwsTracker, cfg.bonusBwsTracker);
+        if (!staked.isHandler(cfg.bonusBwlkTracker)) {
+            revert D3_TrackerNotWired(cfg.stakedBwlkTracker, cfg.bonusBwlkTracker);
         }
-        if (!bonus.isHandler(cfg.feeBwsTracker)) {
-            revert D3_TrackerNotWired(cfg.bonusBwsTracker, cfg.feeBwsTracker);
+        if (!bonus.isHandler(cfg.feeBwlkTracker)) {
+            revert D3_TrackerNotWired(cfg.bonusBwlkTracker, cfg.feeBwlkTracker);
         }
 
-        // Deposit tokens: BWS on staked; the prior tier on each next; bnBWS on fee.
-        if (!staked.isDepositToken(cfg.bws)) revert D3_DepositTokenUnset(cfg.stakedBwsTracker, cfg.bws);
-        if (!bonus.isDepositToken(cfg.stakedBwsTracker)) {
-            revert D3_DepositTokenUnset(cfg.bonusBwsTracker, cfg.stakedBwsTracker);
+        // Deposit tokens: BWLK on staked; the prior tier on each next; bnBWLK on fee.
+        if (!staked.isDepositToken(cfg.bwlk)) revert D3_DepositTokenUnset(cfg.stakedBwlkTracker, cfg.bwlk);
+        if (!bonus.isDepositToken(cfg.stakedBwlkTracker)) {
+            revert D3_DepositTokenUnset(cfg.bonusBwlkTracker, cfg.stakedBwlkTracker);
         }
-        if (!fee.isDepositToken(cfg.bonusBwsTracker)) {
-            revert D3_DepositTokenUnset(cfg.feeBwsTracker, cfg.bonusBwsTracker);
+        if (!fee.isDepositToken(cfg.bonusBwlkTracker)) {
+            revert D3_DepositTokenUnset(cfg.feeBwlkTracker, cfg.bonusBwlkTracker);
         }
-        if (!fee.isDepositToken(cfg.bnBws)) revert D3_DepositTokenUnset(cfg.feeBwsTracker, cfg.bnBws);
+        if (!fee.isDepositToken(cfg.bnBwlk)) revert D3_DepositTokenUnset(cfg.feeBwlkTracker, cfg.bnBwlk);
 
-        // If bnBWS is in private transfer mode, the fee tracker must be a handler on it so the migrator's
-        // freshly-minted bnBWS can be pulled into the fee tier during the point credit.
+        // If bnBWLK is in private transfer mode, the fee tracker must be a handler on it so the migrator's
+        // freshly-minted bnBWLK can be pulled into the fee tier during the point credit.
         if (
-            IMintableBaseTokenIntrospect(cfg.bnBws).inPrivateTransferMode()
-                && !IMintableBaseTokenIntrospect(cfg.bnBws).isHandler(cfg.feeBwsTracker)
+            IMintableBaseTokenIntrospect(cfg.bnBwlk).inPrivateTransferMode()
+                && !IMintableBaseTokenIntrospect(cfg.bnBwlk).isHandler(cfg.feeBwlkTracker)
         ) {
-            revert D3_FeeTrackerNotBnHandler(cfg.bnBws, cfg.feeBwsTracker);
+            revert D3_FeeTrackerNotBnHandler(cfg.bnBwlk, cfg.feeBwlkTracker);
         }
 
         // Each tracker must be initialize()d with a distributor wired back to it: RewardTracker._stake
@@ -323,16 +323,16 @@ contract AssertBwsDeploy is Script {
         // migrate()/creditPoints() revert, and initialize() is one-shot (a wrong distributor means a
         // tracker redeploy). setHandler/setDepositToken work without initialize(), so the checks above
         // cannot catch this.
-        _assertTrackerDistributor(cfg.stakedBwsTracker);
-        _assertTrackerDistributor(cfg.bonusBwsTracker);
-        _assertTrackerDistributor(cfg.feeBwsTracker);
+        _assertTrackerDistributor(cfg.stakedBwlkTracker);
+        _assertTrackerDistributor(cfg.bonusBwlkTracker);
+        _assertTrackerDistributor(cfg.feeBwlkTracker);
 
         // Live Base runs both private modes on all three trackers. Left default-false, tracker
         // tokens are freely transferable ERC20s and voting weight can be shuffled between
         // addresses within an epoch.
-        _assertPrivateModes(cfg.stakedBwsTracker);
-        _assertPrivateModes(cfg.bonusBwsTracker);
-        _assertPrivateModes(cfg.feeBwsTracker);
+        _assertPrivateModes(cfg.stakedBwlkTracker);
+        _assertPrivateModes(cfg.bonusBwlkTracker);
+        _assertPrivateModes(cfg.feeBwlkTracker);
     }
 
     function _assertPrivateModes(
@@ -355,21 +355,21 @@ contract AssertBwsDeploy is Script {
         }
     }
 
-    /// @dev D-4: the deployed trackers byte-match the BWS staking RewardTracker, and the IRewardTracker
+    /// @dev D-4: the deployed trackers byte-match the BWLK staking RewardTracker, and the IRewardTracker
     ///      view selectors respond. Codehash equality is a full byte-match (RewardTracker has no
     ///      immutables, so a faithful redeploy reproduces the runtime bytecode exactly).
     function _assertD4(
         Config memory cfg
     ) internal view {
-        _assertTrackerCode(cfg.stakedBwsTracker, cfg.expectedTrackerCodehash);
-        _assertTrackerCode(cfg.bonusBwsTracker, cfg.expectedTrackerCodehash);
-        _assertTrackerCode(cfg.feeBwsTracker, cfg.expectedTrackerCodehash);
+        _assertTrackerCode(cfg.stakedBwlkTracker, cfg.expectedTrackerCodehash);
+        _assertTrackerCode(cfg.bonusBwlkTracker, cfg.expectedTrackerCodehash);
+        _assertTrackerCode(cfg.feeBwlkTracker, cfg.expectedTrackerCodehash);
 
         if (cfg.expectedBnTokenCodehash != bytes32(0)) {
-            if (cfg.bnBws.code.length == 0) revert D4_NoCode(cfg.bnBws);
-            bytes32 bnHash = cfg.bnBws.codehash;
+            if (cfg.bnBwlk.code.length == 0) revert D4_NoCode(cfg.bnBwlk);
+            bytes32 bnHash = cfg.bnBwlk.codehash;
             if (bnHash != cfg.expectedBnTokenCodehash) {
-                revert D4_BnTokenCodehashMismatch(cfg.bnBws, bnHash, cfg.expectedBnTokenCodehash);
+                revert D4_BnTokenCodehashMismatch(cfg.bnBwlk, bnHash, cfg.expectedBnTokenCodehash);
             }
         }
     }
@@ -405,12 +405,12 @@ contract AssertBwsDeploy is Script {
 
     /// @dev F-1 ops backstop + go-live readiness: owner is the timelock, root is set, window is open,
     ///      and the staking gov roles are on the expected multisig/timelock. Tracker gov can
-    ///      withdrawToken (the entire migrated staked-BWS custody) and setHandler; bnBWS gov can
+    ///      withdrawToken (the entire migrated staked-BWLK custody) and setHandler; bnBWLK gov can
     ///      re-grant minters — none of that may sit on a deploy hot key at go-live.
     function _assertF1AndReadiness(
         Config memory cfg
     ) internal view {
-        BwsMigration migrator = BwsMigration(cfg.migrator);
+        BwlkMigration migrator = BwlkMigration(cfg.migrator);
         if (migrator.owner() != cfg.timelock) revert F1_OwnerNotTimelock(migrator.owner(), cfg.timelock);
         // An EOA "timelock" satisfies the owner check but provides no delay; require a contract.
         if (cfg.timelock.code.length == 0) revert F1_TimelockHasNoCode(cfg.timelock);
@@ -425,10 +425,10 @@ contract AssertBwsDeploy is Script {
             revert GoLive_ClaimWindowImplausible(deadline);
         }
 
-        _assertStakingGov(cfg.stakedBwsTracker, IRewardTrackerIntrospect(cfg.stakedBwsTracker).gov(), cfg.stakingGov);
-        _assertStakingGov(cfg.bonusBwsTracker, IRewardTrackerIntrospect(cfg.bonusBwsTracker).gov(), cfg.stakingGov);
-        _assertStakingGov(cfg.feeBwsTracker, IRewardTrackerIntrospect(cfg.feeBwsTracker).gov(), cfg.stakingGov);
-        _assertStakingGov(cfg.bnBws, IMintableBaseTokenIntrospect(cfg.bnBws).gov(), cfg.stakingGov);
+        _assertStakingGov(cfg.stakedBwlkTracker, IRewardTrackerIntrospect(cfg.stakedBwlkTracker).gov(), cfg.stakingGov);
+        _assertStakingGov(cfg.bonusBwlkTracker, IRewardTrackerIntrospect(cfg.bonusBwlkTracker).gov(), cfg.stakingGov);
+        _assertStakingGov(cfg.feeBwlkTracker, IRewardTrackerIntrospect(cfg.feeBwlkTracker).gov(), cfg.stakingGov);
+        _assertStakingGov(cfg.bnBwlk, IMintableBaseTokenIntrospect(cfg.bnBwlk).gov(), cfg.stakingGov);
     }
 
     function _assertStakingGov(
@@ -441,8 +441,8 @@ contract AssertBwsDeploy is Script {
 
     /// @dev A: CCA launch wiring, checked after script 06's printed follow-ups. Each sub-config may be left
     ///      unset ONLY for a pre-launch dry run of D-1..D-5/F-1 - run() prints a loud warning for
-    ///      anything skipped. A-1..A-4: the auction's launch token is this BWS, its unsold sink is
-    ///      the burner (which burns this BWS), and it offered exactly the auction bucket. A-5..A-7:
+    ///      anything skipped. A-1..A-4: the auction's launch token is this BWLK, its unsold sink is
+    ///      the burner (which burns this BWLK), and it offered exactly the auction bucket. A-5..A-7:
     ///      the governance one-shots landed - hook committed, registrar renounced, locker wired.
     function _assertCcaWiring(
         Config memory cfg
@@ -450,14 +450,14 @@ contract AssertBwsDeploy is Script {
         if (cfg.auction != address(0)) {
             ICcaAuctionIntrospect auction = ICcaAuctionIntrospect(cfg.auction);
             address auctionToken = auction.token();
-            if (auctionToken != cfg.bws) revert A1_AuctionTokenMismatch(auctionToken, cfg.bws);
+            if (auctionToken != cfg.bwlk) revert A1_AuctionTokenMismatch(auctionToken, cfg.bwlk);
             address recipient = auction.tokensRecipient();
             if (recipient != cfg.burner) revert A2_TokensRecipientNotBurner(recipient, cfg.burner);
-            address burnerBws = address(UnsoldBurner(cfg.burner).BWS());
-            if (burnerBws != cfg.bws) revert A3_BurnerBwsMismatch(burnerBws, cfg.bws);
+            address burnerBwlk = address(UnsoldBurner(cfg.burner).BWLK());
+            if (burnerBwlk != cfg.bwlk) revert A3_BurnerBwlkMismatch(burnerBwlk, cfg.bwlk);
             uint256 auctionSupply = auction.totalSupply();
-            if (auctionSupply != ArbitrumConfig.CCA_AUCTION_SUPPLY) {
-                revert A4_AuctionSupplyUnexpected(auctionSupply, ArbitrumConfig.CCA_AUCTION_SUPPLY);
+            if (auctionSupply != EthereumConfig.CCA_AUCTION_SUPPLY) {
+                revert A4_AuctionSupplyUnexpected(auctionSupply, EthereumConfig.CCA_AUCTION_SUPPLY);
             }
         }
         if (cfg.lpLocker != address(0)) {
@@ -467,7 +467,7 @@ contract AssertBwsDeploy is Script {
             if (locker.registrar() != address(0)) revert A6_RegistrarNotRenounced(locker.registrar());
             if (
                 locker.GOVERNANCE_VOTER() != cfg.voter || locker.CURRENCY0() != address(0)
-                    || locker.CURRENCY1() != cfg.bws || locker.POSITION_MANAGER() != voter.V4_POSITION_MANAGER()
+                    || locker.CURRENCY1() != cfg.bwlk || locker.POSITION_MANAGER() != voter.V4_POSITION_MANAGER()
             ) revert A7_LockerWiringMismatch();
             // The locker must be the voter's REGISTERED peer: option-3 locks and initializePeers
             // (feeCollector -> depositRevenue routing) both hang off it.

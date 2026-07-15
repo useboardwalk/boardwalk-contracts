@@ -4,8 +4,8 @@ pragma solidity =0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {BwsMigration} from "src/token/BwsMigration.sol";
-import {BWS} from "src/token/BWS.sol";
+import {BwlkMigration} from "src/token/BwlkMigration.sol";
+import {BWLK} from "src/token/BWLK.sol";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -23,13 +23,13 @@ contract MockBMX is ERC20 {
     }
 }
 
-/// @dev bnBWS multiplier-point token: ERC20 + minter-gated mint/burn (mirrors MintableBaseToken),
+/// @dev bnBWLK multiplier-point token: ERC20 + minter-gated mint/burn (mirrors MintableBaseToken),
 ///      including the handler transferFrom branch that never touches allowance.
 contract MockBnPoints is ERC20 {
     mapping(address => bool) public isMinter;
     mapping(address => bool) public isHandler;
 
-    constructor() ERC20("Bonus BWS", "bnBWS") {}
+    constructor() ERC20("Bonus BWLK", "bnBWLK") {}
 
     function setMinter(
         address account,
@@ -213,11 +213,11 @@ contract MockVoterFin {
 // Tests
 // ---------------------------------------------------------------------------
 
-contract BwsMigrationTest is Test {
-    BwsMigration public migrator;
-    BWS public bws;
+contract BwlkMigrationTest is Test {
+    BwlkMigration public migrator;
+    BWLK public bwlk;
     MockBMX public bmx;
-    MockBnPoints public bnBws;
+    MockBnPoints public bnBwlk;
     MockTracker public stakedTracker;
     MockTracker public bonusTracker;
     MockTracker public feeTracker;
@@ -233,38 +233,38 @@ contract BwsMigrationTest is Test {
     uint256 internal constant POOL = 2_711_068e18;
     uint256 internal deadline;
 
-    event Migrated(address indexed account, address indexed destination, uint256 bwsAmount, uint256 pointsCredited);
+    event Migrated(address indexed account, address indexed destination, uint256 bwlkAmount, uint256 pointsCredited);
     event PointsCredited(address indexed destination, uint256 amount);
     event Swept(address indexed to, uint256 amount);
     event MerkleRootSet(bytes32 oldRoot, bytes32 newRoot);
 
     function setUp() public {
         bmx = new MockBMX();
-        bws = new BWS(address(this), address(this)); // mints MAX_SUPPLY to this test
-        bnBws = new MockBnPoints();
-        stakedTracker = new MockTracker("Staked BWS", "sBWS");
-        bonusTracker = new MockTracker("Bonus BWS", "bonusBWS");
-        feeTracker = new MockTracker("Fee BWS", "sbfBWS");
+        bwlk = new BWLK(address(this), address(this)); // mints MAX_SUPPLY to this test
+        bnBwlk = new MockBnPoints();
+        stakedTracker = new MockTracker("Staked BWLK", "sBWLK");
+        bonusTracker = new MockTracker("Bonus BWLK", "bonusBWLK");
+        feeTracker = new MockTracker("Fee BWLK", "sbfBWLK");
         voter = new MockVoterFin();
 
         deadline = block.timestamp + 30 days;
-        migrator = new BwsMigration(
+        migrator = new BwlkMigration(
             owner,
             address(bmx),
-            address(bws),
+            address(bwlk),
             address(stakedTracker),
             address(bonusTracker),
             address(feeTracker),
-            address(bnBws),
+            address(bnBwlk),
             address(voter),
             deadline
         );
 
         // Deploy-time wiring (granted by the staking governor in production).
-        stakedTracker.setDepositToken(address(bws), true);
+        stakedTracker.setDepositToken(address(bwlk), true);
         bonusTracker.setDepositToken(address(stakedTracker), true);
         feeTracker.setDepositToken(address(bonusTracker), true);
-        feeTracker.setDepositToken(address(bnBws), true);
+        feeTracker.setDepositToken(address(bnBwlk), true);
 
         stakedTracker.setHandler(address(migrator), true);
         bonusTracker.setHandler(address(migrator), true);
@@ -272,13 +272,13 @@ contract BwsMigrationTest is Test {
         stakedTracker.setHandler(address(bonusTracker), true); // bonus pulls staked
         bonusTracker.setHandler(address(feeTracker), true); // fee pulls bonus
 
-        bnBws.setMinter(address(migrator), true);
-        // Production wiring: the fee tracker is a bnBWS handler, so its transferFrom pull in
+        bnBwlk.setMinter(address(migrator), true);
+        // Production wiring: the fee tracker is a bnBWLK handler, so its transferFrom pull in
         // _stakePoints never consumes the migrator's allowance.
-        bnBws.setHandler(address(feeTracker), true);
+        bnBwlk.setHandler(address(feeTracker), true);
 
         // Fund the migration pool.
-        bws.transfer(address(migrator), POOL);
+        bwlk.transfer(address(migrator), POOL);
     }
 
     // ---- helpers ----
@@ -324,7 +324,7 @@ contract BwsMigrationTest is Test {
     // ============ migrate: base credit (every migrator earns 16% of migrated BMX) ============
 
     function test_Migrate_NonStaker_BaseCredit() public {
-        // No snapshot leaf: 1:1 BWS + 16% of the migrated BMX as voter points (160e18).
+        // No snapshot leaf: 1:1 BWLK + 16% of the migrated BMX as voter points (160e18).
         _setRoot(keccak256("dummy"));
         _giveBmx(alice, 1_000e18);
 
@@ -335,8 +335,8 @@ contract BwsMigrationTest is Test {
 
         assertEq(bmx.balanceOf(alice), 0, "bmx surrendered");
         assertEq(bmx.balanceOf(DEAD), 1_000e18, "bmx to dead");
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), 1_000e18, "staked principal");
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 160e18, "16% base credit");
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), 1_000e18, "staked principal");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 160e18, "16% base credit");
         assertEq(feeTracker.balanceOf(dest), 1_160e18, "sbf weight = principal + base credit");
         assertTrue(migrator.migrated(alice), "marked migrated");
     }
@@ -347,7 +347,7 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
         assertEq(bmx.balanceOf(DEAD), 1_234e18);
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), 1_234e18);
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), 1_234e18);
     }
 
     // ============ migrate: points (worked examples, 16%) ============
@@ -360,8 +360,8 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 100_000e18, 0, _emptyProof());
 
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 16_000e18, "16k points");
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), 100_000e18, "principal");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 16_000e18, "16k points");
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), 100_000e18, "principal");
         assertEq(feeTracker.balanceOf(dest), 116_000e18, "weight 116k");
     }
 
@@ -373,7 +373,7 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 50_000e18, 50_000e18, _emptyProof());
 
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 66_000e18, "66k points");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 66_000e18, "66k points");
         assertEq(feeTracker.balanceOf(dest), 116_000e18, "weight 116k");
     }
 
@@ -385,8 +385,8 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 50_000e18, 50_000e18, _emptyProof());
 
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 33_000e18, "33k points");
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), 25_000e18, "25k principal");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 33_000e18, "33k points");
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), 25_000e18, "25k principal");
         assertEq(feeTracker.balanceOf(dest), 58_000e18, "weight 58k");
     }
 
@@ -399,8 +399,8 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 50_000e18, 50_000e18, _emptyProof());
 
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 70_800e18, "base 16% of 80k + capped carry");
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), 80_000e18, "full principal 1:1");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 70_800e18, "base 16% of 80k + capped carry");
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), 80_000e18, "full principal 1:1");
         assertEq(feeTracker.balanceOf(dest), 150_800e18, "weight = principal + points");
     }
 
@@ -413,8 +413,8 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 0, 500e18, _emptyProof());
 
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 160e18, "base credit only");
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), 1_000e18, "principal");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 160e18, "base credit only");
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), 1_000e18, "principal");
     }
 
     function test_Migrate_NotInSnapshot_GetsBaseCredit() public {
@@ -425,8 +425,8 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
 
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), 500e18);
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 80e18, "16% base credit");
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), 500e18);
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 80e18, "16% base credit");
     }
 
     function test_Migrate_TwoLeafTree_RealProof() public {
@@ -442,7 +442,7 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 10_000e18, 0, proof);
 
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 1_600e18, "16% of 10k");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 1_600e18, "16% of 10k");
     }
 
     // ============ destination routing ============
@@ -453,8 +453,8 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(bob, 0, 0, _emptyProof());
 
-        assertEq(stakedTracker.depositBalances(bob, address(bws)), 1_000e18, "bob got position");
-        assertEq(stakedTracker.depositBalances(alice, address(bws)), 0, "alice got nothing");
+        assertEq(stakedTracker.depositBalances(bob, address(bwlk)), 1_000e18, "bob got position");
+        assertEq(stakedTracker.depositBalances(alice, address(bwlk)), 0, "alice got nothing");
         assertEq(bmx.balanceOf(alice), 0, "alice paid the bmx");
     }
 
@@ -467,28 +467,28 @@ contract BwsMigrationTest is Test {
         migrator.migrate(dest, 0, 0, _emptyProof());
 
         _giveBmx(alice, 500e18);
-        vm.expectRevert(BwsMigration.AlreadyMigrated.selector);
+        vm.expectRevert(BwlkMigration.AlreadyMigrated.selector);
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
     }
 
     function test_RevertWhen_Migrate_NothingToMigrate() public {
         _setRoot(keccak256("dummy"));
-        vm.expectRevert(BwsMigration.NothingToMigrate.selector);
+        vm.expectRevert(BwlkMigration.NothingToMigrate.selector);
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
     }
 
     function test_RevertWhen_Migrate_RootNotSet() public {
         _giveBmx(alice, 1_000e18);
-        vm.expectRevert(BwsMigration.RootNotSet.selector);
+        vm.expectRevert(BwlkMigration.RootNotSet.selector);
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
     }
 
     function test_RevertWhen_Migrate_ZeroDestination() public {
         _giveBmx(alice, 1_000e18);
-        vm.expectRevert(BwsMigration.ZeroAddress.selector);
+        vm.expectRevert(BwlkMigration.ZeroAddress.selector);
         vm.prank(alice);
         migrator.migrate(address(0), 0, 0, _emptyProof());
     }
@@ -497,7 +497,7 @@ contract BwsMigrationTest is Test {
         _setRoot(keccak256("dummy"));
         _giveBmx(alice, 1_000e18);
         vm.warp(deadline + 1);
-        vm.expectRevert(BwsMigration.ClaimWindowClosed.selector);
+        vm.expectRevert(BwlkMigration.ClaimWindowClosed.selector);
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
     }
@@ -506,7 +506,7 @@ contract BwsMigrationTest is Test {
         _setRoot(keccak256("dummy"));
         _giveBmx(alice, 1_000e18);
         voter.setFinalizing(true);
-        vm.expectRevert(BwsMigration.FinalizationInProgress.selector);
+        vm.expectRevert(BwlkMigration.FinalizationInProgress.selector);
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
     }
@@ -515,7 +515,7 @@ contract BwsMigrationTest is Test {
         _giveBmx(alice, 100_000e18);
         _setRoot(_leaf(alice, 100_000e18, 0));
         // Wrong snapshotPoints -> leaf mismatch -> InvalidProof.
-        vm.expectRevert(BwsMigration.InvalidProof.selector);
+        vm.expectRevert(BwlkMigration.InvalidProof.selector);
         vm.prank(alice);
         migrator.migrate(dest, 100_000e18, 999e18, _emptyProof());
     }
@@ -538,7 +538,7 @@ contract BwsMigrationTest is Test {
 
     function test_RevertWhen_SetMerkleRoot_AlreadySet() public {
         migrator.setMerkleRoot(keccak256("root"));
-        vm.expectRevert(BwsMigration.RootAlreadySet.selector);
+        vm.expectRevert(BwlkMigration.RootAlreadySet.selector);
         migrator.setMerkleRoot(keccak256("root2"));
     }
 
@@ -554,12 +554,12 @@ contract BwsMigrationTest is Test {
         emit PointsCredited(dest, 140e18);
         migrator.creditPoints(dest, 140e18);
 
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), 300e18, "base 160 + post-hoc 140");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), 300e18, "base 160 + post-hoc 140");
     }
 
     function test_RevertWhen_CreditPoints_DuringFinalization() public {
         voter.setFinalizing(true);
-        vm.expectRevert(BwsMigration.FinalizationInProgress.selector);
+        vm.expectRevert(BwlkMigration.FinalizationInProgress.selector);
         migrator.creditPoints(dest, 1e18);
     }
 
@@ -570,7 +570,7 @@ contract BwsMigrationTest is Test {
     }
 
     function test_RevertWhen_CreditPoints_ZeroDestination() public {
-        vm.expectRevert(BwsMigration.ZeroAddress.selector);
+        vm.expectRevert(BwlkMigration.ZeroAddress.selector);
         migrator.creditPoints(address(0), 1e18);
     }
 
@@ -589,19 +589,19 @@ contract BwsMigrationTest is Test {
         vm.prank(alice);
         migrator.migrate(dest, 0, 0, _emptyProof());
 
-        uint256 remaining = bws.balanceOf(address(migrator));
+        uint256 remaining = bwlk.balanceOf(address(migrator));
         vm.warp(deadline + 1);
 
         vm.expectEmit(true, true, true, true);
         emit Swept(treasury, remaining);
         migrator.sweepUnclaimed(treasury);
 
-        assertEq(bws.balanceOf(treasury), remaining, "swept to treasury");
-        assertEq(bws.balanceOf(address(migrator)), 0, "pool drained");
+        assertEq(bwlk.balanceOf(treasury), remaining, "swept to treasury");
+        assertEq(bwlk.balanceOf(address(migrator)), 0, "pool drained");
     }
 
     function test_RevertWhen_SweepUnclaimed_BeforeDeadline() public {
-        vm.expectRevert(BwsMigration.ClaimWindowOpen.selector);
+        vm.expectRevert(BwlkMigration.ClaimWindowOpen.selector);
         migrator.sweepUnclaimed(treasury);
     }
 
@@ -614,37 +614,37 @@ contract BwsMigrationTest is Test {
 
     function test_RevertWhen_SweepUnclaimed_ZeroTo() public {
         vm.warp(deadline + 1);
-        vm.expectRevert(BwsMigration.ZeroAddress.selector);
+        vm.expectRevert(BwlkMigration.ZeroAddress.selector);
         migrator.sweepUnclaimed(address(0));
     }
 
     // ============ constructor reverts ============
 
     function test_RevertWhen_Constructor_ZeroAddress() public {
-        vm.expectRevert(BwsMigration.ZeroAddress.selector);
-        new BwsMigration(
+        vm.expectRevert(BwlkMigration.ZeroAddress.selector);
+        new BwlkMigration(
             owner,
             address(0),
-            address(bws),
+            address(bwlk),
             address(stakedTracker),
             address(bonusTracker),
             address(feeTracker),
-            address(bnBws),
+            address(bnBwlk),
             address(voter),
             deadline
         );
     }
 
     function test_RevertWhen_Constructor_DeadlineInPast() public {
-        vm.expectRevert(BwsMigration.DeadlineInPast.selector);
-        new BwsMigration(
+        vm.expectRevert(BwlkMigration.DeadlineInPast.selector);
+        new BwlkMigration(
             owner,
             address(bmx),
-            address(bws),
+            address(bwlk),
             address(stakedTracker),
             address(bonusTracker),
             address(feeTracker),
-            address(bnBws),
+            address(bnBwlk),
             address(voter),
             block.timestamp
         );
@@ -653,19 +653,19 @@ contract BwsMigrationTest is Test {
     // ============ no standing approvals (exact-approve per stake) ============
 
     function test_NoStandingApproval_ExactApprovePerStake() public {
-        assertEq(bws.allowance(address(migrator), address(stakedTracker)), 0, "no standing BWS approval");
-        assertEq(bnBws.allowance(address(migrator), address(feeTracker)), 0, "no standing bnBWS approval");
+        assertEq(bwlk.allowance(address(migrator), address(stakedTracker)), 0, "no standing BWLK approval");
+        assertEq(bnBwlk.allowance(address(migrator), address(feeTracker)), 0, "no standing bnBWLK approval");
 
         _setRoot(_leaf(alice, 1_000e18, 0));
         _giveBmx(alice, 1_000e18);
         vm.prank(alice);
         migrator.migrate(dest, 1_000e18, 0, _emptyProof());
 
-        // BWS: the tracker's transferFrom consumes the exact approval. bnBWS: the fee tracker is a
-        // HANDLER on bnBWS (wired in setUp, as in production), so its pull never touches allowance -
+        // BWLK: the tracker's transferFrom consumes the exact approval. bnBWLK: the fee tracker is a
+        // HANDLER on bnBWLK (wired in setUp, as in production), so its pull never touches allowance -
         // zero here proves _stakePoints' explicit reset, not consumption.
-        assertEq(bws.allowance(address(migrator), address(stakedTracker)), 0, "BWS allowance fully consumed");
-        assertEq(bnBws.allowance(address(migrator), address(feeTracker)), 0, "bnBWS allowance reset after stake");
+        assertEq(bwlk.allowance(address(migrator), address(stakedTracker)), 0, "BWLK allowance fully consumed");
+        assertEq(bnBwlk.allowance(address(migrator), address(feeTracker)), 0, "bnBWLK allowance reset after stake");
     }
 
     // ============ fuzz: points formula ============
@@ -686,7 +686,7 @@ contract BwsMigrationTest is Test {
         migrator.migrate(dest, snapBmx, snapPoints, _emptyProof());
 
         uint256 expected = _expectedPoints(hold, snapBmx, snapPoints);
-        assertEq(feeTracker.depositBalances(dest, address(bnBws)), expected, "points formula");
-        assertEq(stakedTracker.depositBalances(dest, address(bws)), hold, "principal 1:1");
+        assertEq(feeTracker.depositBalances(dest, address(bnBwlk)), expected, "points formula");
+        assertEq(stakedTracker.depositBalances(dest, address(bwlk)), hold, "principal 1:1");
     }
 }
