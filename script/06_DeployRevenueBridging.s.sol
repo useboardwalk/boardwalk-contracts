@@ -26,10 +26,12 @@ import {CrossChainConfig} from "script/CrossChainConfig.sol";
 ///         to the deployed bridger so `forwardRevenue` routes revenue in.
 ///      7. Keep `governanceVault == address(0)` on all source chains; a set vault diverts 70% past the
 ///         bridger. Never call `executeSetGovernanceVault` there; alert on `GovernanceVaultUpdated`.
-///         BWS-migration carve-out: Arbitrum becomes the governance home — at the migration cutover
-///         its FeeCollector's vault is set to the BWS GovernanceVoter, and the Arbitrum lane is
-///         retired (the bridger pins Base as destination, so a post-cutover Arbitrum lane would
-///         ship the hub's own revenue away; the replacement mesh targets Arbitrum).
+///         BWLK carve-out: Ethereum mainnet becomes the governance home — at the migration cutover
+///         its FeeCollector's vault is set to the BWLK GovernanceVoter, and the ETHEREUM LANE IS
+///         RETIRED. Do NOT deploy or wire the Ethereum bridger for the BWLK era: routing Ethereum
+///         revenue down the Base lane would ship the hub's own revenue away and starve the voter's
+///         70% governance budget. The replacement mesh (hub = Ethereum) is a separate deployment;
+///         this script's lane list predates the BWLK move.
 ///      8. Accrual gating: don't call `forwardRevenue` until monitoring confirms the previous bridge
 ///         landed on Base. The 30/70 split lands when the Base FeeCollector runs its regular cycle.
 ///

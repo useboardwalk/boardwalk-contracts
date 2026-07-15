@@ -66,7 +66,7 @@ interface IERC20Meta {
     function totalSupply() external view returns (uint256);
 }
 
-/// @title AssertBwlkDeploy - The go-live gate for the BMX -> BWLK Arbitrum deployment
+/// @title AssertBwlkDeploy - The go-live gate for the BMX -> BWLK Ethereum deployment
 /// @notice The migration contracts do not assert their deploy-time wiring. This script is that gate:
 ///         `assertAll` reverts unless every D-1..D-5 + F-1 invariant holds. Run it on a fork (or against
 ///         live addresses) immediately before going live; a revert blocks go-live.
@@ -87,8 +87,8 @@ contract AssertBwlkDeploy is Script {
         address stakingGov; // expected gov of the three trackers + bnBWLK (multisig/timelock, NOT a hot key)
         address auction; // CCA auction (0 = skip A-1..A-4; only before the launch exists)
         address burner; // UnsoldBurner (checked with the auction)
-        address lpLocker; // LPLocker (0 = skip A-5..A-7; only before the launch exists)
-        uint256 totalMigratableBmx; // reconciled global BMX that can be brought to Arbitrum (D-1)
+        address lpLocker; // LPLocker (0 = skip A-5..A-9; only before the launch exists)
+        uint256 totalMigratableBmx; // reconciled global BMX that can reach the migrator (D-1)
         bytes32 expectedTrackerCodehash; // BWLK staking RewardTracker runtime codehash (D-4)
         bytes32 expectedBnTokenCodehash; // bnBWLK MintableBaseToken runtime codehash (D-4, 0 = skip)
         bool bmxEmissionsHaltedAttested; // D-1: BMX has no live minter on any chain (manual attest)
@@ -185,7 +185,7 @@ contract AssertBwlkDeploy is Script {
             console.log("WARNING: CCA_AUCTION/UNSOLD_BURNER unset - launch wiring (A-1..A-4) NOT checked.");
         }
         if (cfg.lpLocker == address(0)) {
-            console.log("WARNING: LP_LOCKER unset - governance one-shots (A-5..A-7) NOT checked.");
+            console.log("WARNING: LP_LOCKER unset - governance one-shots (A-5..A-9) NOT checked.");
         }
         console.log("Reminder (F-1, not code-enforceable): after migration + sweep, REVOKE the");
         console.log("migrator's bnBWLK minter role to cap point inflation.");
@@ -442,7 +442,7 @@ contract AssertBwlkDeploy is Script {
     /// @dev A: CCA launch wiring, checked after script 06's printed follow-ups. Each sub-config may be left
     ///      unset ONLY for a pre-launch dry run of D-1..D-5/F-1 - run() prints a loud warning for
     ///      anything skipped. A-1..A-4: the auction's launch token is this BWLK, its unsold sink is
-    ///      the burner (which burns this BWLK), and it offered exactly the auction bucket. A-5..A-7:
+    ///      the burner (which burns this BWLK), and it offered exactly the auction bucket. A-5..A-9:
     ///      the governance one-shots landed - hook committed, registrar renounced, locker wired.
     function _assertCcaWiring(
         Config memory cfg

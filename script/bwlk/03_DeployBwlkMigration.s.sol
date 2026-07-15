@@ -7,7 +7,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {BwlkMigration} from "src/token/BwlkMigration.sol";
 import {EthereumConfig} from "./EthereumConfig.sol";
 
-/// @title DeployBwlkMigration - Deploy + bring up the BMX -> BWLK Migrator on Arbitrum
+/// @title DeployBwlkMigration - Deploy + bring up the BMX -> BWLK Migrator on Ethereum mainnet
 /// @notice Deploys BwlkMigration owned by the 21-day governance timelock. When the broadcaster is the
 ///         owner (dry-run / bring-up) it also sets the one-shot snapshot merkle root and then funds
 ///         the 2,711,068 BWLK migration pool; when OWNER is the timelock it deploys only and prints

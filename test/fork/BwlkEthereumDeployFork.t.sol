@@ -41,6 +41,7 @@ contract BwlkEthereumDeployForkTest is Test {
     BwlkMigration internal migrator;
 
     address internal BMX;
+    bool internal realBmx;
     address internal escrow = makeAddr("escrow");
     address internal timelock = makeAddr("timelock");
     address internal keeper = makeAddr("keeper");
@@ -65,9 +66,11 @@ contract BwlkEthereumDeployForkTest is Test {
         }
         forked = true;
         // Migration source: real token when BMX_ADDRESS is set AND live on this fork; an 18-dec
-        // mock otherwise (also covers a stale env from the Arbitrum era).
+        // mock otherwise (also covers a stale env from the Arbitrum era). The non-fee-on-transfer
+        // proof skips on the mock - it must only ever pass against the real token.
         BMX = vm.envOr("BMX_ADDRESS", address(0));
-        if (BMX.code.length == 0) BMX = address(new MockERC20("Legacy BMX", "BMX"));
+        realBmx = BMX.code.length != 0;
+        if (!realBmx) BMX = address(new MockERC20("Legacy BMX", "BMX"));
 
         gate = new AssertBwlkDeploy();
         deadline = block.timestamp + 365 days;
@@ -186,6 +189,8 @@ contract BwlkEthereumDeployForkTest is Test {
 
     /// @notice D-5: the real Arbitrum BMX is a non-fee-on-transfer ERC20 (sender/receiver deltas equal).
     function testFork_BmxIsNonFeeOnTransfer() public onlyFork {
+        // The proof is only meaningful against the real migration source, never the mock.
+        if (!realBmx) vm.skip(true);
         address a = makeAddr("bmxHolderA");
         address b = makeAddr("bmxHolderB");
         uint256 amount = 1_000e18;

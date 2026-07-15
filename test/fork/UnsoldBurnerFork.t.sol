@@ -4,6 +4,7 @@ pragma solidity =0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {UnsoldBurner} from "src/token/UnsoldBurner.sol";
 import {MockERC20} from "test/bwlk/UnsoldBurnerMocks.sol";
+import {EthereumConfig} from "script/bwlk/EthereumConfig.sol";
 
 /// @dev Byte-identical layout to Uniswap's `AuctionParameters`
 ///      (continuous-clearing-auction/src/interfaces/IContinuousClearingAuction.sol:16-28).
@@ -49,9 +50,9 @@ interface ICcaAuctionFull {
 ///      Run: forge test --match-contract UnsoldBurnerForkTest --fork-url https://ethereum-rpc.publicnode.com
 contract UnsoldBurnerForkTest is Test {
     // Deployed Ethereum mainnet CCA addresses (the factory is the v3.1.0 strategy's own initializerFactory).
-    address internal constant CCA_FACTORY = 0x000000001F26a0044BaA66024e7b6599c61963F8;
-    address internal constant LIQUIDITY_LAUNCHER = 0x00004c4ccc709Ef590F7C81102C0689F0263D4e9;
-    address internal constant LBP_STRATEGY = 0x49380c4EfaB1b491006aF7FabAB8B3459F0E6000;
+    address internal constant CCA_FACTORY = EthereumConfig.ETH_CCA_FACTORY;
+    address internal constant LIQUIDITY_LAUNCHER = EthereumConfig.ETH_LIQUIDITY_LAUNCHER;
+    address internal constant LBP_STRATEGY = EthereumConfig.ETH_LBP_STRATEGY;
 
     address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
     uint256 internal constant RESOLUTION = 96;

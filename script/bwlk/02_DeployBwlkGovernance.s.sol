@@ -7,11 +7,12 @@ import {LPLocker} from "src/governance/LPLocker.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
 import {EthereumConfig} from "./EthereumConfig.sol";
 
-/// @title DeployBwlkGovernance - Deploy the Arbitrum/BWLK governance stack
-/// @notice Adapts script/03_DeployGovernance.s.sol to Arbitrum + BWLK: GovernanceVoter wired to the
-///         redeployed BWLK trackers (sbfBWLK / stakedBWLK / bnBWLK), the BWLK token, Arbitrum WETH +
-///         UniversalRouter + v4 PositionManager; then LPLocker (currency0 = native ETH, currency1 =
-///         BWLK) with a renounceable registrar, and ParticipationDistributor; finally initializePeers.
+/// @title DeployBwlkGovernance - Deploy the Ethereum/BWLK governance stack
+/// @notice Adapts script/03_DeployGovernance.s.sol to Ethereum mainnet + BWLK: GovernanceVoter wired
+///         to the redeployed BWLK trackers (sbfBWLK / stakedBWLK / bnBWLK), the BWLK token, mainnet
+///         WETH + UniversalRouter + v4 PositionManager; then LPLocker (currency0 = native ETH,
+///         currency1 = BWLK) with a renounceable registrar, and ParticipationDistributor; finally
+///         initializePeers.
 /// @dev POOL_HOOKS is left unset here. Governance deploys before the CCA launch, so the BWLK/ETH pool's
 ///      hook is unknown at this point. After the CCA `migrate()`, recover the hook from the
 ///      PoolManager `Initialize` event or `getPoolAndPositionInfo` on the locker-owned position (the

@@ -410,6 +410,6 @@ contract LaunchBwlkCca is Script {
         console.log("4. After endBlock anyone can call UnsoldBurner.sweep(auction) to burn unsold BWLK.");
         console.log("5. Re-run the go-live gate with the launch wiring:");
         console.log("   STAKING_GOV=... CCA_AUCTION=<auction above> UNSOLD_BURNER=... LP_LOCKER=... \\");
-        console.log("     forge script script/bwlk/04_AssertBwlkDeploy.s.sol --rpc-url $ARB_RPC");
+        console.log("     forge script script/bwlk/04_AssertBwlkDeploy.s.sol --rpc-url $ETH_RPC");
     }
 }
