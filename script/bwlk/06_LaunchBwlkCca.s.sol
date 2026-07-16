@@ -35,12 +35,13 @@ interface ICcaAuctionIntrospect {
 /// - UNSOLD_BURNER
 /// - LAUNCH_RECIPIENT: treasury (leftovers + entire LP seed on a failed migration)
 /// - CCA_START_BLOCK (mainnet block number, ~12s cadence)
-/// - CCA_END_BLOCK (mainnet block number; 3 days = 21,600 blocks)
-/// - CCA_TICK_SPACING_Q96: Q96 wei-per-wei price increment (keep floor = 100 ticks)
-/// - CCA_FLOOR_PRICE_Q96: Q96 wei-per-wei floor price
+/// - CCA_END_BLOCK (mainnet block number; 3 days ~= 21,500 blocks)
 /// - CCA_ZERO_GRADUATION_ATTESTED=true: this launch has NO graduation threshold (default 0);
 ///   the attestation makes that explicit
 /// Optional (defaults are the launch design / canonical addresses in EthereumConfig):
+/// - CCA_TICK_SPACING_Q96: Q96 wei-per-wei price increment (default: 1% of the floor)
+/// - CCA_FLOOR_PRICE_Q96: Q96 wei-per-wei floor price (default: $0.30 at the pinned launch-day
+///   ETH price)
 /// - CCA_CLAIM_BLOCK (default: endBlock + 1, per Uniswap's guidance)
 /// - CCA_MIGRATION_BLOCK (default: endBlock + 1, per Uniswap's guidance)
 /// - CCA_AUCTION_STEPS: packed hex, 8 bytes/step (uint24 mps + uint40 blockDelta; mps*delta = 1e7,
@@ -344,9 +345,8 @@ contract LaunchBwlkCca is Script {
         // Both endBlock + 1, per Uniswap's guidance: claims and migration open the block after close.
         cfg.claimBlock = _envU64("CCA_CLAIM_BLOCK", cfg.endBlock + 1);
         cfg.migrationBlock = _envU64("CCA_MIGRATION_BLOCK", cfg.endBlock + 1);
-        // No defaults: the BWLK floor is set at launch time (fail-loud until announced).
-        cfg.tickSpacingQ96 = vm.envUint("CCA_TICK_SPACING_Q96");
-        cfg.floorPriceQ96 = vm.envUint("CCA_FLOOR_PRICE_Q96");
+        cfg.tickSpacingQ96 = vm.envOr("CCA_TICK_SPACING_Q96", EthereumConfig.CCA_TICK_SPACING_Q96);
+        cfg.floorPriceQ96 = vm.envOr("CCA_FLOOR_PRICE_Q96", EthereumConfig.CCA_FLOOR_PRICE_Q96);
         // This launch has no graduation threshold; check() still demands the explicit attestation.
         cfg.requiredCurrencyRaised = _envU128("CCA_REQUIRED_CURRENCY_RAISED", 0);
         cfg.zeroGraduationAttested = vm.envOr("CCA_ZERO_GRADUATION_ATTESTED", false);

@@ -204,6 +204,31 @@ contract LaunchBwlkCcaTest is Test {
         );
     }
 
+    /// @dev Pins the launch floor ($0.30 at the pinned ETH/USD read, floor = 100 ticks) and the CCA
+    ///      constructor constraints it must satisfy - a typo'd default would otherwise only surface
+    ///      in the launch simulation.
+    function test_Config_FloorAndTickMatchAnnouncedValues() public pure {
+        assertEq(EthereumConfig.CCA_TICK_SPACING_Q96, 127_038_107_261_363_363_806_277, "tick literal");
+        assertEq(
+            EthereumConfig.CCA_FLOOR_PRICE_Q96, 12_703_810_726_136_336_380_627_700, "floor = $0.30 at $1,870.97/ETH"
+        );
+
+        // TickStorage constraints: floor on a tick boundary and above the minimums.
+        assertEq(EthereumConfig.CCA_FLOOR_PRICE_Q96 % EthereumConfig.CCA_TICK_SPACING_Q96, 0, "floor tick-aligned");
+        assertGe(EthereumConfig.CCA_FLOOR_PRICE_Q96, (uint256(1) << 32) + 1, "floor >= MIN_FLOOR_PRICE");
+        assertGe(EthereumConfig.CCA_TICK_SPACING_Q96, 2, "tick >= MIN_TICK_SPACING");
+
+        // MaxBidPriceLib bound for the fixed 157,500e18 auction supply.
+        uint256 maxBid = ((uint256(1) << 154) / AUCTION_SUPPLY) ** 2;
+        uint256 currencyBound = (uint256(1) << 222) / AUCTION_SUPPLY;
+        if (currencyBound < maxBid) maxBid = currencyBound;
+        assertLe(
+            EthereumConfig.CCA_FLOOR_PRICE_Q96,
+            maxBid - EthereumConfig.CCA_TICK_SPACING_Q96,
+            "floor + tick within max bid price"
+        );
+    }
+
     // ---- default supply schedule ----
 
     /// @dev Parses one packed 8-byte step: uint24 mps + uint40 blockDelta, big-endian.

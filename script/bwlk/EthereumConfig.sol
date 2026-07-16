@@ -76,13 +76,20 @@ library EthereumConfig {
 
     // --- BWLK CCA launch parameters ---
     // Auction window: July 16 2026 19:00 UTC (12:00 PT) -> July 19 2026 19:00 UTC, exactly 3 days
-    // = 21,600 mainnet blocks at the fixed 12s cadence. The start/end blocks are pinned close to
-    // launch; claim and migration blocks default to endBlock + 1 (per Uniswap's guidance) and the
-    // step schedule to the convex uniswap-cca shape, both derived in 06_LaunchBwlkCca.s.sol.
-    // There is NO graduation threshold for this launch (any raise graduates): the script's default
-    // is 0 and the launch command must attest it via CCA_ZERO_GRADUATION_ATTESTED=true.
-    // Floor and tick spacing are NOT defaulted: the BWLK floor price is unannounced - pass
-    // CCA_FLOOR_PRICE_Q96 / CCA_TICK_SPACING_Q96 (Q96 wei-per-wei; keep floor = 100 ticks).
+    // (~21,500 mainnet blocks at the measured ~12.05s effective cadence). The start/end blocks are
+    // pinned close to launch; claim and migration blocks default to endBlock + 1 (per Uniswap's
+    // guidance) and the step schedule to the convex uniswap-cca shape, both derived in
+    // 06_LaunchBwlkCca.s.sol. There is NO graduation threshold for this launch (any raise
+    // graduates): the script's default is 0 and the launch command must attest it via
+    // CCA_ZERO_GRADUATION_ATTESTED=true.
+
+    /// @notice Bid tick spacing: 1% of the floor price, so the floor sits on exactly the 100th
+    ///         tick. Same floor:tick ratio as Uniswap's reference launch.
+    uint256 internal constant CCA_TICK_SPACING_Q96 = 127_038_107_261_363_363_806_277;
+    /// @notice Auction floor: the announced $0.30 per BWLK, pinned in ETH terms on launch day at
+    ///         the Chainlink ETH/USD read of $1,870.97 (2026-07-16) = 0.0001603446 ETH per BWLK as
+    ///         a Q96 wei-per-wei price. ETH drift during the auction moves the effective USD floor.
+    uint256 internal constant CCA_FLOOR_PRICE_Q96 = CCA_TICK_SPACING_Q96 * 100;
 
     // The CCA launch runs through the LiquidityLauncher (06_LaunchBwlkCca.s.sol), which sets
     // tokensRecipient = UnsoldBurner and requiredCurrencyRaised at auction creation. Deploy
