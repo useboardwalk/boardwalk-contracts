@@ -12,7 +12,6 @@ import {BoardwalkLPManager} from "src/core/BoardwalkLPManager.sol";
 import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {BoostBurn} from "src/core/BoostBurn.sol";
-import {BoardwalkClub} from "src/nft/BoardwalkClub.sol";
 import {IDEXRouter} from "src/interfaces/IDEXRouter.sol";
 import {FeeSchedules} from "script/FeeSchedules.sol";
 import {DexConfig} from "script/DexConfig.sol";
@@ -20,22 +19,25 @@ import {DexConfig} from "script/DexConfig.sol";
 /// @title DeployFactory
 /// @notice Deploys the full Boardwalk per-chain stack: membership NFT, implementation templates,
 ///         singletons, the per-chain integrator collector, the LaunchFactory, and BoostBurn.
-/// @dev Deployment order:
-///      1. BoardwalkClub (DEPRECATED soulbound NFT, only deployed when NFT_COLLECTION is unset). On
-///         Base set NFT_COLLECTION to the SeaDrop collection; on a CCIP spoke set it to the deployed
-///         `BoardwalkClubMirror`. Either way this fallback deploy is skipped. Used as `nftCollection`.
-///      2. Implementation templates (5 contracts)
-///      3. BoardwalkLPManager (singleton)
-///      4. BoardwalkFeeCollector (singleton)
-///      5. IntegratorFeeCollector (per-chain singleton; frozen integrators[]/splits[] from FeeSchedules)
-///      6. LaunchFactory (singleton — wires everything, including the membership NFT)
-///      7. integratorCollector.setFactory(factory) — one-shot to break the chicken-and-egg
-///      8. BoostBurn (community ranking; wired to the same membership NFT)
+/// @dev NFT_COLLECTION is REQUIRED: the SeaDrop collection on Base, the chain's deployed
+///      `BoardwalkClubMirror` on spokes (run 04_DeployNFTBridge first on a new spoke). An explicit
+///      zero address disables membership discounts. There is no fallback deploy — wiring the
+///      deprecated soulbound gate by omission would cost a 7-day SET_NFT_COLLECTION timelock on
+///      both LaunchFactory and BoostBurn to fix.
+///      Deployment order:
+///      1. Implementation templates (5 contracts)
+///      2. BoardwalkLPManager (singleton)
+///      3. BoardwalkFeeCollector (singleton)
+///      4. IntegratorFeeCollector (per-chain singleton; frozen integrators[]/splits[] from FeeSchedules)
+///      5. LaunchFactory (singleton — wires everything, including the membership NFT)
+///      6. integratorCollector.setFactory(factory) — one-shot to break the chicken-and-egg
+///      7. BoostBurn (community ranking; wired to the same membership NFT)
 contract DeployFactory is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        // Canonical Uniswap V2 + WETH for this chain; env overrides only for testnet rehearsals.
+        // Canonical Uniswap V2 + WETH for this chain. Env overrides exist for fork rehearsals with a
+        // nonstandard v2 deployment; FeeSchedules.resolve below pins the supported chain set regardless.
         (address canonicalFactory, address canonicalRouter, address canonicalWeth) = DexConfig.resolve(block.chainid);
         address dexFactory = vm.envOr("DEX_FACTORY", canonicalFactory);
         address dexRouter = vm.envOr("DEX_ROUTER", canonicalRouter);
@@ -49,7 +51,9 @@ contract DeployFactory is Script {
         uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(5 ether));
         uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(24 hours));
         uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(7 days));
-        address nftCollectionEnv = vm.envOr("NFT_COLLECTION", address(0));
+        // Required (fail-loud): SeaDrop collection on Base, the chain's mirror on spokes; an
+        // explicit zero disables discounts.
+        address nftCollection = vm.envAddress("NFT_COLLECTION");
         uint256 memberLaunchDiscountBps = vm.envOr("MEMBER_LAUNCH_DISCOUNT_BPS", uint256(5000));
 
         // Anti-whale defaults — preserve previous hardcoded values unless env overrides.
@@ -60,10 +64,6 @@ contract DeployFactory is Script {
         uint256 epochZero = vm.envOr("EPOCH_ZERO", block.timestamp);
         uint256 epochDuration = vm.envOr("EPOCH_DURATION", uint256(30 days));
         uint256 memberBoostDiscountBps = vm.envOr("MEMBER_BOOST_DISCOUNT_BPS", uint256(5000));
-
-        // Optional initial soulbound airdrop, applied only to a freshly-deployed BoardwalkClub
-        // (skipped when an existing NFT_COLLECTION is supplied, e.g. the Base SeaDrop collection).
-        address[] memory mintRecipients = vm.envOr("MINT_RECIPIENTS", ",", new address[](0));
 
         require(owner != address(0), "OWNER required");
         require(bwlk != address(0), "BWLK_ADDRESS required");
@@ -101,26 +101,9 @@ contract DeployFactory is Script {
         console.log("Deployer:", deployer);
         console.log("Owner:", owner);
         console.log("Chain id:", block.chainid);
+        console.log("NFT collection (membership gate):", nftCollection);
 
-        // 1. Resolve the membership NFT. On Base, NFT_COLLECTION points at the existing SeaDrop
-        //    collection; on other chains we deploy the soulbound mirror and wire its address into
-        //    both the LaunchFactory and BoostBurn below.
-        address nftCollection = nftCollectionEnv;
-        if (nftCollection == address(0)) {
-            BoardwalkClub club = new BoardwalkClub(owner);
-            nftCollection = address(club);
-            console.log("BoardwalkClub (soulbound):", nftCollection);
-
-            if (mintRecipients.length > 0) {
-                require(owner == deployer, "MINT_RECIPIENTS requires OWNER == deployer");
-                club.batchMint(mintRecipients);
-                console.log("Initial airdrop count:", mintRecipients.length);
-            }
-        } else {
-            console.log("Using existing NFT_COLLECTION:", nftCollection);
-        }
-
-        // 2. Deploy implementation templates
+        // 1. Deploy implementation templates
         BoardwalkToken tokenImpl = new BoardwalkToken();
         console.log("BoardwalkToken template:", address(tokenImpl));
 
@@ -136,21 +119,21 @@ contract DeployFactory is Script {
         LPStaking lpStakingImpl = new LPStaking();
         console.log("LPStaking template:", address(lpStakingImpl));
 
-        // 3. Deploy BoardwalkLPManager (singleton)
+        // 2. Deploy BoardwalkLPManager (singleton)
         BoardwalkLPManager lpManager = new BoardwalkLPManager(dexFactory, dexRouter, raiseToken);
         console.log("BoardwalkLPManager:", address(lpManager));
 
-        // 4. Deploy BoardwalkFeeCollector (singleton)
+        // 3. Deploy BoardwalkFeeCollector (singleton)
         BoardwalkFeeCollector feeCollector = new BoardwalkFeeCollector(owner, raiseToken, dexRouter, treasury, keeper);
         console.log("BoardwalkFeeCollector:", address(feeCollector));
 
-        // 5. Deploy IntegratorFeeCollector (singleton — owner is `owner`; setFactory called below).
+        // 4. Deploy IntegratorFeeCollector (singleton — owner is `owner`; setFactory called below).
         //    The constructor itself validates the integrator/split arrays.
         IntegratorFeeCollector integratorCollector =
             new IntegratorFeeCollector(owner, raiseToken, dexRouter, integratorAddresses, integratorSplits);
         console.log("IntegratorFeeCollector:", address(integratorCollector));
 
-        // 6. Deploy LaunchFactory (singleton — wires everything together).
+        // 5. Deploy LaunchFactory (singleton — wires everything together).
         LaunchFactory factory = new LaunchFactory(
             owner,
             LaunchFactory.DeployParams({
@@ -181,7 +164,7 @@ contract DeployFactory is Script {
         );
         console.log("LaunchFactory:", address(factory));
 
-        // 7. Wire the factory into the integrator collector. One-shot; ownership can be renounced
+        // 6. Wire the factory into the integrator collector. One-shot; ownership can be renounced
         //    afterwards if the operator wants to permanently lock the contract.
         // The collector's `owner` is the `owner` param above, which may be different from
         //    `deployer`. If they differ, `setFactory` will be called by `owner` separately
@@ -193,7 +176,7 @@ contract DeployFactory is Script {
             console.log("Owner differs from deployer; owner must call setFactory(factory) post-deploy");
         }
 
-        // 8. Deploy BoostBurn (community ranking), wired to the same membership NFT for discounts.
+        // 7. Deploy BoostBurn (community ranking), wired to the same membership NFT for discounts.
         BoostBurn boostBurn =
             new BoostBurn(owner, bwlk, epochZero, epochDuration, nftCollection, memberBoostDiscountBps);
         console.log("BoostBurn:", address(boostBurn));

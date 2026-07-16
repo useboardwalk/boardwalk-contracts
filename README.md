@@ -108,8 +108,8 @@ forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/ src/cros
 The underlying DEX is the canonical Uniswap V2 deployment on each chain ([script/DexConfig.sol](script/DexConfig.sol)); nothing DEX-side is deployed by Boardwalk.
 
 ```bash
-forge script script/02_DeployFactory.s.sol --rpc-url $RPC_URL --broadcast          # full per-chain launchpad stack
-forge script script/04_DeployNFTBridge.s.sol --rpc-url $RPC_URL --broadcast        # mirror on a new spoke (lockbox already live on Base)
+forge script script/04_DeployNFTBridge.s.sol --rpc-url $RPC_URL --broadcast        # mirror on a new spoke first (lockbox already live on Base)
+forge script script/02_DeployFactory.s.sol --rpc-url $RPC_URL --broadcast          # full per-chain launchpad stack (NFT_COLLECTION required: SeaDrop on Base, the mirror on spokes)
 forge script script/05_AddLockboxPeer.s.sol --rpc-url $BASE_RPC --broadcast        # wire the new spoke: SET_PEER signal, then execute after 7d
 forge script script/06_DeployRevenueBridging.s.sol --rpc-url $RPC_URL --broadcast  # Ethereum swapper first, then each source lane
 ```
