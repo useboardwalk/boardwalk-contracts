@@ -32,9 +32,10 @@ contract DeployNFTBridge is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        // Deployer stays initial owner through the wiring stage (05_AddLockboxPeer's SET_PEER
-        // signal is owner-gated and takes the 7-day timelock either way); ownership moves to the
-        // multisig (2-step) after the canary round-trips.
+        // OWNER may be the multisig directly (no later transfer), or default to the deployer with
+        // a 2-step transferOwnership to the multisig after the canary round-trips. Neither path
+        // shortcuts the Base-side wiring: 05_AddLockboxPeer's SET_PEER signal is gated on the
+        // LOCKBOX owner and takes the 7-day timelock either way.
         address owner = vm.envOr("OWNER", deployer);
         require(owner != address(0), "OWNER required");
 

@@ -103,12 +103,12 @@ library FeeSchedules {
             // 0x
             addrs[2] = 0x3C241dAF101F697044ee076B51baEe5B0d72c0dc;
             absBps[2] = 2;
-            // Security Alliance (SEAL) — public-goods donation. NOTE: this address is a Gnosis
-            // Safe with code on Ethereum ONLY (none on Base/Arbitrum/Robinhood as of July 2026).
-            // A codeless contract wallet can neither claim nor rotate its slot, and slots are
-            // frozen at construction — confirm a per-chain-usable SEAL address before any
-            // non-Ethereum broadcast (pin a different address per chain here if needed).
-            addrs[3] = 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332;
+            // Security Alliance (SEAL) — public-goods donation. The confirmed address is a Gnosis
+            // Safe with code on Ethereum ONLY (verified July 2026); a codeless contract wallet can
+            // neither claim nor rotate its frozen slot, so on every other chain the slot stays
+            // PENDING (filled from SEAL_ADDRESS at deploy, fail-loud) until SEAL confirms a
+            // per-chain-usable address.
+            addrs[3] = chainId == CHAIN_ETHEREUM ? 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332 : PENDING_INTEGRATOR;
             absBps[3] = 2;
             // DeFi Llama — public-goods donation
             addrs[4] = 0x08a3c2A819E3de7ACa384c798269B3Ce1CD0e437;

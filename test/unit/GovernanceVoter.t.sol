@@ -1438,6 +1438,9 @@ contract GovernanceVoterTest is Test {
         bwlk.mint(address(universalRouter), 200e18);
         vm.prank(protocolKeeper);
         voter.execute(1, 0, 0, block.timestamp);
+
+        assertEq(mockParticipationDistributor.lastEpoch(), 1, "stream created for the executed epoch");
+        assertGt(mockParticipationDistributor.lastAmount(), 0, "stream funded with the swapped BWLK");
     }
 
     function test_Vote_MPGate_ExactBoundary_Passes() public {

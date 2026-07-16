@@ -149,20 +149,26 @@ contract MockUniversalRouter {
 /// @dev Mock ParticipationDistributor that records createStream calls
 contract MockParticipationDistributor {
     address public immutable GOVERNANCE_VOTER;
+    address public immutable BWLK;
     uint256 public lastEpoch;
     uint256 public lastAmount;
     uint256 public streamCount;
 
     constructor(
-        address _governanceVoter
+        address _governanceVoter,
+        address _bwlk
     ) {
         GOVERNANCE_VOTER = _governanceVoter;
+        BWLK = _bwlk;
     }
 
+    /// @dev Pulls the BWLK like the production distributor, so the voter's approval path is
+    ///      exercised, not just the call.
     function createStream(
         uint256 epoch,
         uint256 bwlkAmount
     ) external {
+        IERC20(BWLK).transferFrom(msg.sender, address(this), bwlkAmount);
         lastEpoch = epoch;
         lastAmount = bwlkAmount;
         streamCount++;
@@ -253,7 +259,7 @@ contract GovernanceIntegrationTest is Test {
         locker = new LPLocker(address(positionManager), address(voter), c0, c1, address(this));
 
         // Deploy participation distributor pointed at voter
-        participationDistributor = new MockParticipationDistributor(address(voter));
+        participationDistributor = new MockParticipationDistributor(address(voter), address(bwlk));
 
         // Initialize peers
         vm.prank(owner);
@@ -524,6 +530,11 @@ contract GovernanceIntegrationTest is Test {
         assertTrue(participationDistributor.streamCount() > 0, "PD createStream called");
         assertEq(participationDistributor.lastEpoch(), 2, "PD stream for epoch 2");
         assertGt(participationDistributor.lastAmount(), 0, "PD received BWLK");
+        assertEq(
+            bwlk.balanceOf(address(participationDistributor)),
+            participationDistributor.lastAmount(),
+            "PD pulled the full BWLK stream amount"
+        );
     }
 
     // ============ Test 5: Sequential Enforcement — Cannot Skip Epochs ============

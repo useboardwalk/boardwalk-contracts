@@ -82,12 +82,16 @@ contract DeployFactory is Script {
             FeeSchedules.integratorConfig(block.chainid);
 
         // A PENDING_INTEGRATOR slot has no confirmed address yet; it must be supplied via env or
-        // the deploy fails loudly (both here and in the IntegratorFeeCollector constructor).
+        // the deploy fails loudly (both here and in the IntegratorFeeCollector constructor). Slot
+        // order is pinned by FeeSchedules._integrators and DeployConfigs.t.sol: slot 1 = DefiLlama
+        // Research (pending on every chain), slot 3 = SEAL (pending off-Ethereum — the confirmed
+        // address is an Ethereum-only Safe).
         for (uint256 i = 0; i < integratorAddresses.length; ++i) {
-            if (integratorAddresses[i] == FeeSchedules.PENDING_INTEGRATOR) {
-                integratorAddresses[i] = vm.envAddress("DEFILLAMA_RESEARCH_ADDRESS");
-                require(integratorAddresses[i] != address(0), "DEFILLAMA_RESEARCH_ADDRESS required");
-            }
+            if (integratorAddresses[i] != FeeSchedules.PENDING_INTEGRATOR) continue;
+            string memory envName = i == 1 ? "DEFILLAMA_RESEARCH_ADDRESS" : i == 3 ? "SEAL_ADDRESS" : "";
+            require(bytes(envName).length > 0, "unmapped pending integrator slot");
+            integratorAddresses[i] = vm.envAddress(envName);
+            require(integratorAddresses[i] != address(0), string.concat(envName, " required"));
         }
 
         // Per-chain fee defaults + integrator bucket size. Integrator BPS is immutable on the factory

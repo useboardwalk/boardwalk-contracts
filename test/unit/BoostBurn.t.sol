@@ -112,8 +112,8 @@ contract BoostBurnTest is Test {
         uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         boostBurn.boost(tokenA);
-        assertEq(bwlk.balanceOf(alice), balBefore - 0.1e18);
-        assertEq(bwlk.balanceOf(boostBurn.DEAD_ADDRESS()), 0.1e18);
+        assertEq(bwlk.balanceOf(alice), balBefore - 0.1e18, "boost should deduct the BWLK cost");
+        assertEq(bwlk.balanceOf(boostBurn.DEAD_ADDRESS()), 0.1e18, "boost should burn the BWLK to dead");
     }
 
     function test_Boost_MultipleUsersOnSameToken() public {
@@ -230,8 +230,8 @@ contract BoostBurnTest is Test {
         uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         boostBurn.boost(tokenA);
-        assertEq(bwlk.balanceOf(alice), balBefore);
-        assertEq(boostBurn.getScore(tokenA), 1);
+        assertEq(bwlk.balanceOf(alice), balBefore, "zero cost should transfer no BWLK");
+        assertEq(boostBurn.getScore(tokenA), 1, "zero-cost boost should still increment the score");
     }
 
     // ============ Admin: BWLK Cost ============
@@ -241,7 +241,7 @@ contract BoostBurnTest is Test {
         boostBurn.signalAction(ACTION_SET_BWLK_COST, keccak256(abi.encode(0.5e18)));
         vm.warp(block.timestamp + 7 days);
         boostBurn.executeSetBwlkCost(0.5e18);
-        assertEq(boostBurn.bwlkCost(), 0.5e18);
+        assertEq(boostBurn.bwlkCost(), 0.5e18, "BWLK cost should update after the timelock");
     }
 
     function test_BwlkCostChanged_EmitsEvent() public {

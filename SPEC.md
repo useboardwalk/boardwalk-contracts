@@ -135,7 +135,7 @@ One standardized schedule applies on every supported chain. Factory parameters (
 | ----- | -------- | ----------- | ---------- | ----------- | ------------- |
 | Ethereum, Base, Arbitrum, Robinhood | 35 | 35 | 5 | 15 | 10 |
 
-The integrator bucket is five equal 2-BPS slots: Sherlock, DefiLlama Research, 0x, Security Alliance (SEAL), and DeFi Llama (the last two are public-goods donations). Recipient addresses and splits are frozen at `IntegratorFeeCollector` construction ([script/FeeSchedules.sol](script/FeeSchedules.sol)).
+The integrator bucket is five equal 2-BPS slots: Sherlock, DefiLlama Research, 0x, Security Alliance (SEAL), and DeFi Llama (the last two are public-goods donations). Recipient addresses and splits are frozen at `IntegratorFeeCollector` construction ([script/FeeSchedules.sol](script/FeeSchedules.sol)). Slots without a confirmed per-chain-usable address are `PENDING_INTEGRATOR` placeholders that the deploy script fills from env, failing loudly when unset: DefiLlama Research everywhere, and SEAL off-Ethereum (its confirmed address is a Gnosis Safe with code on Ethereum only — a codeless contract wallet can neither claim nor rotate its frozen slot).
 
 **Effective splits at launch** (add the 0.30% Uniswap V2 pair fee on swaps for the 1.25% total):
 
