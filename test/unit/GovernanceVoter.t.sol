@@ -115,18 +115,18 @@ contract MockERC20Simple {
     }
 }
 
-/// @dev Mock Universal Router that simulates V4_SWAP by transferring BMX to the caller.
+/// @dev Mock Universal Router that simulates V4_SWAP by transferring BWLK to the caller.
 ///      Records calls for test assertions.
 contract MockUniversalRouterForVoter {
-    MockERC20Simple public bmxToken;
+    MockERC20Simple public bwlkToken;
     uint256 public swapRate = 2;
     uint256 public executeCallCount;
     bytes public lastCommands;
 
     constructor(
-        address _bmx
+        address _bwlk
     ) {
-        bmxToken = MockERC20Simple(payable(_bmx));
+        bwlkToken = MockERC20Simple(payable(_bwlk));
     }
 
     function execute(
@@ -139,8 +139,8 @@ contract MockUniversalRouterForVoter {
         if (commands.length > 0 && commands[0] == 0x10) {
             // V4_SWAP: simulate swap — voter sends ETH via msg.value (native ETH v4 pool)
             if (msg.value > 0) {
-                uint256 bmxOut = msg.value * swapRate;
-                bmxToken.mint(msg.sender, bmxOut);
+                uint256 bwlkOut = msg.value * swapRate;
+                bwlkToken.mint(msg.sender, bwlkOut);
             }
         }
     }
@@ -169,10 +169,10 @@ contract MockParticipationDistributorForVoter {
 
     function createStream(
         uint256 epoch,
-        uint256 bmxAmount
+        uint256 bwlkAmount
     ) external {
         lastEpoch = epoch;
-        lastAmount = bmxAmount;
+        lastAmount = bwlkAmount;
     }
 }
 
@@ -211,9 +211,9 @@ contract MockLPLockerForVoter {
 
 contract GovernanceVoterTest is Test {
     GovernanceVoter public voter;
-    MockRewardTracker public sbfBmx;
-    MockRewardTracker public stakedBmxTracker;
-    MockERC20Simple public bmx;
+    MockRewardTracker public sbfBwlk;
+    MockRewardTracker public stakedBwlkTracker;
+    MockERC20Simple public bwlk;
     MockERC20Simple public raiseToken;
     MockUniversalRouterForVoter public universalRouter;
     MockParticipationDistributorForVoter public mockParticipationDistributor;
@@ -229,7 +229,7 @@ contract GovernanceVoterTest is Test {
     address public bob = makeAddr("bob");
     address public charlie = makeAddr("charlie");
 
-    address public bnBmx;
+    address public bnBwlk;
     uint256 public constant EPOCH_DURATION = 7 days;
     uint256 public epochZero;
 
@@ -251,14 +251,14 @@ contract GovernanceVoterTest is Test {
 
     function setUp() public {
         epochZero = block.timestamp;
-        sbfBmx = new MockRewardTracker();
-        stakedBmxTracker = new MockRewardTracker();
-        bmx = new MockERC20Simple();
+        sbfBwlk = new MockRewardTracker();
+        stakedBwlkTracker = new MockRewardTracker();
+        bwlk = new MockERC20Simple();
         raiseToken = new MockERC20Simple();
         // Fund raiseToken mock with ETH so WETH.withdraw() can send ETH back
         vm.deal(address(raiseToken), 10_000 ether);
-        bnBmx = makeAddr("bnBmx");
-        universalRouter = new MockUniversalRouterForVoter(address(bmx));
+        bnBwlk = makeAddr("bnBwlk");
+        universalRouter = new MockUniversalRouterForVoter(address(bwlk));
         mockV4PositionManager = new MockV4PositionManagerForVoter();
 
         voter = new GovernanceVoter(owner, _defaultParams());
@@ -279,15 +279,15 @@ contract GovernanceVoterTest is Test {
         _setupVoter(bob, 500e18);
         _setupVoter(charlie, 200e18);
 
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
     }
 
     function _defaultParams() internal view returns (GovernanceVoter.DeployParams memory) {
         return GovernanceVoter.DeployParams({
-            sbfBmx: address(sbfBmx),
-            stakedBmxTracker: address(stakedBmxTracker),
-            bnBmx: bnBmx,
-            bmx: address(bmx),
+            sbfBwlk: address(sbfBwlk),
+            stakedBwlkTracker: address(stakedBwlkTracker),
+            bnBwlk: bnBwlk,
+            bwlk: address(bwlk),
             weth: address(raiseToken),
             universalRouter: address(universalRouter),
             v4PositionManager: address(mockV4PositionManager),
@@ -306,9 +306,9 @@ contract GovernanceVoterTest is Test {
         address user,
         uint256 weight
     ) internal {
-        sbfBmx.setBalance(user, weight);
-        stakedBmxTracker.setDepositBalance(user, address(bmx), weight);
-        sbfBmx.setDepositBalance(user, bnBmx, weight / 10);
+        sbfBwlk.setBalance(user, weight);
+        stakedBwlkTracker.setDepositBalance(user, address(bwlk), weight);
+        sbfBwlk.setDepositBalance(user, bnBwlk, weight / 10);
     }
 
     /// @dev Voter budget is sourced exclusively from `depositRevenue`. Mints the
@@ -341,7 +341,7 @@ contract GovernanceVoterTest is Test {
         uint8 option
     ) internal {
         vm.warp(epochZero + voteEpoch * EPOCH_DURATION);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         vm.prank(alice);
         voter.vote(option);
         vm.prank(bob);
@@ -505,7 +505,7 @@ contract GovernanceVoterTest is Test {
 
     function test_RevertWhen_Execute_Option2_PoolHooksUnset() public {
         GovernanceVoter freshVoter = _freshVoterFinalizedWithOption(2);
-        bmx.mint(address(universalRouter), 200e18);
+        bwlk.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
         vm.expectRevert(GovernanceVoter.PoolHooksNotSet.selector);
@@ -520,7 +520,7 @@ contract GovernanceVoterTest is Test {
 
     function test_RevertWhen_Execute_Option3_PoolHooksUnset() public {
         GovernanceVoter freshVoter = _freshVoterFinalizedWithOption(3);
-        bmx.mint(address(universalRouter), 200e18);
+        bwlk.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
         vm.expectRevert(GovernanceVoter.PoolHooksNotSet.selector);
@@ -530,7 +530,7 @@ contract GovernanceVoterTest is Test {
     function test_RevertWhen_Execute_Option4_PoolHooksUnset() public {
         // Option 4 (participation) swaps the budget through the same pool key for epochs > 0.
         GovernanceVoter freshVoter = _freshVoterFinalizedWithOption(4);
-        bmx.mint(address(universalRouter), 200e18);
+        bwlk.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
         vm.expectRevert(GovernanceVoter.PoolHooksNotSet.selector);
@@ -596,9 +596,9 @@ contract GovernanceVoterTest is Test {
 
     function test_RevertWhen_Vote_InsufficientMP() public {
         address lowMp = makeAddr("lowMp");
-        sbfBmx.setBalance(lowMp, 100e18);
-        stakedBmxTracker.setDepositBalance(lowMp, address(bmx), 100e18);
-        sbfBmx.setDepositBalance(lowMp, bnBmx, 0);
+        sbfBwlk.setBalance(lowMp, 100e18);
+        stakedBwlkTracker.setDepositBalance(lowMp, address(bwlk), 100e18);
+        sbfBwlk.setDepositBalance(lowMp, bnBwlk, 0);
 
         vm.expectRevert(GovernanceVoter.InsufficientParticipationPoints.selector);
         vm.prank(lowMp);
@@ -691,14 +691,14 @@ contract GovernanceVoterTest is Test {
     /// @notice quorum base is max(snapshotTotalWeight, liveSupply) — direction 1:
     ///         liveSupply shrinks below snapshot, so quorum base = snapshot (the larger).
     function test_QuorumBase_UsesSnapshot_WhenSupplyShrinks() public {
-        sbfBmx.setBalance(alice, 600e18);
-        stakedBmxTracker.setDepositBalance(alice, address(bmx), 600e18);
-        sbfBmx.setDepositBalance(alice, bnBmx, 60e18);
-        sbfBmx.setTotalSupply(1000e18);
+        sbfBwlk.setBalance(alice, 600e18);
+        stakedBwlkTracker.setDepositBalance(alice, address(bwlk), 600e18);
+        sbfBwlk.setDepositBalance(alice, bnBwlk, 60e18);
+        sbfBwlk.setTotalSupply(1000e18);
         vm.prank(alice);
         voter.vote(2); // weight = 600e18, snapshotTotalWeight = 1000e18
 
-        sbfBmx.setTotalSupply(900e18); // shrink before finalize
+        sbfBwlk.setTotalSupply(900e18); // shrink before finalize
 
         _finalizeAndExecuteEpochZero();
         vm.warp(epochZero + 2 * EPOCH_DURATION);
@@ -718,21 +718,21 @@ contract GovernanceVoterTest is Test {
     ///         A first voter who deflated supply pre-snapshot can no longer manipulate quorum.
     function test_QuorumBase_UsesLiveSupply_WhenSupplyGrows() public {
         // Alice + bob with small weights; snapshot will be the smaller (vote-time) value.
-        sbfBmx.setBalance(alice, 200e18);
-        sbfBmx.setBalance(bob, 200e18);
-        sbfBmx.setBalance(charlie, 0);
-        stakedBmxTracker.setDepositBalance(alice, address(bmx), 200e18);
-        stakedBmxTracker.setDepositBalance(bob, address(bmx), 200e18);
-        sbfBmx.setDepositBalance(alice, bnBmx, 20e18);
-        sbfBmx.setDepositBalance(bob, bnBmx, 20e18);
+        sbfBwlk.setBalance(alice, 200e18);
+        sbfBwlk.setBalance(bob, 200e18);
+        sbfBwlk.setBalance(charlie, 0);
+        stakedBwlkTracker.setDepositBalance(alice, address(bwlk), 200e18);
+        stakedBwlkTracker.setDepositBalance(bob, address(bwlk), 200e18);
+        sbfBwlk.setDepositBalance(alice, bnBwlk, 20e18);
+        sbfBwlk.setDepositBalance(bob, bnBwlk, 20e18);
 
-        sbfBmx.setTotalSupply(500e18);
+        sbfBwlk.setTotalSupply(500e18);
         vm.prank(alice);
         voter.vote(2); // weight = 200, snapshot = 500
         vm.prank(bob);
         voter.vote(2); // weight = 200 -> totalVoteWeight = 400
 
-        sbfBmx.setTotalSupply(1500e18); // grow before finalize
+        sbfBwlk.setTotalSupply(1500e18); // grow before finalize
 
         _finalizeAndExecuteEpochZero();
         vm.warp(epochZero + 2 * EPOCH_DURATION);
@@ -754,7 +754,7 @@ contract GovernanceVoterTest is Test {
     ///         during the cooldown-boundary epoch. those majority votes no longer
     ///         satisfy quorum on behalf of the minority-supported option 3.
     function test_QuorumExcludesIneligibleOptions() public {
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _finalizeAndExecuteEpochZero();
 
         // Pattern: vote in epoch K -> finalize(K+1) reads those votes. We need option 2 to win
@@ -850,7 +850,7 @@ contract GovernanceVoterTest is Test {
     ///         eligibleVoteWeight == totalVoteWeight and the prior quorum/winner logic
     ///         is preserved.
     function test_Quorum_AllOptionsEligible_BehavesAsBefore() public {
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
 
         // Epoch 0 votes: alice + bob for option 2 (1500 total, > 51% of 2000). No prior wins,
         // no cooldown, all options eligible at finalize(1) time.
@@ -875,17 +875,17 @@ contract GovernanceVoterTest is Test {
     ///         finalize, quorum gets harder. Snapshot=1000, liveSupply=800, votes=480 (60% of
     ///         live, only 48% of snapshot) ⇒ quorumBase = max(1000, 800) = 1000, quorum NOT met.
     function test_Quorum_HarderWhenSupplyShrinksAfterSnapshot() public {
-        sbfBmx.setBalance(alice, 480e18);
-        sbfBmx.setBalance(bob, 0);
-        sbfBmx.setBalance(charlie, 0);
-        stakedBmxTracker.setDepositBalance(alice, address(bmx), 480e18);
-        sbfBmx.setDepositBalance(alice, bnBmx, 48e18);
+        sbfBwlk.setBalance(alice, 480e18);
+        sbfBwlk.setBalance(bob, 0);
+        sbfBwlk.setBalance(charlie, 0);
+        stakedBwlkTracker.setDepositBalance(alice, address(bwlk), 480e18);
+        sbfBwlk.setDepositBalance(alice, bnBwlk, 48e18);
 
-        sbfBmx.setTotalSupply(1000e18);
+        sbfBwlk.setTotalSupply(1000e18);
         vm.prank(alice);
         voter.vote(2); // weight = 480, snapshotTotalWeight = 1000
 
-        sbfBmx.setTotalSupply(800e18); // legitimate shrink (e.g. mass unstake)
+        sbfBwlk.setTotalSupply(800e18); // legitimate shrink (e.g. mass unstake)
 
         _finalizeAndExecuteEpochZero();
         vm.warp(epochZero + 2 * EPOCH_DURATION);
@@ -1100,10 +1100,10 @@ contract GovernanceVoterTest is Test {
 
         _finalizeAndExecuteEpochZero();
 
-        // All voters exit sbfBMX before finalization of epoch 1
-        sbfBmx.setBalance(alice, 0);
-        sbfBmx.setBalance(bob, 0);
-        sbfBmx.setTotalSupply(0);
+        // All voters exit sbfBWLK before finalization of epoch 1
+        sbfBwlk.setBalance(alice, 0);
+        sbfBwlk.setBalance(bob, 0);
+        sbfBwlk.setTotalSupply(0);
 
         vm.warp(epochZero + 2 * EPOCH_DURATION);
         vm.prank(protocolKeeper);
@@ -1124,7 +1124,7 @@ contract GovernanceVoterTest is Test {
         // Vote option 2 in epochs 1, 2, 3, 4 to produce 3 wins in epochs 2, 3, 4
         // Epoch 1: vote option 2 (no prior option 2 wins)
         vm.warp(epochZero + EPOCH_DURATION);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
         vm.prank(alice);
@@ -1211,7 +1211,7 @@ contract GovernanceVoterTest is Test {
 
         // Vote in epoch 1 for option 2
         vm.warp(epochZero + EPOCH_DURATION);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
         vm.prank(alice);
@@ -1303,14 +1303,14 @@ contract GovernanceVoterTest is Test {
         vm.warp(block.timestamp + 21 days);
         voter.executeSetGovernanceBurn(0.1e18);
 
-        bmx.mint(alice, 1e18);
+        bwlk.mint(alice, 1e18);
         vm.prank(alice);
-        bmx.approve(address(voter), type(uint256).max);
+        bwlk.approve(address(voter), type(uint256).max);
 
         vm.prank(alice);
         voter.vote(1);
 
-        assertEq(bmx.balanceOf(alice), 0.9e18);
+        assertEq(bwlk.balanceOf(alice), 0.9e18);
     }
 
     function test_RevertWhen_GovernanceBurn_ExceedsMax() public {
@@ -1370,7 +1370,7 @@ contract GovernanceVoterTest is Test {
     function test_Execute_Option2_UsesV4Swap() public {
         _setupAndFinalizeWithOption(2, 100e18);
 
-        bmx.mint(address(universalRouter), 200e18);
+        bwlk.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
         voter.execute(1, 0, 0, block.timestamp);
@@ -1382,7 +1382,7 @@ contract GovernanceVoterTest is Test {
     function test_Execute_Option3_UsesV4SwapAndPositionManager() public {
         _setupAndFinalizeWithOption(3, 100e18);
 
-        bmx.mint(address(universalRouter), 200e18);
+        bwlk.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
         voter.execute(1, 0, 0, block.timestamp);
@@ -1392,7 +1392,7 @@ contract GovernanceVoterTest is Test {
 
     function test_Execute_Option3_RegistersLockedPosition() public {
         _setupAndFinalizeWithOption(3, 100e18);
-        bmx.mint(address(universalRouter), 200e18);
+        bwlk.mint(address(universalRouter), 200e18);
 
         vm.prank(protocolKeeper);
         voter.execute(1, 0, 0, block.timestamp);
@@ -1435,16 +1435,16 @@ contract GovernanceVoterTest is Test {
 
     function test_Execute_Option4_CallsParticipationDistributor() public {
         _setupAndFinalizeWithOption(4, 100e18);
-        bmx.mint(address(universalRouter), 200e18);
+        bwlk.mint(address(universalRouter), 200e18);
         vm.prank(protocolKeeper);
         voter.execute(1, 0, 0, block.timestamp);
     }
 
     function test_Vote_MPGate_ExactBoundary_Passes() public {
         address boundary = makeAddr("boundary");
-        sbfBmx.setBalance(boundary, 100e18);
-        stakedBmxTracker.setDepositBalance(boundary, address(bmx), 10000);
-        sbfBmx.setDepositBalance(boundary, bnBmx, 150);
+        sbfBwlk.setBalance(boundary, 100e18);
+        stakedBwlkTracker.setDepositBalance(boundary, address(bwlk), 10000);
+        sbfBwlk.setDepositBalance(boundary, bnBwlk, 150);
 
         vm.prank(boundary);
         voter.vote(1);
@@ -1453,9 +1453,9 @@ contract GovernanceVoterTest is Test {
 
     function test_RevertWhen_Vote_MPGate_BelowBoundary() public {
         address lowMp = makeAddr("lowMpEdge");
-        sbfBmx.setBalance(lowMp, 100e18);
-        stakedBmxTracker.setDepositBalance(lowMp, address(bmx), 10000);
-        sbfBmx.setDepositBalance(lowMp, bnBmx, 149);
+        sbfBwlk.setBalance(lowMp, 100e18);
+        stakedBwlkTracker.setDepositBalance(lowMp, address(bwlk), 10000);
+        sbfBwlk.setDepositBalance(lowMp, bnBwlk, 149);
 
         vm.expectRevert(GovernanceVoter.InsufficientParticipationPoints.selector);
         vm.prank(lowMp);
@@ -1464,10 +1464,10 @@ contract GovernanceVoterTest is Test {
 
     function test_Finalize_QuorumExact51Percent() public {
         // Vote in epoch 0
-        sbfBmx.setTotalSupply(10000e18);
-        sbfBmx.setBalance(alice, 5100e18);
-        stakedBmxTracker.setDepositBalance(alice, address(bmx), 5100e18);
-        sbfBmx.setDepositBalance(alice, bnBmx, 510e18);
+        sbfBwlk.setTotalSupply(10000e18);
+        sbfBwlk.setBalance(alice, 5100e18);
+        stakedBwlkTracker.setDepositBalance(alice, address(bwlk), 5100e18);
+        sbfBwlk.setDepositBalance(alice, bnBwlk, 510e18);
 
         vm.prank(alice);
         voter.vote(2);
@@ -1756,7 +1756,7 @@ contract GovernanceVoterTest is Test {
         voter.vote(2);
 
         // Alice unstakes completely after voting
-        sbfBmx.setBalance(alice, 0);
+        sbfBwlk.setBalance(alice, 0);
 
         _finalizeAndExecuteEpochZero();
 
@@ -1869,7 +1869,7 @@ contract GovernanceVoterTest is Test {
 
     function test_BatchFinalize_QuorumStillMetAfterSupplyShrink() public {
         // Vote in epoch 0
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         vm.prank(alice);
         voter.vote(2); // weight = 1000e18
         vm.prank(bob);
@@ -1878,7 +1878,7 @@ contract GovernanceVoterTest is Test {
         _finalizeAndExecuteEpochZero();
 
         // Supply shrinks during epoch
-        sbfBmx.setTotalSupply(1000e18);
+        sbfBwlk.setTotalSupply(1000e18);
 
         vm.warp(epochZero + 2 * EPOCH_DURATION);
         vm.prank(protocolKeeper);
@@ -1898,7 +1898,7 @@ contract GovernanceVoterTest is Test {
         voter.vote(1); // weight = 500e18
 
         // Alice partially unstakes: 1000e18 -> 400e18
-        sbfBmx.setBalance(alice, 400e18);
+        sbfBwlk.setBalance(alice, 400e18);
 
         _finalizeAndExecuteEpochZero();
 
@@ -2087,10 +2087,10 @@ contract GovernanceVoterTest is Test {
     }
 
     function test_Finalize_QuorumJustBelowThreshold_DefaultsTreasury() public {
-        sbfBmx.setTotalSupply(10000e18);
-        sbfBmx.setBalance(alice, 5099e18);
-        stakedBmxTracker.setDepositBalance(alice, address(bmx), 5099e18);
-        sbfBmx.setDepositBalance(alice, bnBmx, 510e18);
+        sbfBwlk.setTotalSupply(10000e18);
+        sbfBwlk.setBalance(alice, 5099e18);
+        stakedBwlkTracker.setDepositBalance(alice, address(bwlk), 5099e18);
+        sbfBwlk.setDepositBalance(alice, bnBwlk, 510e18);
 
         vm.prank(alice);
         voter.vote(2);

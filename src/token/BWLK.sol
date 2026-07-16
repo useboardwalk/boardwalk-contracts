@@ -4,7 +4,7 @@ pragma solidity =0.8.28;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title BWLK
-/// @notice Boardwalk's fixed-supply protocol token on Arbitrum. The entire supply is minted once at
+/// @notice Boardwalk's fixed-supply protocol token on Ethereum. The entire supply is minted once at
 ///         deployment; there is no minter, owner, pause, or transfer-gating.
 contract BWLK is ERC20 {
     /// @notice Fixed maximum supply, minted in full at construction.

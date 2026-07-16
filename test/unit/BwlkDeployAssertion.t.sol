@@ -112,10 +112,10 @@ contract BwlkDeployAssertionTest is Test {
         voter = new GovernanceVoter(
             address(this),
             GovernanceVoter.DeployParams({
-                sbfBmx: address(fee),
-                stakedBmxTracker: address(staked),
-                bnBmx: address(bnBwlk),
-                bmx: address(bwlk),
+                sbfBwlk: address(fee),
+                stakedBwlkTracker: address(staked),
+                bnBwlk: address(bnBwlk),
+                bwlk: address(bwlk),
                 weth: makeAddr("weth"),
                 universalRouter: makeAddr("router"),
                 v4PositionManager: address(pm),
@@ -656,10 +656,10 @@ contract BwlkDeployAssertionTest is Test {
         GovernanceVoter voter2 = new GovernanceVoter(
             address(this),
             GovernanceVoter.DeployParams({
-                sbfBmx: address(fee),
-                stakedBmxTracker: address(staked),
-                bnBmx: address(bnBwlk),
-                bmx: address(bwlk),
+                sbfBwlk: address(fee),
+                stakedBwlkTracker: address(staked),
+                bnBwlk: address(bnBwlk),
+                bwlk: address(bwlk),
                 weth: makeAddr("weth"),
                 universalRouter: makeAddr("router"),
                 v4PositionManager: makeAddr("pm"),
@@ -753,10 +753,10 @@ contract BwlkDeployAssertionTest is Test {
         GovernanceVoter voter2 = new GovernanceVoter(
             address(this),
             GovernanceVoter.DeployParams({
-                sbfBmx: address(fee),
-                stakedBmxTracker: address(staked),
-                bnBmx: address(bnBwlk),
-                bmx: address(bwlk),
+                sbfBwlk: address(fee),
+                stakedBwlkTracker: address(staked),
+                bnBwlk: address(bnBwlk),
+                bwlk: address(bwlk),
                 weth: makeAddr("weth"),
                 universalRouter: makeAddr("router"),
                 v4PositionManager: address(pm),

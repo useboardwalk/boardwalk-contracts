@@ -20,8 +20,8 @@ contract TestExpressLaunchScript is BaseTestScript {
         address factoryAddress = vm.envAddress("LAUNCH_FACTORY");
         LaunchFactory factory = LaunchFactory(factoryAddress);
         address raiseToken = vm.envOr("RAISE_TOKEN_ADDRESS", factory.RAISE_TOKEN());
-        address bmx = factory.BMX();
-        uint256 bmxBurnAmount = factory.bmxBurnAmount();
+        address bwlk = factory.BWLK();
+        uint256 bwlkBurnAmount = factory.bwlkBurnAmount();
 
         uint256 contributionOne = vm.envOr("EXPRESS_CONTRIBUTION_ONE", uint256(0.00006 ether));
         uint256 contributionTwo = vm.envOr("EXPRESS_CONTRIBUTION_TWO", uint256(0.00006 ether));
@@ -56,10 +56,10 @@ contract TestExpressLaunchScript is BaseTestScript {
         _initTxTracking();
         vm.startBroadcast(deployerPrivateKey);
 
-        if (bmxBurnAmount > 0) {
-            require(IERC20(bmx).balanceOf(deployer) >= bmxBurnAmount, "Insufficient BMX for burn");
-            IERC20(bmx).approve(factoryAddress, bmxBurnAmount);
-            _recordTx("BMX.approve");
+        if (bwlkBurnAmount > 0) {
+            require(IERC20(bwlk).balanceOf(deployer) >= bwlkBurnAmount, "Insufficient BWLK for burn");
+            IERC20(bwlk).approve(factoryAddress, bwlkBurnAmount);
+            _recordTx("BWLK.approve");
         }
 
         address tokenAddr = factory.createLaunch(expressConfig);

@@ -225,9 +225,9 @@ contract FullLaunchFlowTest is IntegrationBase {
     // ============ Edge Case #18: Express Path with Referrer Reverts ============
 
     function test_ExpressPath_WithReferrer_Reverts() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         address[] memory feeRecipients = new address[](1);
         feeRecipients[0] = feeRecipient1;
@@ -289,9 +289,9 @@ contract FullLaunchFlowTest is IntegrationBase {
     // ============ Edge Case #30: Presale Percent Not Divisible by 5 ============
 
     function test_AdvancedPath_PresalePercentNotDivisibleBy5_Reverts() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         address[] memory feeRecipients = new address[](1);
         feeRecipients[0] = feeRecipient1;

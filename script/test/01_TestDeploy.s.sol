@@ -16,8 +16,6 @@ import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {FeeSchedules} from "script/FeeSchedules.sol";
 
 contract TestDeployScript is BaseTestScript {
-    address internal constant BASE_WETH = 0x4200000000000000000000000000000000000006;
-
     function _scriptName() internal pure override returns (string memory) {
         return "TestDeployScript";
     }
@@ -27,9 +25,11 @@ contract TestDeployScript is BaseTestScript {
         address deployer = vm.addr(deployerPrivateKey);
 
         address owner = vm.envOr("OWNER", deployer);
-        address bmx = vm.envAddress("BMX_ADDRESS");
+        address bwlk = vm.envAddress("BWLK_ADDRESS");
         address raiseToken = vm.envAddress("RAISE_TOKEN_ADDRESS");
-        address feeToSetter = vm.envOr("FEE_TO_SETTER", owner);
+        // The testnet's Uniswap V2 (or v2-compatible) deployment; Boardwalk no longer ships a DEX.
+        address dexFactory = vm.envAddress("DEX_FACTORY");
+        address dexRouter = vm.envAddress("DEX_ROUTER");
         address treasury = vm.envOr("TREASURY", owner);
         address keeper = vm.envAddress("KEEPER_ADDRESS");
 
@@ -37,30 +37,21 @@ contract TestDeployScript is BaseTestScript {
         uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(0.0001 ether));
         uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(1 hours));
         uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(3 hours));
-        uint256 bmxBurnTarget = vm.envOr("BMX_BURN_AMOUNT", uint256(1e18));
+        uint256 bwlkBurnTarget = vm.envOr("BWLK_BURN_AMOUNT", uint256(1e18));
         address nftCollection = vm.envOr("NFT_COLLECTION", address(0));
         uint256 memberLaunchDiscountBps = vm.envOr("MEMBER_LAUNCH_DISCOUNT_BPS", uint256(5000));
 
         require(owner != address(0), "OWNER required");
-        require(bmx != address(0), "BMX_ADDRESS required");
+        require(bwlk != address(0), "BWLK_ADDRESS required");
         require(raiseToken != address(0), "RAISE_TOKEN_ADDRESS required");
-        require(feeToSetter != address(0), "FEE_TO_SETTER required");
+        require(dexFactory != address(0), "DEX_FACTORY required");
+        require(dexRouter != address(0), "DEX_ROUTER required");
         require(treasury != address(0), "TREASURY required");
         require(keeper != address(0), "KEEPER_ADDRESS required");
+        require(IDEXRouter(dexRouter).factory() == dexFactory, "Router-Factory mismatch");
 
         _initTxTracking();
         vm.startBroadcast(deployerPrivateKey);
-
-        address dexFactory =
-            vm.deployCode("src/dex/core/UniswapV2Factory.sol:UniswapV2Factory", abi.encode(feeToSetter));
-        _recordTx("Deploy DEX Factory");
-
-        address dexRouter = vm.deployCode(
-            "src/dex/periphery/UniswapV2Router02.sol:UniswapV2Router02", abi.encode(dexFactory, raiseToken)
-        );
-        _recordTx("Deploy DEX Router");
-
-        require(IDEXRouter(dexRouter).factory() == dexFactory, "Router-Factory mismatch");
 
         BoardwalkToken tokenImpl = new BoardwalkToken();
         _recordTx("Deploy BoardwalkToken template");
@@ -103,7 +94,7 @@ contract TestDeployScript is BaseTestScript {
                 presaleImpl: address(presaleImpl),
                 vestingImpl: address(vestingImpl),
                 lpStakingImpl: address(lpStakingImpl),
-                bmx: bmx,
+                bwlk: bwlk,
                 raiseToken: raiseToken,
                 boardwalkRouter: dexRouter,
                 boardwalkDexFactory: dexFactory,
@@ -111,7 +102,7 @@ contract TestDeployScript is BaseTestScript {
                 boardwalkFeeCollector: address(feeCollector),
                 integratorCollector: address(integratorCollector),
                 integratorBps: integratorBps,
-                bmxBurnAmount: bmxBurnTarget,
+                bwlkBurnAmount: bwlkBurnTarget,
                 graduationExpress: graduationExpress,
                 graduationAdvanced: graduationAdvanced,
                 expressDuration: expressDuration,
@@ -145,7 +136,7 @@ contract TestDeployScript is BaseTestScript {
         console.log("FEE_COLLECTOR:", address(feeCollector));
         console.log("INTEGRATOR_COLLECTOR:", address(integratorCollector));
         console.log("LAUNCH_FACTORY:", address(factory));
-        console.log("BMX_BURN_AMOUNT:", factory.bmxBurnAmount());
+        console.log("BWLK_BURN_AMOUNT:", factory.bwlkBurnAmount());
         console.log("NFT_COLLECTION:", nftCollection);
         console.log("MEMBER_LAUNCH_DISCOUNT_BPS:", memberLaunchDiscountBps);
 

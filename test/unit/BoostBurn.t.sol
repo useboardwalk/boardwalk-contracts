@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {BoostBurn} from "src/core/BoostBurn.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract MockBMX {
+contract MockBWLK {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
@@ -61,7 +61,7 @@ contract RevertingNFT {
 
 contract BoostBurnTest is Test {
     BoostBurn public boostBurn;
-    MockBMX public bmx;
+    MockBWLK public bwlk;
 
     address public owner = makeAddr("owner");
     address public alice = makeAddr("alice");
@@ -72,24 +72,24 @@ contract BoostBurnTest is Test {
     uint256 public constant EPOCH_DURATION = 30 days;
     uint256 public epochZero;
 
-    bytes32 constant ACTION_SET_BMX_COST = keccak256("SET_BMX_COST");
+    bytes32 constant ACTION_SET_BWLK_COST = keccak256("SET_BWLK_COST");
 
     event Boosted(address indexed token, address indexed wallet, uint256 epoch, int256 newScore);
     event Deboosted(address indexed token, address indexed wallet, uint256 epoch, int256 newScore);
-    event BmxCostChanged(uint256 oldCost, uint256 newCost);
+    event BwlkCostChanged(uint256 oldCost, uint256 newCost);
 
     function setUp() public {
         epochZero = block.timestamp;
-        bmx = new MockBMX();
-        boostBurn = new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(0), 0);
+        bwlk = new MockBWLK();
+        boostBurn = new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(0), 0);
 
-        bmx.mint(alice, 100e18);
-        bmx.mint(bob, 100e18);
+        bwlk.mint(alice, 100e18);
+        bwlk.mint(bob, 100e18);
 
         vm.prank(alice);
-        bmx.approve(address(boostBurn), type(uint256).max);
+        bwlk.approve(address(boostBurn), type(uint256).max);
         vm.prank(bob);
-        bmx.approve(address(boostBurn), type(uint256).max);
+        bwlk.approve(address(boostBurn), type(uint256).max);
     }
 
     // ============ Boost ============
@@ -108,12 +108,12 @@ contract BoostBurnTest is Test {
         boostBurn.boost(tokenA);
     }
 
-    function test_Boost_BurnsBMX() public {
-        uint256 balBefore = bmx.balanceOf(alice);
+    function test_Boost_BurnsBWLK() public {
+        uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         boostBurn.boost(tokenA);
-        assertEq(bmx.balanceOf(alice), balBefore - 0.1e18);
-        assertEq(bmx.balanceOf(boostBurn.DEAD_ADDRESS()), 0.1e18);
+        assertEq(bwlk.balanceOf(alice), balBefore - 0.1e18);
+        assertEq(bwlk.balanceOf(boostBurn.DEAD_ADDRESS()), 0.1e18);
     }
 
     function test_Boost_MultipleUsersOnSameToken() public {
@@ -223,126 +223,126 @@ contract BoostBurnTest is Test {
 
     function test_ZeroCost_NoTransfer() public {
         vm.prank(owner);
-        boostBurn.signalAction(ACTION_SET_BMX_COST, keccak256(abi.encode(uint256(0))));
+        boostBurn.signalAction(ACTION_SET_BWLK_COST, keccak256(abi.encode(uint256(0))));
         vm.warp(block.timestamp + 7 days);
-        boostBurn.executeSetBmxCost(0);
+        boostBurn.executeSetBwlkCost(0);
 
-        uint256 balBefore = bmx.balanceOf(alice);
+        uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         boostBurn.boost(tokenA);
-        assertEq(bmx.balanceOf(alice), balBefore);
+        assertEq(bwlk.balanceOf(alice), balBefore);
         assertEq(boostBurn.getScore(tokenA), 1);
     }
 
-    // ============ Admin: BMX Cost ============
+    // ============ Admin: BWLK Cost ============
 
-    function test_SignalExecuteBmxCost() public {
+    function test_SignalExecuteBwlkCost() public {
         vm.prank(owner);
-        boostBurn.signalAction(ACTION_SET_BMX_COST, keccak256(abi.encode(0.5e18)));
+        boostBurn.signalAction(ACTION_SET_BWLK_COST, keccak256(abi.encode(0.5e18)));
         vm.warp(block.timestamp + 7 days);
-        boostBurn.executeSetBmxCost(0.5e18);
-        assertEq(boostBurn.bmxCost(), 0.5e18);
+        boostBurn.executeSetBwlkCost(0.5e18);
+        assertEq(boostBurn.bwlkCost(), 0.5e18);
     }
 
-    function test_BmxCostChanged_EmitsEvent() public {
+    function test_BwlkCostChanged_EmitsEvent() public {
         vm.prank(owner);
-        boostBurn.signalAction(ACTION_SET_BMX_COST, keccak256(abi.encode(0.5e18)));
+        boostBurn.signalAction(ACTION_SET_BWLK_COST, keccak256(abi.encode(0.5e18)));
         vm.warp(block.timestamp + 7 days);
 
         vm.expectEmit(true, true, true, true);
-        emit BmxCostChanged(0.1e18, 0.5e18);
-        boostBurn.executeSetBmxCost(0.5e18);
+        emit BwlkCostChanged(0.1e18, 0.5e18);
+        boostBurn.executeSetBwlkCost(0.5e18);
     }
 
-    function test_RevertWhen_BmxCostExceedsMax() public {
+    function test_RevertWhen_BwlkCostExceedsMax() public {
         vm.prank(owner);
-        boostBurn.signalAction(ACTION_SET_BMX_COST, keccak256(abi.encode(2e18)));
+        boostBurn.signalAction(ACTION_SET_BWLK_COST, keccak256(abi.encode(2e18)));
         vm.warp(block.timestamp + 7 days);
 
-        vm.expectRevert(abi.encodeWithSelector(BoostBurn.BmxCostOutOfRange.selector, 2e18));
-        boostBurn.executeSetBmxCost(2e18);
+        vm.expectRevert(abi.encodeWithSelector(BoostBurn.BwlkCostOutOfRange.selector, 2e18));
+        boostBurn.executeSetBwlkCost(2e18);
     }
 
-    function test_RevertWhen_SignalBmxCost_NotOwner() public {
+    function test_RevertWhen_SignalBwlkCost_NotOwner() public {
         vm.expectRevert();
         vm.prank(alice);
-        boostBurn.signalAction(ACTION_SET_BMX_COST, keccak256(abi.encode(0.5e18)));
+        boostBurn.signalAction(ACTION_SET_BWLK_COST, keccak256(abi.encode(0.5e18)));
     }
 
     function test_CancelPendingAction() public {
         vm.prank(owner);
-        boostBurn.signalAction(ACTION_SET_BMX_COST, keccak256(abi.encode(0.5e18)));
+        boostBurn.signalAction(ACTION_SET_BWLK_COST, keccak256(abi.encode(0.5e18)));
 
         vm.prank(owner);
-        boostBurn.cancelAction(ACTION_SET_BMX_COST);
+        boostBurn.cancelAction(ACTION_SET_BWLK_COST);
 
         vm.warp(block.timestamp + 7 days);
         vm.expectRevert();
-        boostBurn.executeSetBmxCost(0.5e18);
+        boostBurn.executeSetBwlkCost(0.5e18);
     }
 
     // ============ NFT Membership Discount ============
 
     function test_MemberBoost_PaysZeroByDefault() public {
         MockNFT nft = new MockNFT();
-        BoostBurn bb = new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(nft), 10_000);
+        BoostBurn bb = new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(nft), 10_000);
 
         nft.mint(alice, 1);
-        bmx.mint(alice, 10e18);
+        bwlk.mint(alice, 10e18);
         vm.prank(alice);
-        bmx.approve(address(bb), type(uint256).max);
+        bwlk.approve(address(bb), type(uint256).max);
 
-        uint256 balBefore = bmx.balanceOf(alice);
+        uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         bb.boost(tokenA);
-        assertEq(bmx.balanceOf(alice), balBefore, "Member should pay zero with 100% discount");
+        assertEq(bwlk.balanceOf(alice), balBefore, "Member should pay zero with 100% discount");
     }
 
     function test_NonMemberBoost_PaysFullCost() public {
         MockNFT nft = new MockNFT();
-        BoostBurn bb = new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(nft), 10_000);
+        BoostBurn bb = new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(nft), 10_000);
 
-        bmx.mint(alice, 10e18);
+        bwlk.mint(alice, 10e18);
         vm.prank(alice);
-        bmx.approve(address(bb), type(uint256).max);
+        bwlk.approve(address(bb), type(uint256).max);
 
-        uint256 balBefore = bmx.balanceOf(alice);
+        uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         bb.boost(tokenA);
-        assertEq(bmx.balanceOf(alice), balBefore - 0.1e18, "Non-member should pay full cost");
+        assertEq(bwlk.balanceOf(alice), balBefore - 0.1e18, "Non-member should pay full cost");
     }
 
     function test_MemberBoost_PartialDiscount() public {
         MockNFT nft = new MockNFT();
-        BoostBurn bb = new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(nft), 5000);
+        BoostBurn bb = new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(nft), 5000);
 
         nft.mint(alice, 1);
-        bmx.mint(alice, 10e18);
+        bwlk.mint(alice, 10e18);
         vm.prank(alice);
-        bmx.approve(address(bb), type(uint256).max);
+        bwlk.approve(address(bb), type(uint256).max);
 
-        uint256 balBefore = bmx.balanceOf(alice);
+        uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         bb.boost(tokenA);
-        assertEq(bmx.balanceOf(alice), balBefore - 0.05e18, "Member should pay 50% of cost");
+        assertEq(bwlk.balanceOf(alice), balBefore - 0.05e18, "Member should pay 50% of cost");
     }
 
     function test_MemberDiscount_DisabledWhenNftZeroAddress() public {
-        BoostBurn bb = new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(0), 10_000);
+        BoostBurn bb = new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(0), 10_000);
 
-        bmx.mint(alice, 10e18);
+        bwlk.mint(alice, 10e18);
         vm.prank(alice);
-        bmx.approve(address(bb), type(uint256).max);
+        bwlk.approve(address(bb), type(uint256).max);
 
-        uint256 balBefore = bmx.balanceOf(alice);
+        uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         bb.boost(tokenA);
-        assertEq(bmx.balanceOf(alice), balBefore - 0.1e18, "Discount disabled when nft=address(0)");
+        assertEq(bwlk.balanceOf(alice), balBefore - 0.1e18, "Discount disabled when nft=address(0)");
     }
 
     function test_RevertWhen_Constructor_MemberDiscountAboveMax() public {
         vm.expectRevert(abi.encodeWithSelector(BoostBurn.MemberDiscountOutOfRange.selector, 10_001));
-        new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(0), 10_001);
+        new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(0), 10_001);
     }
 
     function test_TimelockSetNftCollection() public {
@@ -385,31 +385,31 @@ contract BoostBurnTest is Test {
 
     function test_RevertingNft_RevertsOnInteraction() public {
         RevertingNFT badNft = new RevertingNFT();
-        BoostBurn bb = new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(badNft), 10_000);
+        BoostBurn bb = new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(badNft), 10_000);
 
-        bmx.mint(alice, 10e18);
+        bwlk.mint(alice, 10e18);
         vm.prank(alice);
-        bmx.approve(address(bb), type(uint256).max);
+        bwlk.approve(address(bb), type(uint256).max);
 
         vm.expectRevert();
         vm.prank(alice);
         bb.boost(tokenA);
     }
 
-    function test_ZeroBmxCost_WithDiscount_NoExternalCall() public {
+    function test_ZeroBwlkCost_WithDiscount_NoExternalCall() public {
         MockNFT nft = new MockNFT();
-        BoostBurn bb = new BoostBurn(owner, address(bmx), epochZero, EPOCH_DURATION, address(nft), 10_000);
+        BoostBurn bb = new BoostBurn(owner, address(bwlk), epochZero, EPOCH_DURATION, address(nft), 10_000);
 
         vm.prank(owner);
-        bb.signalAction(keccak256("SET_BMX_COST"), keccak256(abi.encode(uint256(0))));
+        bb.signalAction(keccak256("SET_BWLK_COST"), keccak256(abi.encode(uint256(0))));
         vm.warp(block.timestamp + 7 days);
-        bb.executeSetBmxCost(0);
+        bb.executeSetBwlkCost(0);
 
         nft.mint(alice, 1);
-        uint256 balBefore = bmx.balanceOf(alice);
+        uint256 balBefore = bwlk.balanceOf(alice);
         vm.prank(alice);
         bb.boost(tokenA);
-        assertEq(bmx.balanceOf(alice), balBefore, "Zero cost with discount should transfer nothing");
+        assertEq(bwlk.balanceOf(alice), balBefore, "Zero cost with discount should transfer nothing");
     }
 
     // ============ Fuzz ============
@@ -423,9 +423,9 @@ contract BoostBurnTest is Test {
 
         for (uint8 i = 0; i < boostCount;) {
             address user = makeAddr(string(abi.encode("booster", i)));
-            bmx.mint(user, 1e18);
+            bwlk.mint(user, 1e18);
             vm.prank(user);
-            bmx.approve(address(boostBurn), type(uint256).max);
+            bwlk.approve(address(boostBurn), type(uint256).max);
             vm.prank(user);
             boostBurn.boost(tokenA);
             unchecked {
@@ -435,9 +435,9 @@ contract BoostBurnTest is Test {
 
         for (uint8 i = 0; i < deboostCount;) {
             address user = makeAddr(string(abi.encode("debooster", i)));
-            bmx.mint(user, 1e18);
+            bwlk.mint(user, 1e18);
             vm.prank(user);
-            bmx.approve(address(boostBurn), type(uint256).max);
+            bwlk.approve(address(boostBurn), type(uint256).max);
             vm.prank(user);
             boostBurn.deboost(tokenA);
             unchecked {

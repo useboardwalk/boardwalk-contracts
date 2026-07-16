@@ -13,7 +13,9 @@ import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {BoostBurn} from "src/core/BoostBurn.sol";
 import {BoardwalkClub} from "src/nft/BoardwalkClub.sol";
+import {IDEXRouter} from "src/interfaces/IDEXRouter.sol";
 import {FeeSchedules} from "script/FeeSchedules.sol";
+import {DexConfig} from "script/DexConfig.sol";
 
 /// @title DeployFactory
 /// @notice Deploys the full Boardwalk per-chain stack: membership NFT, implementation templates,
@@ -33,16 +35,18 @@ contract DeployFactory is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        address dexFactory = vm.envAddress("DEX_FACTORY");
-        address dexRouter = vm.envAddress("DEX_ROUTER");
+        // Canonical Uniswap V2 + WETH for this chain; env overrides only for testnet rehearsals.
+        (address canonicalFactory, address canonicalRouter, address canonicalWeth) = DexConfig.resolve(block.chainid);
+        address dexFactory = vm.envOr("DEX_FACTORY", canonicalFactory);
+        address dexRouter = vm.envOr("DEX_ROUTER", canonicalRouter);
         address owner = vm.envOr("OWNER", deployer);
-        address bmx = vm.envAddress("BMX_ADDRESS");
-        address raiseToken = vm.envAddress("RAISE_TOKEN_ADDRESS");
+        address bwlk = vm.envAddress("BWLK_ADDRESS");
+        address raiseToken = vm.envOr("RAISE_TOKEN_ADDRESS", canonicalWeth);
         address treasury = vm.envOr("TREASURY", owner);
         address keeper = vm.envAddress("KEEPER");
-        uint256 bmxBurnAmount = vm.envOr("BMX_BURN_AMOUNT", uint256(100e18));
-        uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(10 ether));
-        uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(10 ether));
+        uint256 bwlkBurnAmount = vm.envOr("BWLK_BURN_AMOUNT", uint256(100e18));
+        uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(5 ether));
+        uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(5 ether));
         uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(24 hours));
         uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(7 days));
         address nftCollectionEnv = vm.envOr("NFT_COLLECTION", address(0));
@@ -62,17 +66,29 @@ contract DeployFactory is Script {
         address[] memory mintRecipients = vm.envOr("MINT_RECIPIENTS", ",", new address[](0));
 
         require(owner != address(0), "OWNER required");
-        require(bmx != address(0), "BMX_ADDRESS required");
+        require(bwlk != address(0), "BWLK_ADDRESS required");
         require(raiseToken != address(0), "RAISE_TOKEN_ADDRESS required");
         require(dexFactory != address(0), "DEX_FACTORY required");
         require(dexRouter != address(0), "DEX_ROUTER required");
         require(treasury != address(0), "TREASURY required");
         require(keeper != address(0), "KEEPER required");
+        require(dexFactory.code.length > 0, "DEX factory: no code");
+        require(dexRouter.code.length > 0, "DEX router: no code");
+        require(IDEXRouter(dexRouter).factory() == dexFactory, "router/factory mismatch");
 
         // Frozen per-chain integrator recipients + splits, derived from each integrator's absolute
         // fee. The IntegratorFeeCollector constructor re-validates distinctness/non-zero/sum==10000.
         (address[] memory integratorAddresses, uint256[] memory integratorSplits, uint256 totalIntegratorBps) =
             FeeSchedules.integratorConfig(block.chainid);
+
+        // A PENDING_INTEGRATOR slot has no confirmed address yet; it must be supplied via env or
+        // the deploy fails loudly (both here and in the IntegratorFeeCollector constructor).
+        for (uint256 i = 0; i < integratorAddresses.length; ++i) {
+            if (integratorAddresses[i] == FeeSchedules.PENDING_INTEGRATOR) {
+                integratorAddresses[i] = vm.envAddress("DEFILLAMA_RESEARCH_ADDRESS");
+                require(integratorAddresses[i] != address(0), "DEFILLAMA_RESEARCH_ADDRESS required");
+            }
+        }
 
         // Per-chain fee defaults + integrator bucket size. Integrator BPS is immutable on the factory
         // (not in `feeBps`) and cannot be adjusted post-deployment.
@@ -143,7 +159,7 @@ contract DeployFactory is Script {
                 presaleImpl: address(presaleImpl),
                 vestingImpl: address(vestingImpl),
                 lpStakingImpl: address(lpStakingImpl),
-                bmx: bmx,
+                bwlk: bwlk,
                 raiseToken: raiseToken,
                 boardwalkRouter: dexRouter,
                 boardwalkDexFactory: dexFactory,
@@ -151,7 +167,7 @@ contract DeployFactory is Script {
                 boardwalkFeeCollector: address(feeCollector),
                 integratorCollector: address(integratorCollector),
                 integratorBps: integratorBps,
-                bmxBurnAmount: bmxBurnAmount,
+                bwlkBurnAmount: bwlkBurnAmount,
                 graduationExpress: graduationExpress,
                 graduationAdvanced: graduationAdvanced,
                 expressDuration: expressDuration,
@@ -178,7 +194,8 @@ contract DeployFactory is Script {
         }
 
         // 8. Deploy BoostBurn (community ranking), wired to the same membership NFT for discounts.
-        BoostBurn boostBurn = new BoostBurn(owner, bmx, epochZero, epochDuration, nftCollection, memberBoostDiscountBps);
+        BoostBurn boostBurn =
+            new BoostBurn(owner, bwlk, epochZero, epochDuration, nftCollection, memberBoostDiscountBps);
         console.log("BoostBurn:", address(boostBurn));
 
         vm.stopBroadcast();
@@ -187,7 +204,7 @@ contract DeployFactory is Script {
         console.log("\n=== Verification ===");
         require(factory.TOKEN_IMPL() == address(tokenImpl), "tokenImpl mismatch");
         require(factory.RAISE_TOKEN() == raiseToken, "RAISE_TOKEN mismatch");
-        require(factory.BMX() == bmx, "BMX mismatch");
+        require(factory.BWLK() == bwlk, "BWLK mismatch");
         require(factory.BOARDWALK_ROUTER() == dexRouter, "Router mismatch");
         require(factory.BOARDWALK_DEX_FACTORY() == dexFactory, "DEX Factory mismatch");
         require(factory.BOARDWALK_LP_MANAGER() == address(lpManager), "LPManager mismatch");
@@ -198,7 +215,7 @@ contract DeployFactory is Script {
         require(factory.nftCollection() == nftCollection, "Factory NFT mismatch");
         require(integratorCollector.slotCount() == integratorAddresses.length, "Integrator slot count mismatch");
         require(boostBurn.owner() == owner, "BoostBurn owner mismatch");
-        require(boostBurn.BMX() == bmx, "BoostBurn BMX mismatch");
+        require(boostBurn.BWLK() == bwlk, "BoostBurn BWLK mismatch");
         require(boostBurn.nftCollection() == nftCollection, "BoostBurn NFT mismatch");
         if (deployer == owner) {
             require(integratorCollector.factory() == address(factory), "Collector factory wiring mismatch");

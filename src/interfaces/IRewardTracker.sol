@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.28;
 
-/// @notice Minimal interface for Morphex RewardTracker (sbfBMX / stakedBmxTracker)
-/// @dev Verify function signatures against deployed Base contract ABIs before mainnet deployment
+/// @notice Minimal interface for Morphex RewardTracker (sbfBWLK / stakedBwlkTracker)
+/// @dev Verify function signatures against the deployed tracker ABIs before mainnet deployment
 interface IRewardTracker {
     function balanceOf(
         address account
@@ -21,7 +21,7 @@ interface IRewardTracker {
 
     /// @notice Stakes `amount` of `depositToken` pulled from `fundingAccount`, crediting `account`.
     /// @dev Handler-gated on the tracker. Used by the migration contract to build staked positions
-    ///      on behalf of a destination, mirroring `RewardRouterV5._stakeBmx`.
+    ///      on behalf of a destination, mirroring `RewardRouterV5._stakeBwlk`.
     function stakeForAccount(
         address fundingAccount,
         address account,

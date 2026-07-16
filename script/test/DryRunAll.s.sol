@@ -13,6 +13,7 @@ import {BoardwalkFeeCollector} from "src/core/BoardwalkFeeCollector.sol";
 import {IntegratorFeeCollector} from "src/core/IntegratorFeeCollector.sol";
 import {LaunchFactory} from "src/core/LaunchFactory.sol";
 import {FeeSchedules} from "script/FeeSchedules.sol";
+import {DexConfig} from "script/DexConfig.sol";
 import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {ParticipationDistributor} from "src/governance/ParticipationDistributor.sol";
@@ -24,15 +25,14 @@ contract DryRunAll is Script {
         address deployer = vm.envAddress("DEPLOYER");
         address owner = vm.envOr("OWNER", deployer);
         address weth = vm.envAddress("WETH_ADDRESS");
-        address bmx = vm.envAddress("BMX_ADDRESS");
-        address feeToSetter = vm.envOr("FEE_TO_SETTER", deployer);
+        address bwlk = vm.envAddress("BWLK_ADDRESS");
         address treasury = vm.envOr("TREASURY", deployer);
         address keeper = vm.envAddress("KEEPER_ADDRESS");
 
         // Governance-specific
-        address sbfBmx = vm.envAddress("SBF_BMX");
-        address stakedBmxTracker = vm.envAddress("STAKED_BMX_TRACKER");
-        address bnBmx = vm.envAddress("BN_BMX");
+        address sbfBwlk = vm.envAddress("SBF_BWLK");
+        address stakedBwlkTracker = vm.envAddress("STAKED_BWLK_TRACKER");
+        address bnBwlk = vm.envAddress("BN_BWLK");
         address universalRouter = vm.envAddress("UNIVERSAL_ROUTER");
         address v4PositionManager = vm.envAddress("V4_POSITION_MANAGER");
         address fallbackTreasury = vm.envOr("FALLBACK_TREASURY", deployer);
@@ -40,12 +40,11 @@ contract DryRunAll is Script {
         vm.startBroadcast(deployer);
 
         // ========== Phase 1: DEX ==========
-        console.log("=== Phase 1: DEX ===");
+        console.log("=== Phase 1: DEX (canonical Uniswap V2) ===");
 
-        address dexFactory =
-            vm.deployCode("src/dex/core/UniswapV2Factory.sol:UniswapV2Factory", abi.encode(feeToSetter));
-        address dexRouter =
-            vm.deployCode("src/dex/periphery/UniswapV2Router02.sol:UniswapV2Router02", abi.encode(dexFactory, weth));
+        (address canonicalFactory, address canonicalRouter,) = DexConfig.resolve(block.chainid);
+        address dexFactory = vm.envOr("DEX_FACTORY", canonicalFactory);
+        address dexRouter = vm.envOr("DEX_ROUTER", canonicalRouter);
 
         require(IDEXRouter(dexRouter).factory() == dexFactory, "Router-Factory mismatch");
         console.log("DEX Factory:", dexFactory);
@@ -86,7 +85,7 @@ contract DryRunAll is Script {
                 presaleImpl: address(presaleImpl),
                 vestingImpl: address(vestingImpl),
                 lpStakingImpl: address(lpStakingImpl),
-                bmx: bmx,
+                bwlk: bwlk,
                 raiseToken: weth,
                 boardwalkRouter: dexRouter,
                 boardwalkDexFactory: dexFactory,
@@ -94,9 +93,9 @@ contract DryRunAll is Script {
                 boardwalkFeeCollector: address(feeCollector),
                 integratorCollector: address(integratorCollector),
                 integratorBps: integratorBps,
-                bmxBurnAmount: 100e18,
-                graduationExpress: 10 ether,
-                graduationAdvanced: 10 ether,
+                bwlkBurnAmount: 100e18,
+                graduationExpress: 5 ether,
+                graduationAdvanced: 5 ether,
                 expressDuration: 24 hours,
                 advancedDuration: 7 days,
                 antiWhaleTaxBps: 4000,
@@ -116,7 +115,7 @@ contract DryRunAll is Script {
         // Verify factory wiring
         require(factory.TOKEN_IMPL() == address(tokenImpl), "tokenImpl mismatch");
         require(factory.RAISE_TOKEN() == weth, "RAISE_TOKEN mismatch");
-        require(factory.BMX() == bmx, "BMX mismatch");
+        require(factory.BWLK() == bwlk, "BWLK mismatch");
         require(factory.BOARDWALK_LP_MANAGER() == address(lpManager), "LPManager mismatch");
         require(factory.boardwalkFeeCollector() == address(feeCollector), "FeeCollector mismatch");
         console.log("Factory wiring verified");
@@ -127,10 +126,10 @@ contract DryRunAll is Script {
         GovernanceVoter governanceVoter = new GovernanceVoter(
             owner,
             GovernanceVoter.DeployParams({
-                sbfBmx: sbfBmx,
-                stakedBmxTracker: stakedBmxTracker,
-                bnBmx: bnBmx,
-                bmx: bmx,
+                sbfBwlk: sbfBwlk,
+                stakedBwlkTracker: stakedBwlkTracker,
+                bnBwlk: bnBwlk,
+                bwlk: bwlk,
                 weth: weth,
                 universalRouter: universalRouter,
                 v4PositionManager: v4PositionManager,
@@ -147,10 +146,10 @@ contract DryRunAll is Script {
         console.log("GovernanceVoter:", address(governanceVoter));
 
         // v4 pools use native ETH (address(0)), always currency0
-        LPLocker lpLocker = new LPLocker(v4PositionManager, address(governanceVoter), address(0), bmx, owner);
+        LPLocker lpLocker = new LPLocker(v4PositionManager, address(governanceVoter), address(0), bwlk, owner);
         console.log("LPLocker:", address(lpLocker));
 
-        ParticipationDistributor participationDistributor = new ParticipationDistributor(bmx, address(governanceVoter));
+        ParticipationDistributor participationDistributor = new ParticipationDistributor(bwlk, address(governanceVoter));
         console.log("ParticipationDistributor:", address(participationDistributor));
 
         // Wire peers. feeCollector defaults to the deployer in a dry-run; override via env.

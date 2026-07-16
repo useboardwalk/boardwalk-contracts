@@ -53,7 +53,7 @@ interface ILaunchFactory {
     error ZeroAddress();
     error InvalidFeeDefaults();
     error InvalidAntiWhaleConfig();
-    error BmxBurnOutOfRange(uint256 amount);
+    error BwlkBurnOutOfRange(uint256 amount);
     error InvalidDuration();
     error InvalidPresaleRange(uint256 min, uint256 max);
     error ZeroGraduation();
@@ -74,7 +74,7 @@ interface ILaunchFactory {
         string[] issuerFeeLabels,
         string[] vestingLabels
     );
-    event BmxBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
+    event BwlkBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
     event GraduationThresholdChanged(LaunchPath path, uint256 oldThreshold, uint256 newThreshold);
     event PresaleDurationChanged(LaunchPath path, uint256 oldDuration, uint256 newDuration);
     event FeeDefaultsChanged(uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer);
@@ -88,7 +88,7 @@ interface ILaunchFactory {
         LaunchConfig calldata config
     ) external returns (address token);
     function launchCount() external view returns (uint256);
-    function bmxBurnAmount() external view returns (uint256);
+    function bwlkBurnAmount() external view returns (uint256);
     function expressDuration() external view returns (uint256);
     function advancedDuration() external view returns (uint256);
     function minPresalePercent() external view returns (uint256);

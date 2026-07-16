@@ -8,7 +8,7 @@ import {ParticipationDistributor} from "src/governance/ParticipationDistributor.
 import {EthereumConfig} from "./EthereumConfig.sol";
 
 /// @title DeployBwlkGovernance - Deploy the Ethereum/BWLK governance stack
-/// @notice Adapts script/03_DeployGovernance.s.sol to Ethereum mainnet + BWLK: GovernanceVoter wired
+/// @notice Deploys the Ethereum mainnet BWLK governance stack: GovernanceVoter wired
 ///         to the redeployed BWLK trackers (sbfBWLK / stakedBWLK / bnBWLK), the BWLK token, mainnet
 ///         WETH + UniversalRouter + v4 PositionManager; then LPLocker (currency0 = native ETH,
 ///         currency1 = BWLK) with a renounceable registrar, and ParticipationDistributor; finally
@@ -53,10 +53,10 @@ contract DeployBwlkGovernance is Script {
         GovernanceVoter governanceVoter = new GovernanceVoter(
             owner,
             GovernanceVoter.DeployParams({
-                sbfBmx: feeBwlkTracker,
-                stakedBmxTracker: stakedBwlkTracker,
-                bnBmx: bnBwlk,
-                bmx: bwlk,
+                sbfBwlk: feeBwlkTracker,
+                stakedBwlkTracker: stakedBwlkTracker,
+                bnBwlk: bnBwlk,
+                bwlk: bwlk,
                 weth: weth,
                 universalRouter: universalRouter,
                 v4PositionManager: v4PositionManager,
@@ -88,7 +88,7 @@ contract DeployBwlkGovernance is Script {
         console.log("ParticipationDistributor deployed to:", address(participationDistributor));
 
         // 4. Wire peers (one-time, validates bidirectional references). Revenue depositor is the
-        //    Arbitrum BoardwalkFeeCollector.
+        //    old Ethereum BoardwalkFeeCollector.
         address feeCollector = vm.envAddress("FEE_COLLECTOR");
         governanceVoter.initializePeers(address(lpLocker), address(participationDistributor), feeCollector);
         console.log("Peers initialized (feeCollector =", feeCollector, ")");

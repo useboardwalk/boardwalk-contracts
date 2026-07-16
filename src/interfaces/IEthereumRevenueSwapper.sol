@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.28;
 
-interface IBaseRevenueSwapper {
+interface IEthereumRevenueSwapper {
     error NotKeeper();
     error NotAuthorized();
     error ZeroAddress();

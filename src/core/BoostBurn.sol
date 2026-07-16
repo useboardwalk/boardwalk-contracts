@@ -8,46 +8,46 @@ import {Timelocked} from "../base/Timelocked.sol";
 import {MembershipDiscount} from "../base/MembershipDiscount.sol";
 
 /// @title BoostBurn
-/// @notice Community ranking. Any wallet boosts or deboosts any token's score by burning BMX,
+/// @notice Community ranking. Any wallet boosts or deboosts any token's score by burning BWLK,
 ///         once per (wallet, token, epoch). Scores can go negative.
 contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
     using SafeERC20 for IERC20;
 
     address public constant DEAD_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
 
-    bytes32 public constant ACTION_SET_BMX_COST = keccak256("SET_BMX_COST");
+    bytes32 public constant ACTION_SET_BWLK_COST = keccak256("SET_BWLK_COST");
     bytes32 public constant ACTION_SET_MEMBER_BOOST_DISCOUNT = keccak256("SET_MEMBER_BOOST_DISCOUNT");
 
-    uint256 private constant MAX_BMX_COST = 1e18;
+    uint256 private constant MAX_BWLK_COST = 1e18;
 
-    address public immutable BMX;
+    address public immutable BWLK;
     uint256 public immutable EPOCH_ZERO;
     uint256 public immutable EPOCH_DURATION;
 
-    uint256 public bmxCost = 0.1e18;
+    uint256 public bwlkCost = 0.1e18;
     uint256 public memberBoostDiscountBps;
 
     mapping(address => int256) public scores;
     mapping(bytes32 => bool) public interactions;
 
     error AlreadyInteracted();
-    error BmxCostOutOfRange(uint256 cost);
+    error BwlkCostOutOfRange(uint256 cost);
     error MemberDiscountOutOfRange(uint256 bps);
 
     event Boosted(address indexed token, address indexed wallet, uint256 epoch, int256 newScore);
     event Deboosted(address indexed token, address indexed wallet, uint256 epoch, int256 newScore);
-    event BmxCostChanged(uint256 oldCost, uint256 newCost);
+    event BwlkCostChanged(uint256 oldCost, uint256 newCost);
     event MemberBoostDiscountChanged(uint256 oldDiscount, uint256 newDiscount);
 
     constructor(
         address _owner,
-        address _bmx,
+        address _bwlk,
         uint256 _epochZero,
         uint256 _epochDuration,
         address _nftCollection,
         uint256 _memberBoostDiscountBps
     ) Ownable(_owner) {
-        BMX = _bmx;
+        BWLK = _bwlk;
         EPOCH_ZERO = _epochZero;
         EPOCH_DURATION = _epochDuration;
         if (_memberBoostDiscountBps > MAX_DISCOUNT_BPS) revert MemberDiscountOutOfRange(_memberBoostDiscountBps);
@@ -93,13 +93,13 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         bytes32
     ) internal override onlyOwner {}
 
-    function executeSetBmxCost(
+    function executeSetBwlkCost(
         uint256 _cost
     ) external {
-        _execute(ACTION_SET_BMX_COST, keccak256(abi.encode(_cost)));
-        if (_cost > MAX_BMX_COST) revert BmxCostOutOfRange(_cost);
-        emit BmxCostChanged(bmxCost, _cost);
-        bmxCost = _cost;
+        _execute(ACTION_SET_BWLK_COST, keccak256(abi.encode(_cost)));
+        if (_cost > MAX_BWLK_COST) revert BwlkCostOutOfRange(_cost);
+        emit BwlkCostChanged(bwlkCost, _cost);
+        bwlkCost = _cost;
     }
 
     function executeSetNftCollection(
@@ -126,9 +126,9 @@ contract BoostBurn is Ownable2Step, Timelocked, MembershipDiscount {
         if (interactions[key]) revert AlreadyInteracted();
         interactions[key] = true;
 
-        uint256 cost = _effectiveCost(bmxCost, memberBoostDiscountBps, msg.sender);
+        uint256 cost = _effectiveCost(bwlkCost, memberBoostDiscountBps, msg.sender);
         if (cost > 0) {
-            IERC20(BMX).safeTransferFrom(msg.sender, DEAD_ADDRESS, cost);
+            IERC20(BWLK).safeTransferFrom(msg.sender, DEAD_ADDRESS, cost);
         }
     }
 }

@@ -7,11 +7,11 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {Timelocked} from "../base/Timelocked.sol";
 
-/// @title BaseRevenueSwapper
-/// @notice Delivery target on Base for every cross-chain revenue lane. Receives bridged WETH and any
-///         non-WETH raise token (e.g. frxUSD from Fraxtal); the keeper swaps the delivered `tokenIn` to
-///         WETH via 0x's AllowanceHolder, then forwards the entire WETH balance to the Base `BoardwalkFeeCollector`.
-contract BaseRevenueSwapper is Ownable2Step, Timelocked, ReentrancyGuardTransient {
+/// @title EthereumRevenueSwapper
+/// @notice Delivery target on Ethereum for every cross-chain revenue lane. Receives bridged WETH and
+///         any non-WETH token; the keeper swaps a delivered `tokenIn` to WETH via 0x's
+///         AllowanceHolder, then forwards the entire WETH balance to the Ethereum `BoardwalkFeeCollector`.
+contract EthereumRevenueSwapper is Ownable2Step, Timelocked, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     address public immutable ALLOWANCE_HOLDER;

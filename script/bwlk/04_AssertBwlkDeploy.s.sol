@@ -234,14 +234,14 @@ contract AssertBwlkDeploy is Script {
             revert D2_BwlkSupplyWrong(bwlkSupply, EthereumConfig.TOTAL_SUPPLY);
         }
 
-        address voterSbf = address(voter.SBF_BMX());
+        address voterSbf = address(voter.SBF_BWLK());
         address migratorFee = address(migrator.FEE_BWLK_TRACKER());
         if (voterSbf != migratorFee) revert D2_VoterFeeTrackerMismatch(voterSbf, migratorFee);
         if (voterSbf != cfg.feeBwlkTracker) revert D2_VoterFeeTrackerMismatch(voterSbf, cfg.feeBwlkTracker);
 
         if (migrator.VOTER() != cfg.voter) revert D2_MigratorVoterMismatch(migrator.VOTER(), cfg.voter);
 
-        address voterStaked = address(voter.STAKED_BMX_TRACKER());
+        address voterStaked = address(voter.STAKED_BWLK_TRACKER());
         address migratorStaked = address(migrator.STAKED_BWLK_TRACKER());
         if (voterStaked != migratorStaked) revert D2_StakedTrackerMismatch(voterStaked, migratorStaked);
         if (voterStaked != cfg.stakedBwlkTracker) revert D2_StakedTrackerMismatch(voterStaked, cfg.stakedBwlkTracker);
@@ -252,12 +252,12 @@ contract AssertBwlkDeploy is Script {
         address migratorBonus = address(migrator.BONUS_BWLK_TRACKER());
         if (migratorBonus != cfg.bonusBwlkTracker) revert D2_BonusTrackerMismatch(migratorBonus, cfg.bonusBwlkTracker);
 
-        address voterBn = voter.BN_BMX();
+        address voterBn = voter.BN_BWLK();
         address migratorBn = address(migrator.BN_BWLK());
         if (voterBn != migratorBn) revert D2_BnTokenMismatch(voterBn, migratorBn);
         if (voterBn != cfg.bnBwlk) revert D2_BnTokenMismatch(voterBn, cfg.bnBwlk);
 
-        address voterToken = voter.BMX();
+        address voterToken = voter.BWLK();
         address migratorBwlk = address(migrator.BWLK());
         if (voterToken != migratorBwlk) revert D2_TokenMismatch(voterToken, migratorBwlk);
         if (voterToken != cfg.bwlk) revert D2_TokenMismatch(voterToken, cfg.bwlk);

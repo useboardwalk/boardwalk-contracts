@@ -93,7 +93,7 @@ contract NoReceiveKeeper {
         uint256 amount,
         bytes calldata cd
     ) external payable {
-        b.bridgeToBase{value: msg.value}(amount, cd);
+        b.bridgeToEthereum{value: msg.value}(amount, cd);
     }
 }
 
@@ -106,11 +106,11 @@ contract RevenueBridgerTest is Test {
     bytes4 internal constant GLACIS_SELECTOR = 0x9c4b6dd9;
     uint256 internal constant MAX_FEE_BPS = 30;
     uint256 internal constant AMOUNT = 100e18;
-    uint256 internal constant BASE_CHAIN_ID = 8453;
+    uint256 internal constant ETHEREUM_CHAIN_ID = 1;
 
     MockERC20 internal raiseToken;
-    address internal baseWeth = makeAddr("baseWeth");
-    address internal baseDestination = makeAddr("baseDestination");
+    address internal ethereumWeth = makeAddr("ethereumWeth");
+    address internal ethereumDestination = makeAddr("ethereumDestination");
     address internal owner = makeAddr("owner");
     address internal keeper = makeAddr("keeper");
     address internal attacker = makeAddr("attacker");
@@ -143,8 +143,8 @@ contract RevenueBridgerTest is Test {
             owner,
             address(diamond),
             address(raiseToken),
-            baseDestination,
-            baseWeth,
+            ethereumDestination,
+            ethereumWeth,
             keeper,
             hasSourceSwaps,
             MAX_FEE_BPS,
@@ -159,8 +159,8 @@ contract RevenueBridgerTest is Test {
     function test_Constructor_SetsImmutablesAndAllowlist() public view {
         assertEq(bridgerPure.DIAMOND(), address(diamond), "diamond");
         assertEq(bridgerPure.RAISE_TOKEN(), address(raiseToken), "raise");
-        assertEq(bridgerPure.BASE_DESTINATION(), baseDestination, "dest");
-        assertEq(bridgerPure.BASE_WETH(), baseWeth, "weth");
+        assertEq(bridgerPure.ETHEREUM_DESTINATION(), ethereumDestination, "dest");
+        assertEq(bridgerPure.ETHEREUM_WETH(), ethereumWeth, "weth");
         assertEq(bridgerPure.MAX_FEE_BPS(), MAX_FEE_BPS, "maxfee");
         assertEq(bridgerPure.keeper(), keeper, "keeper");
         assertFalse(bridgerPure.HAS_SOURCE_SWAPS(), "pure has no source swaps");
@@ -174,7 +174,7 @@ contract RevenueBridgerTest is Test {
         bytes4[] memory sel = new bytes4[](0);
         vm.expectRevert(RevenueBridger.InvalidConfig.selector);
         new RevenueBridger(
-            owner, address(diamond), address(raiseToken), baseDestination, baseWeth, keeper, false, 10_000, sel
+            owner, address(diamond), address(raiseToken), ethereumDestination, ethereumWeth, keeper, false, 10_000, sel
         );
     }
 
@@ -182,7 +182,7 @@ contract RevenueBridgerTest is Test {
         bytes4[] memory sel = new bytes4[](0);
         vm.expectRevert(RevenueBridger.ZeroAddress.selector);
         new RevenueBridger(
-            owner, address(0), address(raiseToken), baseDestination, baseWeth, keeper, false, MAX_FEE_BPS, sel
+            owner, address(0), address(raiseToken), ethereumDestination, ethereumWeth, keeper, false, MAX_FEE_BPS, sel
         );
     }
 
@@ -192,8 +192,8 @@ contract RevenueBridgerTest is Test {
             owner,
             address(diamond),
             address(0),
-            baseDestination,
-            baseWeth,
+            ethereumDestination,
+            ethereumWeth,
             keeper,
             false,
             MAX_FEE_BPS,
@@ -201,14 +201,14 @@ contract RevenueBridgerTest is Test {
         );
     }
 
-    function test_RevertWhen_Constructor_ZeroBaseDestination() public {
+    function test_RevertWhen_Constructor_ZeroEthereumDestination() public {
         vm.expectRevert(RevenueBridger.ZeroAddress.selector);
         new RevenueBridger(
             owner,
             address(diamond),
             address(raiseToken),
             address(0),
-            baseWeth,
+            ethereumWeth,
             keeper,
             false,
             MAX_FEE_BPS,
@@ -216,13 +216,13 @@ contract RevenueBridgerTest is Test {
         );
     }
 
-    function test_RevertWhen_Constructor_ZeroBaseWeth() public {
+    function test_RevertWhen_Constructor_ZeroEthereumWeth() public {
         vm.expectRevert(RevenueBridger.ZeroAddress.selector);
         new RevenueBridger(
             owner,
             address(diamond),
             address(raiseToken),
-            baseDestination,
+            ethereumDestination,
             address(0),
             keeper,
             false,
@@ -237,8 +237,8 @@ contract RevenueBridgerTest is Test {
             owner,
             address(diamond),
             address(raiseToken),
-            baseDestination,
-            baseWeth,
+            ethereumDestination,
+            ethereumWeth,
             address(0),
             false,
             MAX_FEE_BPS,
@@ -253,33 +253,33 @@ contract RevenueBridgerTest is Test {
     function test_RevertWhen_NotKeeper() public {
         vm.prank(attacker);
         vm.expectRevert(RevenueBridger.NotKeeper.selector);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
     }
 
     function test_RevertWhen_ZeroAmount() public {
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.ZeroAmount.selector);
-        bridgerPure.bridgeToBase(0, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(0, _buildPure(AMOUNT));
     }
 
     function test_RevertWhen_CalldataTooShort() public {
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.CalldataTooShort.selector);
-        bridgerPure.bridgeToBase(AMOUNT, hex"a1f1ce");
+        bridgerPure.bridgeToEthereum(AMOUNT, hex"a1f1ce");
     }
 
     function test_RevertWhen_SelectorNotAllowed() public {
         bytes memory cd = abi.encodeWithSelector(bytes4(0xdeadbeef), _pureBridgeData(AMOUNT), _pureAcrossData(AMOUNT));
         vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSelector(RevenueBridger.SelectorNotAllowed.selector, bytes4(0xdeadbeef)));
-        bridgerPure.bridgeToBase(AMOUNT, cd);
+        bridgerPure.bridgeToEthereum(AMOUNT, cd);
     }
 
     function test_RevertWhen_SymbiosisSelectorOnPureLane() public {
         bytes memory cd = abi.encodeWithSelector(SYMBIOSIS_SELECTOR, _pureBridgeData(AMOUNT), _pureAcrossData(AMOUNT));
         vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSelector(RevenueBridger.SelectorNotAllowed.selector, SYMBIOSIS_SELECTOR));
-        bridgerPure.bridgeToBase(AMOUNT, cd);
+        bridgerPure.bridgeToEthereum(AMOUNT, cd);
     }
 
     /* -------------------------------------------------------------------------- */
@@ -294,7 +294,7 @@ contract RevenueBridgerTest is Test {
 
     function test_RevertWhen_Pure_InvalidDestinationChain() public {
         ILiFi.BridgeData memory bd = _pureBridgeData(AMOUNT);
-        bd.destinationChainId = 1;
+        bd.destinationChainId = 8453;
         _expectPureRevert(bd, _pureAcrossData(AMOUNT), RevenueBridger.InvalidDestinationChain.selector);
     }
 
@@ -357,20 +357,20 @@ contract RevenueBridgerTest is Test {
     /*                          pure happy path + forced expiry                   */
     /* -------------------------------------------------------------------------- */
 
-    function test_BridgeToBase_Pure_Success() public {
+    function test_BridgeToEthereum_Pure_Success() public {
         uint256 before = raiseToken.balanceOf(address(bridgerPure));
         vm.prank(keeper);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
 
         assertEq(raiseToken.balanceOf(address(bridgerPure)), before - AMOUNT, "full amount deposited");
         assertEq(raiseToken.balanceOf(address(diamond)), AMOUNT, "diamond received deposit");
         assertEq(raiseToken.allowance(address(bridgerPure), address(diamond)), 0, "approval reset");
     }
 
-    function test_BridgeToBase_Pure_PartialPullResetsApproval() public {
+    function test_BridgeToEthereum_Pure_PartialPullResetsApproval() public {
         diamond.setMode(MockLiFiDiamond.Mode.PULL_HALF);
         vm.prank(keeper);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
 
         assertEq(raiseToken.balanceOf(address(diamond)), AMOUNT / 2, "half deposited");
         assertEq(raiseToken.allowance(address(bridgerPure), address(diamond)), 0, "approval reset after partial pull");
@@ -381,7 +381,7 @@ contract RevenueBridgerTest is Test {
         uint256 before = raiseToken.balanceOf(address(bridgerPure));
 
         vm.prank(keeper);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
 
         assertEq(raiseToken.balanceOf(address(bridgerPure)), before, "refund returned to bridger");
         assertEq(raiseToken.balanceOf(keeper), 0, "keeper received nothing");
@@ -391,7 +391,7 @@ contract RevenueBridgerTest is Test {
         diamond.setMode(MockLiFiDiamond.Mode.REVERTING);
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.BridgeCallFailed.selector);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
     }
 
     function test_RevertWhen_BalanceDeltaExceeded() public {
@@ -399,7 +399,7 @@ contract RevenueBridgerTest is Test {
         raiseToken.mint(address(diamond), 5e18);
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.BalanceDeltaExceeded.selector);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
     }
 
     /* -------------------------------------------------------------------------- */
@@ -412,12 +412,12 @@ contract RevenueBridgerTest is Test {
         assertEq(address(bridgerPure).balance, 1 ether, "native held");
     }
 
-    function test_BridgeToBase_ConsumesAllNative_NoRefund() public {
+    function test_BridgeToEthereum_ConsumesAllNative_NoRefund() public {
         vm.deal(keeper, 1 ether);
         uint256 keeperBefore = keeper.balance;
 
         vm.prank(keeper);
-        bridgerPure.bridgeToBase{value: 0.2 ether}(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum{value: 0.2 ether}(AMOUNT, _buildPure(AMOUNT));
 
         // Diamond kept the full fee; nothing refunded; the bridger holds no native.
         assertEq(keeper.balance, keeperBefore - 0.2 ether, "keeper paid the full fee");
@@ -425,7 +425,7 @@ contract RevenueBridgerTest is Test {
         assertEq(address(diamond).balance, 0.2 ether, "diamond received the fee");
     }
 
-    function test_BridgeToBase_RefundsExcessNativeToKeeper_PreservesPreExisting() public {
+    function test_BridgeToEthereum_RefundsExcessNativeToKeeper_PreservesPreExisting() public {
         // Pre-existing native in the bridger must not be refunded to the keeper.
         vm.deal(address(bridgerPure), 1 ether);
         diamond.setNativeRefund(0.05 ether); // diamond over-quote refund to the bridger
@@ -434,7 +434,7 @@ contract RevenueBridgerTest is Test {
         uint256 keeperBefore = keeper.balance;
 
         vm.prank(keeper);
-        bridgerPure.bridgeToBase{value: 0.2 ether}(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum{value: 0.2 ether}(AMOUNT, _buildPure(AMOUNT));
 
         // Keeper paid 0.2 then got 0.05 back; the pre-existing 1 ether stays for rescue.
         assertEq(keeper.balance, keeperBefore - 0.2 ether + 0.05 ether, "excess refunded to keeper");
@@ -447,8 +447,8 @@ contract RevenueBridgerTest is Test {
             owner,
             address(diamond),
             address(raiseToken),
-            baseDestination,
-            baseWeth,
+            ethereumDestination,
+            ethereumWeth,
             address(ck),
             false,
             MAX_FEE_BPS,
@@ -466,10 +466,10 @@ contract RevenueBridgerTest is Test {
     /*                       pinning — composed Symbiosis lane                     */
     /* -------------------------------------------------------------------------- */
 
-    function test_BridgeToBase_Composed_BaselinePasses() public {
+    function test_BridgeToEthereum_Composed_BaselinePasses() public {
         uint256 before = raiseToken.balanceOf(address(bridgerComposed));
         vm.prank(keeper);
-        bridgerComposed.bridgeToBase(AMOUNT, _buildComposed(SYMBIOSIS_SELECTOR, AMOUNT));
+        bridgerComposed.bridgeToEthereum(AMOUNT, _buildComposed(SYMBIOSIS_SELECTOR, AMOUNT));
         assertEq(raiseToken.balanceOf(address(bridgerComposed)), before - AMOUNT, "deposited");
         assertEq(raiseToken.allowance(address(bridgerComposed), address(diamond)), 0, "approval reset");
     }
@@ -481,7 +481,7 @@ contract RevenueBridgerTest is Test {
         bytes memory cd = abi.encodeWithSelector(SYMBIOSIS_SELECTOR, bd, _composedSwaps(AMOUNT));
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.InvalidSourceSwaps.selector);
-        bridgerComposed.bridgeToBase(AMOUNT, cd);
+        bridgerComposed.bridgeToEthereum(AMOUNT, cd);
     }
 
     function test_RevertWhen_Composed_InvalidReceiver() public {
@@ -490,7 +490,7 @@ contract RevenueBridgerTest is Test {
         bytes memory cd = abi.encodeWithSelector(SYMBIOSIS_SELECTOR, bd, _composedSwaps(AMOUNT));
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.InvalidReceiver.selector);
-        bridgerComposed.bridgeToBase(AMOUNT, cd);
+        bridgerComposed.bridgeToEthereum(AMOUNT, cd);
     }
 
     function test_RevertWhen_Composed_LegSendingAsset() public {
@@ -499,7 +499,7 @@ contract RevenueBridgerTest is Test {
         bytes memory cd = abi.encodeWithSelector(SYMBIOSIS_SELECTOR, _composedBridgeData(), swaps);
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.InvalidSendingAsset.selector);
-        bridgerComposed.bridgeToBase(AMOUNT, cd);
+        bridgerComposed.bridgeToEthereum(AMOUNT, cd);
     }
 
     function test_RevertWhen_Composed_DepositSumMismatch() public {
@@ -509,7 +509,7 @@ contract RevenueBridgerTest is Test {
         bytes memory cd = abi.encodeWithSelector(SYMBIOSIS_SELECTOR, _composedBridgeData(), swaps);
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.DepositSumMismatch.selector);
-        bridgerComposed.bridgeToBase(AMOUNT, cd);
+        bridgerComposed.bridgeToEthereum(AMOUNT, cd);
     }
 
     function test_Composed_NonDepositLegsIgnored() public {
@@ -519,32 +519,33 @@ contract RevenueBridgerTest is Test {
             callTo: address(0xCA11),
             approveTo: address(0xCA11),
             sendingAssetId: address(0xBAD),
-            receivingAssetId: baseWeth,
+            receivingAssetId: ethereumWeth,
             fromAmount: 12345,
             callData: "",
             requiresDeposit: false
         });
         bytes memory cd = abi.encodeWithSelector(SYMBIOSIS_SELECTOR, _composedBridgeData(), swaps);
         vm.prank(keeper);
-        bridgerComposed.bridgeToBase(AMOUNT, cd);
+        bridgerComposed.bridgeToEthereum(AMOUNT, cd);
         assertEq(raiseToken.balanceOf(address(diamond)), AMOUNT, "deposited despite foreign non-deposit leg");
     }
 
     /* -------------------------------------------------------------------------- */
-    /*               composed Glacis lane (Fraxtal) — same contract               */
+    /*            composed Glacis-shape lane (native fee) — same contract         */
     /* -------------------------------------------------------------------------- */
 
-    function test_BridgeToBase_Glacis_ComposedWithNativeFee() public {
-        // The Fraxtal lane: same generic bridger, composed shape, native GMP fee as msg.value.
+    function test_BridgeToEthereum_Glacis_ComposedWithNativeFee() public {
+        // No current lane is composed; the shape is retained for future non-WETH raise tokens.
+        // Same generic bridger, composed shape, native GMP fee as msg.value.
         diamond.setNativeRefund(0.01 ether); // simulate a small over-quote refund
         vm.deal(keeper, 1 ether);
         uint256 keeperBefore = keeper.balance;
         uint256 before = raiseToken.balanceOf(address(bridgerGlacis));
 
         vm.prank(keeper);
-        bridgerGlacis.bridgeToBase{value: 0.3 ether}(AMOUNT, _buildComposed(GLACIS_SELECTOR, AMOUNT));
+        bridgerGlacis.bridgeToEthereum{value: 0.3 ether}(AMOUNT, _buildComposed(GLACIS_SELECTOR, AMOUNT));
 
-        assertEq(raiseToken.balanceOf(address(bridgerGlacis)), before - AMOUNT, "frxUSD deposited");
+        assertEq(raiseToken.balanceOf(address(bridgerGlacis)), before - AMOUNT, "deposited");
         assertEq(raiseToken.allowance(address(bridgerGlacis), address(diamond)), 0, "approval reset");
         assertEq(keeper.balance, keeperBefore - 0.3 ether + 0.01 ether, "excess GMP fee refunded");
         assertEq(address(bridgerGlacis).balance, 0, "no native stuck");
@@ -561,7 +562,7 @@ contract RevenueBridgerTest is Test {
 
         vm.prank(keeper);
         vm.expectRevert(RevenueBridger.NotKeeper.selector);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
     }
 
     function test_RevertWhen_RevokeKeeper_NotOwner() public {
@@ -583,7 +584,7 @@ contract RevenueBridgerTest is Test {
         assertEq(bridgerPure.keeper(), newKeeper, "keeper updated");
 
         vm.prank(newKeeper);
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
     }
 
     function test_RevertWhen_SignalSetKeeper_NotOwner() public {
@@ -648,7 +649,7 @@ contract RevenueBridgerTest is Test {
 
         vm.prank(keeper);
         vm.expectRevert(abi.encodeWithSelector(RevenueBridger.SelectorNotAllowed.selector, ACROSS_V4_SELECTOR));
-        bridgerPure.bridgeToBase(AMOUNT, _buildPure(AMOUNT));
+        bridgerPure.bridgeToEthereum(AMOUNT, _buildPure(AMOUNT));
     }
 
     function test_CancelSetSelector() public {
@@ -743,9 +744,9 @@ contract RevenueBridgerTest is Test {
             integrator: "boardwalk",
             referrer: address(0),
             sendingAssetId: address(raiseToken),
-            receiver: baseDestination,
+            receiver: ethereumDestination,
             minAmount: amount,
-            destinationChainId: BASE_CHAIN_ID,
+            destinationChainId: ETHEREUM_CHAIN_ID,
             hasSourceSwaps: false,
             hasDestinationCall: false
         });
@@ -756,10 +757,10 @@ contract RevenueBridgerTest is Test {
         uint256 amount
     ) internal view returns (ILiFi.AcrossV4Data memory) {
         return ILiFi.AcrossV4Data({
-            receiverAddress: _b32(baseDestination),
+            receiverAddress: _b32(ethereumDestination),
             refundAddress: _b32(bridger),
             sendingAssetId: _b32(address(raiseToken)),
-            receivingAssetId: _b32(baseWeth),
+            receivingAssetId: _b32(ethereumWeth),
             outputAmount: amount * (10_000 - MAX_FEE_BPS) / 10_000,
             outputAmountMultiplier: 0,
             exclusiveRelayer: bytes32(0),
@@ -797,7 +798,7 @@ contract RevenueBridgerTest is Test {
         bytes memory cd = abi.encodeWithSelector(ACROSS_V4_SELECTOR, bd, ad);
         vm.prank(keeper);
         vm.expectRevert(err);
-        bridgerPure.bridgeToBase(AMOUNT, cd);
+        bridgerPure.bridgeToEthereum(AMOUNT, cd);
     }
 
     function _composedBridgeData() internal view returns (ILiFi.BridgeData memory) {
@@ -807,9 +808,9 @@ contract RevenueBridgerTest is Test {
             integrator: "boardwalk",
             referrer: address(0),
             sendingAssetId: address(0xDEAD), // post-swap asset — not pinned
-            receiver: baseDestination,
+            receiver: ethereumDestination,
             minAmount: 1, // post-swap amount — not pinned
-            destinationChainId: BASE_CHAIN_ID,
+            destinationChainId: ETHEREUM_CHAIN_ID,
             hasSourceSwaps: true,
             hasDestinationCall: false
         });
@@ -822,7 +823,7 @@ contract RevenueBridgerTest is Test {
             callTo: address(0xCA11),
             approveTo: address(0xCA11),
             sendingAssetId: address(raiseToken),
-            receivingAssetId: baseWeth,
+            receivingAssetId: ethereumWeth,
             fromAmount: fromAmount,
             callData: "",
             requiresDeposit: true

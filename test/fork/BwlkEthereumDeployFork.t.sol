@@ -100,10 +100,10 @@ contract BwlkEthereumDeployForkTest is Test {
         voter = new GovernanceVoter(
             address(this),
             GovernanceVoter.DeployParams({
-                sbfBmx: address(fee),
-                stakedBmxTracker: address(staked),
-                bnBmx: address(bnBwlk),
-                bmx: address(bwlk),
+                sbfBwlk: address(fee),
+                stakedBwlkTracker: address(staked),
+                bnBwlk: address(bnBwlk),
+                bwlk: address(bwlk),
                 weth: EthereumConfig.ETH_WETH,
                 universalRouter: EthereumConfig.ETH_UNIVERSAL_ROUTER,
                 v4PositionManager: EthereumConfig.ETH_POSITION_MANAGER,

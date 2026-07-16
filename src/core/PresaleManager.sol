@@ -9,7 +9,7 @@ import {ILPStaking} from "../interfaces/ILPStaking.sol";
 import {IVestingStream} from "../interfaces/IVestingStream.sol";
 import {IDEXRouter} from "../interfaces/IDEXRouter.sol";
 import {IDEXFactory} from "../interfaces/IDEXFactory.sol";
-import {IUniswapV2Pair} from "../dex/core/interfaces/IUniswapV2Pair.sol";
+import {IUniswapV2Pair} from "../interfaces/IUniswapV2Pair.sol";
 import {AllocationLib} from "../base/AllocationLib.sol";
 
 /// @title PresaleManager

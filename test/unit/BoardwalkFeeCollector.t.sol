@@ -894,8 +894,8 @@ contract BoardwalkFeeCollectorTest is Test {
         assertEq(feeCollector.governanceVault(), address(0));
     }
 
-    function test_GovernanceBps_Is7000() public view {
-        assertEq(feeCollector.GOVERNANCE_BPS(), 7000);
+    function test_GovernanceBps_Is9000() public view {
+        assertEq(feeCollector.GOVERNANCE_BPS(), 9000);
     }
 
     function test_SignalExecuteSetGovernanceVault_Success() public {
@@ -975,7 +975,7 @@ contract BoardwalkFeeCollectorTest is Test {
         feeCollector.swapToRaiseToken(tokens, mins, block.timestamp);
 
         uint256 total = amount;
-        uint256 governanceExpected = total * 7000 / 10000;
+        uint256 governanceExpected = total * 9000 / 10000;
         uint256 treasuryExpected = total - governanceExpected;
 
         // Treasury receives its share via safeTransfer (same as before), but the
@@ -1029,7 +1029,7 @@ contract BoardwalkFeeCollectorTest is Test {
         assertEq(weth.balanceOf(address(feeCollector)), 0, "collector drained");
     }
 
-    /// @notice Bridged WETH split 30/70 to treasury/governance when the vault is set.
+    /// @notice Bridged WETH split 10/90 to treasury/governance when the vault is set.
     function test_ForwardRevenue_BridgedWeth_SplitsWhenVaultSet() public {
         address vault = makeAddr("vault");
         vm.mockCall(vault, abi.encodeWithSignature("WETH()"), abi.encode(address(weth)));
@@ -1043,7 +1043,7 @@ contract BoardwalkFeeCollectorTest is Test {
         uint256 bridged = 1000e18;
         deal(address(weth), address(feeCollector), bridged);
 
-        uint256 governanceExpected = bridged * 7000 / 10000;
+        uint256 governanceExpected = bridged * 9000 / 10000;
         uint256 treasuryExpected = bridged - governanceExpected;
 
         vm.prank(keeper);
