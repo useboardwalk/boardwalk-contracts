@@ -136,15 +136,15 @@ The split is frozen per launch at `FeeDistributor.initialize`. Defaults are set 
 
 ### Integrator slots
 
-Five equal slots, frozen at `IntegratorFeeCollector` construction ([script/FeeSchedules.sol](script/FeeSchedules.sol)). `PENDING_INTEGRATOR` slots are env-filled by the deploy script, failing loudly when unset.
+Five equal slots, frozen at `IntegratorFeeCollector` construction ([script/FeeSchedules.sol](script/FeeSchedules.sol)).
 
-| Slot | Integrator | BPS | Status |
-| ---- | ---------- | --- | ------ |
-| 0 | Sherlock | 2 | pinned |
-| 1 | DefiLlama Research | 2 | PENDING on every chain (`DEFILLAMA_RESEARCH_ADDRESS`) |
-| 2 | 0x | 2 | pinned |
-| 3 | Security Alliance (SEAL)* | 2 | pinned on Ethereum; PENDING elsewhere (`SEAL_ADDRESS`) — the confirmed address is an Ethereum-only Gnosis Safe, and a codeless contract wallet can neither claim nor rotate its frozen slot |
-| 4 | DeFi Llama* | 2 | pinned |
+| Slot | Integrator | BPS |
+| ---- | ---------- | --- |
+| 0 | Sherlock | 2 |
+| 1 | DefiLlama Research | 2 |
+| 2 | 0x | 2 |
+| 3 | Security Alliance (SEAL)* | 2 |
+| 4 | DeFi Llama* | 2 |
 
 \* public-goods donation.
 

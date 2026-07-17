@@ -99,8 +99,8 @@ snapshot/                    off-chain merkle pipeline for the migration's voter
 forge build
 forge test
 forge coverage --ir-minimum --skip "script/*" --report summary
-forge fmt src/base/ src/core/ src/interfaces/ src/governance/ src/nft/ src/crosschain/
-forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/ src/crosschain/
+forge fmt src/base/ src/core/ src/interfaces/ src/governance/ src/nft/ src/crosschain/ src/token/
+forge lint src/base/ src/core/ src/interfaces/ src/governance/ src/nft/ src/crosschain/ src/token/
 ```
 
 ## Deployment
@@ -129,7 +129,7 @@ The migration's merkle root comes from the `snapshot/` pipeline (`npm run snapsh
 
 ## Audits
 
-Reports land in `./audits/` once available.
+Reports are in `./audits/`.
 
 ## License
 
