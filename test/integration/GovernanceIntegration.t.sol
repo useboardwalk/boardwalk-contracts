@@ -6,7 +6,7 @@ import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 import {LPLocker} from "src/governance/LPLocker.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @dev Simplified mock for IRewardTracker (sbfBMX, stakedBmxTracker)
+/// @dev Simplified mock for IRewardTracker (sbfBWLK, stakedBwlkTracker)
 contract MockTracker {
     mapping(address => uint256) private _balances;
     uint256 private _totalSupply;
@@ -115,17 +115,17 @@ contract SimpleERC20 {
     }
 }
 
-/// @dev Mock Universal Router — simulates V4_SWAP by minting BMX at 2:1 rate
+/// @dev Mock Universal Router — simulates V4_SWAP by minting BWLK at 2:1 rate
 contract MockUniversalRouter {
-    SimpleERC20 public bmxToken;
+    SimpleERC20 public bwlkToken;
     SimpleERC20 public raiseToken;
     uint256 public executeCallCount;
 
     constructor(
-        address _bmx,
+        address _bwlk,
         address _raise
     ) {
-        bmxToken = SimpleERC20(payable(_bmx));
+        bwlkToken = SimpleERC20(payable(_bwlk));
         raiseToken = SimpleERC20(payable(_raise));
     }
 
@@ -138,7 +138,7 @@ contract MockUniversalRouter {
         if (commands.length > 0 && commands[0] == 0x10) {
             // Simulate swap: voter sends ETH via msg.value (native ETH v4 pool)
             if (msg.value > 0) {
-                bmxToken.mint(msg.sender, msg.value);
+                bwlkToken.mint(msg.sender, msg.value);
             }
         }
     }
@@ -149,22 +149,28 @@ contract MockUniversalRouter {
 /// @dev Mock ParticipationDistributor that records createStream calls
 contract MockParticipationDistributor {
     address public immutable GOVERNANCE_VOTER;
+    address public immutable BWLK;
     uint256 public lastEpoch;
     uint256 public lastAmount;
     uint256 public streamCount;
 
     constructor(
-        address _governanceVoter
+        address _governanceVoter,
+        address _bwlk
     ) {
         GOVERNANCE_VOTER = _governanceVoter;
+        BWLK = _bwlk;
     }
 
+    /// @dev Pulls the BWLK like the production distributor, so the voter's approval path is
+    ///      exercised, not just the call.
     function createStream(
         uint256 epoch,
-        uint256 bmxAmount
+        uint256 bwlkAmount
     ) external {
+        IERC20(BWLK).transferFrom(msg.sender, address(this), bwlkAmount);
         lastEpoch = epoch;
-        lastAmount = bmxAmount;
+        lastAmount = bwlkAmount;
         streamCount++;
     }
 }
@@ -181,9 +187,9 @@ contract MockPositionManager {
 contract GovernanceIntegrationTest is Test {
     GovernanceVoter public voter;
     LPLocker public locker;
-    MockTracker public sbfBmx;
-    MockTracker public stakedBmxTracker;
-    SimpleERC20 public bmx;
+    MockTracker public sbfBwlk;
+    MockTracker public stakedBwlkTracker;
+    SimpleERC20 public bwlk;
     SimpleERC20 public raiseToken;
     MockUniversalRouter public universalRouter;
     MockParticipationDistributor public participationDistributor;
@@ -197,13 +203,13 @@ contract GovernanceIntegrationTest is Test {
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
     address public charlie = makeAddr("charlie");
-    address public bnBmx;
+    address public bnBwlk;
 
     uint256 public constant EPOCH_DURATION = 7 days;
     uint256 public epochZero;
 
     uint8 constant OPTION_TREASURY = 1;
-    uint8 constant OPTION_BUY_BURN_BMX = 2;
+    uint8 constant OPTION_BUY_BURN_BWLK = 2;
     uint8 constant OPTION_BUY_BURN_LP = 3;
     uint8 constant OPTION_PARTICIPATION = 4;
 
@@ -216,22 +222,22 @@ contract GovernanceIntegrationTest is Test {
 
     function setUp() public {
         epochZero = block.timestamp;
-        sbfBmx = new MockTracker();
-        stakedBmxTracker = new MockTracker();
-        bmx = new SimpleERC20();
+        sbfBwlk = new MockTracker();
+        stakedBwlkTracker = new MockTracker();
+        bwlk = new SimpleERC20();
         raiseToken = new SimpleERC20();
         vm.deal(address(raiseToken), 10_000 ether);
-        bnBmx = makeAddr("bnBmx");
-        universalRouter = new MockUniversalRouter(address(bmx), address(raiseToken));
+        bnBwlk = makeAddr("bnBwlk");
+        universalRouter = new MockUniversalRouter(address(bwlk), address(raiseToken));
         positionManager = new MockPositionManager();
 
         voter = new GovernanceVoter(
             owner,
             GovernanceVoter.DeployParams({
-                sbfBmx: address(sbfBmx),
-                stakedBmxTracker: address(stakedBmxTracker),
-                bnBmx: bnBmx,
-                bmx: address(bmx),
+                sbfBwlk: address(sbfBwlk),
+                stakedBwlkTracker: address(stakedBwlkTracker),
+                bnBwlk: bnBwlk,
+                bwlk: address(bwlk),
                 weth: address(raiseToken),
                 universalRouter: address(universalRouter),
                 v4PositionManager: address(positionManager),
@@ -247,13 +253,13 @@ contract GovernanceIntegrationTest is Test {
         );
 
         // Deploy LPLocker pointed at the real voter (cross-contract wiring)
-        (address c0, address c1) = address(bmx) < address(raiseToken)
-            ? (address(bmx), address(raiseToken))
-            : (address(raiseToken), address(bmx));
+        (address c0, address c1) = address(bwlk) < address(raiseToken)
+            ? (address(bwlk), address(raiseToken))
+            : (address(raiseToken), address(bwlk));
         locker = new LPLocker(address(positionManager), address(voter), c0, c1, address(this));
 
         // Deploy participation distributor pointed at voter
-        participationDistributor = new MockParticipationDistributor(address(voter));
+        participationDistributor = new MockParticipationDistributor(address(voter), address(bwlk));
 
         // Initialize peers
         vm.prank(owner);
@@ -267,7 +273,7 @@ contract GovernanceIntegrationTest is Test {
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
         _setupVoter(charlie, 200e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
     }
 
     // ============ Helpers ============
@@ -276,9 +282,9 @@ contract GovernanceIntegrationTest is Test {
         address user,
         uint256 weight
     ) internal {
-        sbfBmx.setBalance(user, weight);
-        stakedBmxTracker.setDepositBalance(user, address(bmx), weight);
-        sbfBmx.setDepositBalance(user, bnBmx, weight / 10);
+        sbfBwlk.setBalance(user, weight);
+        stakedBwlkTracker.setDepositBalance(user, address(bwlk), weight);
+        sbfBwlk.setDepositBalance(user, bnBwlk, weight / 10);
     }
 
     function _finalizeAndExecuteEpoch0() internal {
@@ -320,13 +326,13 @@ contract GovernanceIntegrationTest is Test {
         // Epoch 0 budget should go to treasury
         assertEq(raiseToken.balanceOf(treasury), 10 ether, "Epoch 0 budget to treasury");
 
-        // Epoch 1: vote option 2 (Buy&Burn BMX) — these votes direct epoch 2
+        // Epoch 1: vote option 2 (Buy&Burn BWLK) — these votes direct epoch 2
         vm.warp(epochZero + EPOCH_DURATION);
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
-        sbfBmx.setTotalSupply(2000e18);
-        _voteOption(alice, OPTION_BUY_BURN_BMX);
-        _voteOption(bob, OPTION_BUY_BURN_BMX);
+        sbfBwlk.setTotalSupply(2000e18);
+        _voteOption(alice, OPTION_BUY_BURN_BWLK);
+        _voteOption(bob, OPTION_BUY_BURN_BWLK);
 
         // Fund epoch 1's budget
         _fundVoter(20 ether);
@@ -342,7 +348,7 @@ contract GovernanceIntegrationTest is Test {
         // Epoch 2: vote option 1 (Treasury) — these votes direct epoch 3
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _voteOption(alice, OPTION_TREASURY);
         _voteOption(bob, OPTION_TREASURY);
 
@@ -350,14 +356,14 @@ contract GovernanceIntegrationTest is Test {
         _fundVoter(15 ether);
 
         // Finalize+execute epoch 2 (uses epoch 1's votes -> option 2 wins)
-        // Option 2 = Buy&Burn BMX. The mock UR handles the swap.
-        bmx.mint(address(universalRouter), 100 ether); // Pre-fund UR for swap
+        // Option 2 = Buy&Burn BWLK. The mock UR handles the swap.
+        bwlk.mint(address(universalRouter), 100 ether); // Pre-fund UR for swap
         vm.warp(epochZero + 3 * EPOCH_DURATION);
         vm.prank(keeper);
         voter.finalize(2, type(uint256).max);
 
         GovernanceVoter.EpochInfo memory info2 = voter.getEpochInfo(2);
-        assertEq(info2.winningOption, OPTION_BUY_BURN_BMX, "Epoch 2 winner from epoch 1 votes");
+        assertEq(info2.winningOption, OPTION_BUY_BURN_BWLK, "Epoch 2 winner from epoch 1 votes");
         assertTrue(info2.finalized, "Epoch 2 finalized");
         assertEq(info2.budget, 15 ether, "Epoch 2 budget");
 
@@ -392,7 +398,7 @@ contract GovernanceIntegrationTest is Test {
         vm.warp(epochZero + EPOCH_DURATION);
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _voteOption(alice, OPTION_TREASURY);
         _voteOption(bob, OPTION_TREASURY);
 
@@ -460,10 +466,10 @@ contract GovernanceIntegrationTest is Test {
         GovernanceVoter voter2 = new GovernanceVoter(
             owner,
             GovernanceVoter.DeployParams({
-                sbfBmx: address(sbfBmx),
-                stakedBmxTracker: address(stakedBmxTracker),
-                bnBmx: bnBmx,
-                bmx: address(bmx),
+                sbfBwlk: address(sbfBwlk),
+                stakedBwlkTracker: address(stakedBwlkTracker),
+                bnBwlk: bnBwlk,
+                bwlk: address(bwlk),
                 weth: address(raiseToken),
                 universalRouter: address(universalRouter),
                 v4PositionManager: address(positionManager),
@@ -494,7 +500,7 @@ contract GovernanceIntegrationTest is Test {
         vm.warp(epochZero + EPOCH_DURATION);
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _voteOption(alice, OPTION_PARTICIPATION);
         _voteOption(bob, OPTION_PARTICIPATION);
 
@@ -507,7 +513,7 @@ contract GovernanceIntegrationTest is Test {
 
         // Fund epoch 2 budget
         _fundVoter(50 ether);
-        bmx.mint(address(universalRouter), 200 ether); // For swap
+        bwlk.mint(address(universalRouter), 200 ether); // For swap
 
         // Finalize epoch 2 (uses epoch 1 votes -> option 4 wins)
         vm.warp(epochZero + 3 * EPOCH_DURATION);
@@ -523,7 +529,12 @@ contract GovernanceIntegrationTest is Test {
 
         assertTrue(participationDistributor.streamCount() > 0, "PD createStream called");
         assertEq(participationDistributor.lastEpoch(), 2, "PD stream for epoch 2");
-        assertGt(participationDistributor.lastAmount(), 0, "PD received BMX");
+        assertGt(participationDistributor.lastAmount(), 0, "PD received BWLK");
+        assertEq(
+            bwlk.balanceOf(address(participationDistributor)),
+            participationDistributor.lastAmount(),
+            "PD pulled the full BWLK stream amount"
+        );
     }
 
     // ============ Test 5: Sequential Enforcement — Cannot Skip Epochs ============
@@ -681,7 +692,7 @@ contract GovernanceIntegrationTest is Test {
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
         _setupVoter(charlie, 200e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _voteOption(alice, OPTION_TREASURY);
         _voteOption(bob, OPTION_TREASURY);
         _voteOption(charlie, OPTION_TREASURY);
@@ -723,7 +734,7 @@ contract GovernanceIntegrationTest is Test {
         vm.warp(epochZero + EPOCH_DURATION);
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _voteOption(alice, OPTION_TREASURY);
         _voteOption(bob, OPTION_TREASURY);
 
@@ -737,7 +748,7 @@ contract GovernanceIntegrationTest is Test {
         // Vote in epoch 2 with 2 voters
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _voteOption(alice, OPTION_TREASURY);
         _voteOption(bob, OPTION_TREASURY);
 
@@ -758,7 +769,7 @@ contract GovernanceIntegrationTest is Test {
 
         // Voting should be blocked during finalization
         _setupVoter(charlie, 200e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         vm.prank(charlie);
         vm.expectRevert(GovernanceVoter.FinalizationInProgress.selector);
         voter.vote(OPTION_TREASURY);
@@ -897,9 +908,9 @@ contract GovernanceIntegrationTest is Test {
             vm.warp(epochZero + voteEpoch * EPOCH_DURATION);
             _setupVoter(alice, 1000e18);
             _setupVoter(bob, 500e18);
-            sbfBmx.setTotalSupply(2000e18);
-            _voteOption(alice, OPTION_BUY_BURN_BMX);
-            _voteOption(bob, OPTION_BUY_BURN_BMX);
+            sbfBwlk.setTotalSupply(2000e18);
+            _voteOption(alice, OPTION_BUY_BURN_BWLK);
+            _voteOption(bob, OPTION_BUY_BURN_BWLK);
         }
 
         // Finalize+execute epochs 1 (treasury, no epoch 0 votes), 2, 3, 4
@@ -909,7 +920,7 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.execute(1, 0, 0, block.timestamp);
 
-        bmx.mint(address(universalRouter), 500 ether);
+        bwlk.mint(address(universalRouter), 500 ether);
 
         vm.warp(epochZero + 3 * EPOCH_DURATION);
         vm.prank(keeper);
@@ -930,14 +941,14 @@ contract GovernanceIntegrationTest is Test {
         voter.execute(4, 0, 0, block.timestamp);
 
         // Epoch 5: option 2 should be ineligible (lastIneligibleEpoch[1] == 5)
-        assertFalse(voter.isOptionEligible(OPTION_BUY_BURN_BMX), "Option 2 ineligible in epoch 5");
+        assertFalse(voter.isOptionEligible(OPTION_BUY_BURN_BWLK), "Option 2 ineligible in epoch 5");
 
         // Voting option 2 should revert
         _setupVoter(alice, 1000e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(GovernanceVoter.OptionIneligible.selector, uint8(OPTION_BUY_BURN_BMX)));
-        voter.vote(OPTION_BUY_BURN_BMX);
+        vm.expectRevert(abi.encodeWithSelector(GovernanceVoter.OptionIneligible.selector, uint8(OPTION_BUY_BURN_BWLK)));
+        voter.vote(OPTION_BUY_BURN_BWLK);
 
         // Epoch 6: option 2 should be eligible again (cooldown = 1 epoch)
         // Finalize+execute epoch 5 first
@@ -947,13 +958,13 @@ contract GovernanceIntegrationTest is Test {
         vm.prank(keeper);
         voter.execute(5, 0, 0, block.timestamp);
 
-        assertTrue(voter.isOptionEligible(OPTION_BUY_BURN_BMX), "Option 2 eligible again in epoch 6");
+        assertTrue(voter.isOptionEligible(OPTION_BUY_BURN_BWLK), "Option 2 eligible again in epoch 6");
 
         // Can vote option 2 again
         _setupVoter(alice, 1000e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         vm.prank(alice);
-        voter.vote(OPTION_BUY_BURN_BMX); // Should not revert
+        voter.vote(OPTION_BUY_BURN_BWLK); // Should not revert
     }
 
     // ============ Test 16: Execute Without Peers Fails ============
@@ -961,7 +972,7 @@ contract GovernanceIntegrationTest is Test {
     // ============ Test 17: Option 3 (BuyBurnLP) Cross-Contract Flow ============
 
     function test_Option3_BuyBurnLP_CrossContract() public {
-        // Option 3 flow: swap half WETH->BMX via UR, mint LP position via UR->PM,
+        // Option 3 flow: swap half WETH->BWLK via UR, mint LP position via UR->PM,
         // then call locker.lockPosition(tokenId).
 
         _fundVoter(10 ether);
@@ -971,7 +982,7 @@ contract GovernanceIntegrationTest is Test {
         vm.warp(epochZero + EPOCH_DURATION);
         _setupVoter(alice, 1000e18);
         _setupVoter(bob, 500e18);
-        sbfBmx.setTotalSupply(2000e18);
+        sbfBwlk.setTotalSupply(2000e18);
         _voteOption(alice, OPTION_BUY_BURN_LP);
         _voteOption(bob, OPTION_BUY_BURN_LP);
 
@@ -1032,10 +1043,10 @@ contract GovernanceIntegrationTest is Test {
         GovernanceVoter voter2 = new GovernanceVoter(
             owner,
             GovernanceVoter.DeployParams({
-                sbfBmx: address(sbfBmx),
-                stakedBmxTracker: address(stakedBmxTracker),
-                bnBmx: bnBmx,
-                bmx: address(bmx),
+                sbfBwlk: address(sbfBwlk),
+                stakedBwlkTracker: address(stakedBwlkTracker),
+                bnBwlk: bnBwlk,
+                bwlk: address(bwlk),
                 weth: address(raiseToken),
                 universalRouter: address(universalRouter),
                 v4PositionManager: address(positionManager),

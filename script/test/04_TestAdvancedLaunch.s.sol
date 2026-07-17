@@ -26,8 +26,8 @@ contract TestAdvancedLaunchScript is BaseTestScript {
         address factoryAddress = vm.envAddress("LAUNCH_FACTORY");
         LaunchFactory factory = LaunchFactory(factoryAddress);
         address raiseToken = vm.envOr("RAISE_TOKEN_ADDRESS", factory.RAISE_TOKEN());
-        address bmx = factory.BMX();
-        uint256 bmxBurnAmount = factory.bmxBurnAmount();
+        address bwlk = factory.BWLK();
+        uint256 bwlkBurnAmount = factory.bwlkBurnAmount();
         address referrer = vm.envOr("ADV_REFERRER", deployer);
         address feeRecipientTwo = vm.envOr("ADV_FEE_RECIPIENT_TWO", deployer);
         address vestingRecipientOne = vm.envOr("ADV_VESTING_RECIPIENT_ONE", deployer);
@@ -92,10 +92,10 @@ contract TestAdvancedLaunchScript is BaseTestScript {
                 issuerFeeLabels: feeLabels
             });
 
-            if (bmxBurnAmount > 0) {
-                require(IERC20(bmx).balanceOf(deployer) >= bmxBurnAmount, "Insufficient BMX for burn");
-                IERC20(bmx).approve(factoryAddress, bmxBurnAmount);
-                _recordTx("BMX.approve");
+            if (bwlkBurnAmount > 0) {
+                require(IERC20(bwlk).balanceOf(deployer) >= bwlkBurnAmount, "Insufficient BWLK for burn");
+                IERC20(bwlk).approve(factoryAddress, bwlkBurnAmount);
+                _recordTx("BWLK.approve");
             }
 
             tokenAddr = factory.createLaunch(advancedConfig);

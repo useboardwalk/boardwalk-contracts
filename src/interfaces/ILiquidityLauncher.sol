@@ -2,7 +2,7 @@
 pragma solidity =0.8.28;
 
 /// @title ILiquidityLauncher
-/// @notice The Uniswap LiquidityLauncher calls the BWS CCA launch script makes. `depositToken` pulls
+/// @notice The Uniswap LiquidityLauncher calls made by the BWLK CCA launch script. `depositToken` pulls
 ///         from the caller via Permit2 (NOT a plain ERC20 allowance), and the launcher keeps no
 ///         per-depositor accounting, so deposit + distribute MUST be batched in one `multicall` —
 ///         tokens parked between separate txs are distributable by anyone.

@@ -6,7 +6,7 @@ import {ParticipationDistributor} from "src/governance/ParticipationDistributor.
 import {IParticipationDistributor} from "src/interfaces/IParticipationDistributor.sol";
 import {IGovernanceVoter} from "src/interfaces/IGovernanceVoter.sol";
 
-contract MockBMXToken {
+contract MockBWLKToken {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
@@ -84,19 +84,19 @@ contract MockGovernanceVoter {
 
 contract ParticipationDistributorTest is Test {
     ParticipationDistributor public distributor;
-    MockBMXToken public bmx;
+    MockBWLKToken public bwlk;
     MockGovernanceVoter public mockVoter;
 
     address public alice = makeAddr("alice");
     address public bob = makeAddr("bob");
 
-    event StreamCreated(uint256 indexed epoch, uint256 totalBmx, uint256 totalWeight);
+    event StreamCreated(uint256 indexed epoch, uint256 totalBwlk, uint256 totalWeight);
     event Claimed(uint256 indexed epoch, address indexed user, uint256 amount);
 
     function setUp() public {
-        bmx = new MockBMXToken();
+        bwlk = new MockBWLKToken();
         mockVoter = new MockGovernanceVoter();
-        distributor = new ParticipationDistributor(address(bmx), address(mockVoter));
+        distributor = new ParticipationDistributor(address(bwlk), address(mockVoter));
 
         mockVoter.setEpochInfo(0, 1000e18);
         mockVoter.setUserVote(0, alice, 1, 700e18);
@@ -107,9 +107,9 @@ contract ParticipationDistributorTest is Test {
         uint256 epoch,
         uint256 amount
     ) internal {
-        bmx.mint(address(mockVoter), amount);
+        bwlk.mint(address(mockVoter), amount);
         vm.startPrank(address(mockVoter));
-        bmx.approve(address(distributor), amount);
+        bwlk.approve(address(distributor), amount);
         distributor.createStream(epoch, amount);
         vm.stopPrank();
     }
@@ -118,17 +118,17 @@ contract ParticipationDistributorTest is Test {
 
     function test_CreateStream_HappyPath() public {
         uint256 amount = 100e18;
-        bmx.mint(address(mockVoter), amount);
+        bwlk.mint(address(mockVoter), amount);
         vm.startPrank(address(mockVoter));
-        bmx.approve(address(distributor), amount);
+        bwlk.approve(address(distributor), amount);
 
         vm.expectEmit(true, true, true, true);
         emit StreamCreated(1, amount, 1000e18);
         distributor.createStream(1, amount);
         vm.stopPrank();
 
-        (uint256 totalBmx, uint256 totalWeight, uint256 startTime) = distributor.streams(1);
-        assertEq(totalBmx, amount);
+        (uint256 totalBwlk, uint256 totalWeight, uint256 startTime) = distributor.streams(1);
+        assertEq(totalBwlk, amount);
         assertEq(totalWeight, 1000e18);
         assertEq(startTime, block.timestamp);
     }
@@ -142,9 +142,9 @@ contract ParticipationDistributorTest is Test {
     function test_RevertWhen_CreateStream_AlreadyExists() public {
         _createStream(1, 100e18);
 
-        bmx.mint(address(mockVoter), 100e18);
+        bwlk.mint(address(mockVoter), 100e18);
         vm.startPrank(address(mockVoter));
-        bmx.approve(address(distributor), 100e18);
+        bwlk.approve(address(distributor), 100e18);
         vm.expectRevert(IParticipationDistributor.StreamAlreadyExists.selector);
         distributor.createStream(1, 100e18);
         vm.stopPrank();
@@ -164,7 +164,7 @@ contract ParticipationDistributorTest is Test {
 
         vm.prank(alice);
         distributor.claim(1);
-        assertApproxEqAbs(bmx.balanceOf(alice), expected, 1);
+        assertApproxEqAbs(bwlk.balanceOf(alice), expected, 1);
     }
 
     function test_Claim_FullAfterStreamDuration() public {
@@ -180,8 +180,8 @@ contract ParticipationDistributorTest is Test {
         vm.prank(bob);
         distributor.claim(1);
 
-        assertEq(bmx.balanceOf(alice), aliceShare);
-        assertEq(bmx.balanceOf(bob), bobShare);
+        assertEq(bwlk.balanceOf(alice), aliceShare);
+        assertEq(bwlk.balanceOf(bob), bobShare);
     }
 
     function test_Claim_MultipleClaims() public {
@@ -191,14 +191,14 @@ contract ParticipationDistributorTest is Test {
         vm.warp(block.timestamp + 1 days);
         vm.prank(alice);
         distributor.claim(1);
-        uint256 first = bmx.balanceOf(alice);
+        uint256 first = bwlk.balanceOf(alice);
 
         vm.warp(block.timestamp + 6 days);
         vm.prank(alice);
         distributor.claim(1);
 
-        assertEq(bmx.balanceOf(alice), aliceShare);
-        assertGt(bmx.balanceOf(alice), first);
+        assertEq(bwlk.balanceOf(alice), aliceShare);
+        assertGt(bwlk.balanceOf(alice), first);
     }
 
     function test_RevertWhen_Claim_NotEligible() public {
@@ -243,9 +243,9 @@ contract ParticipationDistributorTest is Test {
     function test_CreateStream_WithZeroWeight() public {
         mockVoter.setEpochInfo(0, 0);
 
-        bmx.mint(address(mockVoter), 100e18);
+        bwlk.mint(address(mockVoter), 100e18);
         vm.startPrank(address(mockVoter));
-        bmx.approve(address(distributor), 100e18);
+        bwlk.approve(address(distributor), 100e18);
         distributor.createStream(1, 100e18);
         vm.stopPrank();
 
@@ -302,7 +302,7 @@ contract ParticipationDistributorTest is Test {
         vm.prank(alice);
         distributor.claimAll(epochs);
 
-        assertEq(bmx.balanceOf(alice), epoch1Share + epoch2Share);
+        assertEq(bwlk.balanceOf(alice), epoch1Share + epoch2Share);
     }
 
     function test_ClaimAll_SkipsZeroClaimableEpochs() public {
@@ -316,7 +316,7 @@ contract ParticipationDistributorTest is Test {
 
         vm.prank(alice);
         distributor.claim(1);
-        uint256 balAfterFirst = bmx.balanceOf(alice);
+        uint256 balAfterFirst = bwlk.balanceOf(alice);
 
         uint256[] memory epochs = new uint256[](2);
         epochs[0] = 1;
@@ -326,7 +326,7 @@ contract ParticipationDistributorTest is Test {
         distributor.claimAll(epochs);
 
         uint256 epoch2Share = 200e18 * 700e18 / 1000e18;
-        assertEq(bmx.balanceOf(alice), balAfterFirst + epoch2Share);
+        assertEq(bwlk.balanceOf(alice), balAfterFirst + epoch2Share);
     }
 
     function test_ClaimAll_PartialVesting() public {
@@ -349,7 +349,7 @@ contract ParticipationDistributorTest is Test {
         vm.prank(alice);
         distributor.claimAll(epochs);
 
-        assertApproxEqAbs(bmx.balanceOf(alice), expectedTotal, 1);
+        assertApproxEqAbs(bwlk.balanceOf(alice), expectedTotal, 1);
     }
 
     function test_RevertWhen_ClaimAll_NothingToClaim() public {
@@ -386,7 +386,7 @@ contract ParticipationDistributorTest is Test {
         vm.prank(alice);
         distributor.claimAll(epochs);
 
-        assertEq(bmx.balanceOf(alice), aliceShare);
+        assertEq(bwlk.balanceOf(alice), aliceShare);
         assertEq(distributor.claimed(1, alice), aliceShare);
     }
 
@@ -424,9 +424,9 @@ contract ParticipationDistributorTest is Test {
         mockVoter.setEpochInfo(5, 1000);
         mockVoter.setUserVote(5, alice, 1, 1);
 
-        bmx.mint(address(mockVoter), 1);
+        bwlk.mint(address(mockVoter), 1);
         vm.startPrank(address(mockVoter));
-        bmx.approve(address(distributor), 1);
+        bwlk.approve(address(distributor), 1);
         distributor.createStream(6, 1);
         vm.stopPrank();
 

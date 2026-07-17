@@ -10,10 +10,10 @@ import {IDEXRouter} from "../interfaces/IDEXRouter.sol";
 import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 
 /// @title BoardwalkFeeCollector
-/// @notice Singleton aggregator for the boardwalk share of every launch's tax. Keeper batch-swaps
+/// @notice Singleton aggregator for the Boardwalk share of every launch's tax. Keeper batch-swaps
 ///         to raise token and forwards to treasury. When `governanceVault` is set, raise-token
-///         output is split 30% treasury / 70% governanceVault (Base only). Raise-token revenue
-///         bridged in from non-Base chains is forwarded by the keeper-only `forwardRevenue`.
+///         output is split 10% treasury / 90% governanceVault. Raise-token revenue
+///         bridged in from other chains is forwarded by the keeper-only `forwardRevenue`.
 contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     using SafeERC20 for IERC20;
 
@@ -25,7 +25,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     bytes32 public constant ACTION_MIGRATE_COLLECTOR = keccak256("MIGRATE_COLLECTOR");
     bytes32 public constant ACTION_SET_GOVERNANCE_VAULT = keccak256("SET_GOVERNANCE_VAULT");
 
-    uint256 public constant GOVERNANCE_BPS = 7_000;
+    uint256 public constant GOVERNANCE_BPS = 9_000;
     uint256 private constant BPS_DENOMINATOR = 10_000;
 
     address public treasury;
@@ -140,7 +140,7 @@ contract BoardwalkFeeCollector is Ownable2Step, Timelocked {
     }
 
     /// @notice Keeper-only. Forwards the contract's raise-token balance to treasury (and governance
-    ///         vault, if set) using the same 30/70 split as `swapToRaiseToken`.
+    ///         vault, if set) using the same 10/90 split as `swapToRaiseToken`.
     function forwardRevenue() external {
         if (msg.sender != keeper) revert NotKeeper();
         accumulatedFees[RAISE_TOKEN] = 0;

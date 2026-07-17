@@ -9,22 +9,22 @@ import {Timelocked} from "../base/Timelocked.sol";
 import {ILiFi} from "../interfaces/ILiFi.sol";
 
 /// @title RevenueBridger
-/// @notice Bridger deployed to each non-Base chain. Holds the chain's raise token and
+/// @notice Bridger deployed to each non-Ethereum chain. Holds the chain's raise token and
 ///         forwards keeper-built LiFi route calldata to the per-chain LiFi Diamond,
-///         pinned to deliver to the `BaseRevenueSwapper` on Base.
+///         pinned to deliver to the `EthereumRevenueSwapper` on Ethereum.
 contract RevenueBridger is Ownable2Step, Timelocked, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     address public immutable DIAMOND; // LiFi Diamond
     address public immutable RAISE_TOKEN;
-    address public immutable BASE_DESTINATION; // BaseRevenueSwapper on Base
-    address public immutable BASE_WETH;
+    address public immutable ETHEREUM_DESTINATION; // EthereumRevenueSwapper on Ethereum
+    address public immutable ETHEREUM_WETH;
     /// @dev True for composed (source-swap) lanes, false for pure Across V4 lanes.
     bool public immutable HAS_SOURCE_SWAPS;
     /// @dev Max tolerated relayer-fee spread on the Across `outputAmount` floor.
     uint256 public immutable MAX_FEE_BPS;
 
-    uint256 public constant BASE_CHAIN_ID = 8453;
+    uint256 public constant ETHEREUM_CHAIN_ID = 1;
     uint256 public constant BPS_DENOMINATOR = 10_000;
 
     bytes32 public constant ACTION_SET_KEEPER = keccak256("REVENUE_BRIDGER_SET_KEEPER");
@@ -59,7 +59,7 @@ contract RevenueBridger is Ownable2Step, Timelocked, ReentrancyGuardTransient {
     error NativeRefundFailed();
     error RescueFailed();
 
-    event BridgedToBase(bytes4 indexed selector, uint256 amount, uint256 balanceDelta, uint256 nativeFee);
+    event BridgedToEthereum(bytes4 indexed selector, uint256 amount, uint256 balanceDelta, uint256 nativeFee);
     event KeeperRevoked(address indexed previousKeeper);
     event KeeperUpdated(address indexed newKeeper);
     event SelectorSet(bytes4 indexed selector, bool allowed);
@@ -69,23 +69,23 @@ contract RevenueBridger is Ownable2Step, Timelocked, ReentrancyGuardTransient {
         address _owner,
         address _diamond,
         address _raiseToken,
-        address _baseDestination,
-        address _baseWeth,
+        address _ethereumDestination,
+        address _ethereumWeth,
         address _keeper,
         bool _hasSourceSwaps,
         uint256 _maxFeeBps,
         bytes4[] memory _initialSelectors
     ) Ownable(_owner) {
         if (
-            _diamond == address(0) || _raiseToken == address(0) || _baseDestination == address(0)
-                || _baseWeth == address(0) || _keeper == address(0)
+            _diamond == address(0) || _raiseToken == address(0) || _ethereumDestination == address(0)
+                || _ethereumWeth == address(0) || _keeper == address(0)
         ) revert ZeroAddress();
         if (_maxFeeBps >= BPS_DENOMINATOR) revert InvalidConfig();
 
         DIAMOND = _diamond;
         RAISE_TOKEN = _raiseToken;
-        BASE_DESTINATION = _baseDestination;
-        BASE_WETH = _baseWeth;
+        ETHEREUM_DESTINATION = _ethereumDestination;
+        ETHEREUM_WETH = _ethereumWeth;
         keeper = _keeper;
         HAS_SOURCE_SWAPS = _hasSourceSwaps;
         MAX_FEE_BPS = _maxFeeBps;
@@ -101,10 +101,10 @@ contract RevenueBridger is Ownable2Step, Timelocked, ReentrancyGuardTransient {
 
     receive() external payable {}
 
-    /// @notice Bridge `amount` of the raise token to Base via the keeper-supplied LiFi route.
+    /// @notice Bridge `amount` of the raise token to Ethereum via the keeper-supplied LiFi route.
     /// @param amount The raise token amount to deposit into the route.
     /// @param lifiCalldata The keeper-built LiFi Diamond calldata (selector + `BridgeData` + facet data).
-    function bridgeToBase(
+    function bridgeToEthereum(
         uint256 amount,
         bytes calldata lifiCalldata
     ) external payable nonReentrant {
@@ -140,7 +140,7 @@ contract RevenueBridger is Ownable2Step, Timelocked, ReentrancyGuardTransient {
             if (!refunded) revert NativeRefundFailed();
         }
 
-        emit BridgedToBase(selector, amount, delta, msg.value > refund ? msg.value - refund : 0);
+        emit BridgedToEthereum(selector, amount, delta, msg.value > refund ? msg.value - refund : 0);
     }
 
     /// @dev Decodes the keeper calldata and pins the fields the lane's facet consumes.
@@ -151,14 +151,14 @@ contract RevenueBridger is Ownable2Step, Timelocked, ReentrancyGuardTransient {
         // Every facet takes `ILiFi.BridgeData` first; decoding it (or a prefix tuple) from longer calldata is sound.
         ILiFi.BridgeData memory bridgeData = abi.decode(lifiCalldata[4:], (ILiFi.BridgeData));
 
-        if (bridgeData.receiver != BASE_DESTINATION) revert InvalidReceiver();
-        if (bridgeData.destinationChainId != BASE_CHAIN_ID) revert InvalidDestinationChain();
+        if (bridgeData.receiver != ETHEREUM_DESTINATION) revert InvalidReceiver();
+        if (bridgeData.destinationChainId != ETHEREUM_CHAIN_ID) revert InvalidDestinationChain();
         if (bridgeData.hasDestinationCall) revert DestinationCallNotAllowed();
         // Reject a calldata shape that doesn't match the lane's frozen config.
         if (bridgeData.hasSourceSwaps != HAS_SOURCE_SWAPS) revert InvalidSourceSwaps();
 
         if (!HAS_SOURCE_SWAPS) {
-            // Pure Across V4 (ETH/Ink): the facet deposits `BridgeData.sendingAssetId`/`minAmount`, so pin them.
+            // Pure Across V4 (Base/Arbitrum/Robinhood): the facet deposits `BridgeData.sendingAssetId`/`minAmount`, so pin them.
             if (bridgeData.sendingAssetId != RAISE_TOKEN) revert InvalidSendingAsset();
             if (bridgeData.minAmount != amount) revert InvalidMinAmount();
 
@@ -170,13 +170,13 @@ contract RevenueBridger is Ownable2Step, Timelocked, ReentrancyGuardTransient {
             if (acrossData.refundAddress != _toBytes32(address(this))) revert InvalidRefundAddress();
             // V4 uses the facet-data `sendingAssetId` as the SpokePool inputToken.
             if (acrossData.sendingAssetId != _toBytes32(RAISE_TOKEN)) revert InvalidSendingAsset();
-            if (acrossData.receivingAssetId != _toBytes32(BASE_WETH)) revert InvalidReceivingAsset();
+            if (acrossData.receivingAssetId != _toBytes32(ETHEREUM_WETH)) revert InvalidReceivingAsset();
             uint256 floor = amount * (BPS_DENOMINATOR - MAX_FEE_BPS) / BPS_DENOMINATOR;
             if (acrossData.outputAmount < floor) revert InsufficientOutputAmount();
             // Recheck of the facet's own receiver constraint.
-            if (acrossData.receiverAddress != _toBytes32(BASE_DESTINATION)) revert InvalidReceiverAddress();
+            if (acrossData.receiverAddress != _toBytes32(ETHEREUM_DESTINATION)) revert InvalidReceiverAddress();
         } else {
-            // Composed (Katana/Symbiosis, Fraxtal/Glacis): `BridgeData.sendingAssetId`/`minAmount` are
+            // Composed (source-swap) lanes: `BridgeData.sendingAssetId`/`minAmount` are
             // post-swap and not pinned; pin the deposited input across the `requiresDeposit` legs.
             (, ILiFi.SwapData[] memory swaps) = abi.decode(lifiCalldata[4:], (ILiFi.BridgeData, ILiFi.SwapData[]));
             uint256 sum;

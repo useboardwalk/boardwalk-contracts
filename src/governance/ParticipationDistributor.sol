@@ -7,24 +7,24 @@ import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 import {IParticipationDistributor} from "../interfaces/IParticipationDistributor.sol";
 
 /// @title ParticipationDistributor
-/// @notice 7-day linear BMX stream per epoch when governance Option 4 wins. Eligibility is locked
-///         at vote time: voters from epoch N-1 share epoch N's BMX in proportion to their vote weight.
+/// @notice 7-day linear BWLK stream per epoch when governance Option 4 wins. Eligibility is locked
+///         at vote time: voters from epoch N-1 share epoch N's BWLK in proportion to their vote weight.
 contract ParticipationDistributor is IParticipationDistributor {
     using SafeERC20 for IERC20;
 
     uint256 public constant STREAM_DURATION = 7 days;
 
-    address public immutable BMX;
+    address public immutable BWLK;
     address public immutable GOVERNANCE_VOTER;
 
     mapping(uint256 => StreamInfo) public streams;
     mapping(uint256 => mapping(address => uint256)) public claimed;
 
     constructor(
-        address _bmx,
+        address _bwlk,
         address _governanceVoter
     ) {
-        BMX = _bmx;
+        BWLK = _bwlk;
         GOVERNANCE_VOTER = _governanceVoter;
     }
 
@@ -32,19 +32,19 @@ contract ParticipationDistributor is IParticipationDistributor {
     ///         the prior epoch (`epoch - 1`); that's the eligibility set for this stream.
     function createStream(
         uint256 epoch,
-        uint256 bmxAmount
+        uint256 bwlkAmount
     ) external override {
         if (msg.sender != GOVERNANCE_VOTER) revert NotGovernanceVoter();
-        if (streams[epoch].totalBmx != 0) revert StreamAlreadyExists();
+        if (streams[epoch].totalBwlk != 0) revert StreamAlreadyExists();
 
         IGovernanceVoter.EpochInfo memory priorEpoch = IGovernanceVoter(GOVERNANCE_VOTER).getEpochInfo(epoch - 1);
 
-        IERC20(BMX).safeTransferFrom(msg.sender, address(this), bmxAmount);
+        IERC20(BWLK).safeTransferFrom(msg.sender, address(this), bwlkAmount);
 
         streams[epoch] =
-            StreamInfo({totalBmx: bmxAmount, totalWeight: priorEpoch.totalVoteWeight, startTime: block.timestamp});
+            StreamInfo({totalBwlk: bwlkAmount, totalWeight: priorEpoch.totalVoteWeight, startTime: block.timestamp});
 
-        emit StreamCreated(epoch, bmxAmount, priorEpoch.totalVoteWeight);
+        emit StreamCreated(epoch, bwlkAmount, priorEpoch.totalVoteWeight);
     }
 
     function claim(
@@ -52,7 +52,7 @@ contract ParticipationDistributor is IParticipationDistributor {
     ) external override {
         uint256 amount = _processClaim(epoch);
         if (amount == 0) revert NothingToClaim();
-        IERC20(BMX).safeTransfer(msg.sender, amount);
+        IERC20(BWLK).safeTransfer(msg.sender, amount);
     }
 
     /// @notice Reverts if nothing is claimable across the supplied epochs (skips zero-claimable ones).
@@ -64,7 +64,7 @@ contract ParticipationDistributor is IParticipationDistributor {
             total += _processClaim(epochs[i]);
         }
         if (total == 0) revert NothingToClaim();
-        IERC20(BMX).safeTransfer(msg.sender, total);
+        IERC20(BWLK).safeTransfer(msg.sender, total);
     }
 
     function _processClaim(
@@ -84,12 +84,12 @@ contract ParticipationDistributor is IParticipationDistributor {
         address user
     ) public view override returns (uint256 totalAllocation, uint256 claimableAmount) {
         StreamInfo memory s = streams[epoch];
-        if (s.totalBmx == 0 || s.totalWeight == 0) return (0, 0);
+        if (s.totalBwlk == 0 || s.totalWeight == 0) return (0, 0);
 
         IGovernanceVoter.UserVote memory uv = IGovernanceVoter(GOVERNANCE_VOTER).getUserVote(epoch - 1, user);
         if (uv.option == 0) return (0, 0);
 
-        totalAllocation = s.totalBmx * uv.weight / s.totalWeight;
+        totalAllocation = s.totalBwlk * uv.weight / s.totalWeight;
         if (totalAllocation == 0) return (0, 0);
 
         uint256 elapsed = block.timestamp - s.startTime;

@@ -21,7 +21,7 @@ import {ILPStaking} from "src/interfaces/ILPStaking.sol";
 import {IPresaleManager} from "src/interfaces/IPresaleManager.sol";
 import {IBoardwalkToken} from "src/interfaces/IBoardwalkToken.sol";
 
-/// @dev Mock ERC20 with mint/burn for WETH and BMX
+/// @dev Mock ERC20 with mint/burn for WETH and BWLK
 contract MockERC20 is ERC20 {
     constructor(
         string memory name,
@@ -269,7 +269,7 @@ abstract contract IntegrationBase is Test {
     // ============ System Contracts ============
 
     MockERC20 internal weth;
-    MockERC20 internal bmx;
+    MockERC20 internal bwlk;
     MockDEXFactory internal dexFactory;
     MockRouter internal router;
 
@@ -307,7 +307,7 @@ abstract contract IntegrationBase is Test {
 
     // ============ Constants ============
 
-    uint256 internal constant DEFAULT_BMX_BURN = 100e18;
+    uint256 internal constant DEFAULT_BWLK_BURN = 100e18;
     uint256 internal constant GRADUATION_THRESHOLD = 10 ether;
     uint256 internal constant TOTAL_SUPPLY = 10_000_000_000e18; // 10B tokens
     uint256 internal constant SEED_DELAY = 1 hours;
@@ -335,7 +335,7 @@ abstract contract IntegrationBase is Test {
 
         // Deploy mock tokens
         weth = new MockERC20("Wrapped Ether", "WETH");
-        bmx = new MockERC20("BMX", "BMX");
+        bwlk = new MockERC20("BWLK", "BWLK");
 
         // Deploy mock DEX
         dexFactory = new MockDEXFactory();
@@ -384,7 +384,7 @@ abstract contract IntegrationBase is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: address(router),
                 boardwalkDexFactory: address(dexFactory),
@@ -392,7 +392,7 @@ abstract contract IntegrationBase is Test {
                 boardwalkFeeCollector: address(feeCollector),
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_THRESHOLD,
                 graduationAdvanced: GRADUATION_THRESHOLD,
                 expressDuration: 24 hours,
@@ -413,10 +413,10 @@ abstract contract IntegrationBase is Test {
 
     /// @dev Create an Express launch with default config
     function _createExpressLaunch() internal returns (address tokenAddr) {
-        // Mint BMX for burn
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        // Mint BWLK for burn
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         // Build config
         address[] memory feeRecipients = new address[](1);
@@ -449,9 +449,9 @@ abstract contract IntegrationBase is Test {
 
     /// @dev Create an Advanced launch with vesting and referrer
     function _createAdvancedLaunch() internal returns (address tokenAddr) {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         address[] memory feeRecipients = new address[](2);
         feeRecipients[0] = feeRecipient1;

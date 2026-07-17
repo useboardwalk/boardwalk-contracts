@@ -16,9 +16,7 @@ import {GovernanceVoter} from "src/governance/GovernanceVoter.sol";
 ///
 /// Optional env:
 ///   VOTER_PRIVATE_KEY — sbf fee-tracker token holder key for voting (defaults to DEPLOYER_PRIVATE_KEY)
-///   VOTE_OPTION       — 1=Treasury, 2=BuyBurnBMX, 3=BuyBurnLP, 4=Participation (default: 1;
-///                       option names predate the migration — the buy&burn asset is the deployment's
-///                       protocol token, BWS on Arbitrum)
+///   VOTE_OPTION       — 1=Treasury, 2=BuyBurnBWLK, 3=BuyBurnLP, 4=Participation (default: 1)
 ///   REVENUE_AMOUNT    — WETH to deposit via depositRevenue (default: 0.0001 ether)
 ///   ACTION            — "vote", "deposit", "finalize", "execute", "forceExecute", or "all" (default: "all")
 contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
@@ -117,7 +115,7 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
         uint256 currentEpoch,
         address voterAddr
     ) internal {
-        string[4] memory optionNames = ["Treasury", "BuyBurnBMX", "BuyBurnLP", "Participation"];
+        string[4] memory optionNames = ["Treasury", "BuyBurnBWLK", "BuyBurnLP", "Participation"];
 
         GovernanceVoter.UserVote memory uv = voter.getUserVote(currentEpoch, voterAddr);
         if (uv.option != 0) {
@@ -241,7 +239,7 @@ contract TestGovernanceVoteAndExecuteScript is BaseTestScript {
         _recordTx(string.concat("GovernanceVoter.finalize(", vm.toString(epochToFinalize), ")"));
 
         GovernanceVoter.EpochInfo memory result = voter.getEpochInfo(epochToFinalize);
-        string[4] memory optionNames = ["Treasury", "BuyBurnBMX", "BuyBurnLP", "Participation"];
+        string[4] memory optionNames = ["Treasury", "BuyBurnBWLK", "BuyBurnLP", "Participation"];
         console.log(
             string.concat(
                 "  Winner: ",

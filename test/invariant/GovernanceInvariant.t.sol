@@ -256,9 +256,9 @@ contract GovernanceInvariantTest is Test {
     GovernanceVoter public voter;
     GovernanceHandler public handler;
 
-    MockGovRewardTracker public sbfBmx;
-    MockGovRewardTracker public stakedBmxTracker;
-    MockGovToken public bmx;
+    MockGovRewardTracker public sbfBwlk;
+    MockGovRewardTracker public stakedBwlkTracker;
+    MockGovToken public bwlk;
     MockGovToken public raiseToken;
     MockInvariantLPLocker public locker;
     MockInvariantParticipationDistributor public distributor;
@@ -270,16 +270,16 @@ contract GovernanceInvariantTest is Test {
     address public feeCollector = makeAddr("feeCollector");
 
     function setUp() public {
-        sbfBmx = new MockGovRewardTracker();
-        stakedBmxTracker = new MockGovRewardTracker();
-        bmx = new MockGovToken();
+        sbfBwlk = new MockGovRewardTracker();
+        stakedBwlkTracker = new MockGovRewardTracker();
+        bwlk = new MockGovToken();
         raiseToken = new MockGovToken();
 
         GovernanceVoter.DeployParams memory p = GovernanceVoter.DeployParams({
-            sbfBmx: address(sbfBmx),
-            stakedBmxTracker: address(stakedBmxTracker),
-            bnBmx: makeAddr("bnBmx"),
-            bmx: address(bmx),
+            sbfBwlk: address(sbfBwlk),
+            stakedBwlkTracker: address(stakedBwlkTracker),
+            bnBwlk: makeAddr("bnBwlk"),
+            bwlk: address(bwlk),
             weth: address(raiseToken),
             universalRouter: address(new MockGovToken()),
             v4PositionManager: address(new MockGovToken()),

@@ -8,20 +8,20 @@ import {CCIPConfig} from "script/CCIPConfig.sol";
 
 /// @title DeployNFTBridge
 /// @notice Deploys the Boardwalk Club bridge: the lockbox on Base, a mirror on each spoke
-///         (Ethereum, Katana, Ink, Fraxtal).
-/// @dev Runbook:
-///      1. Base: run this script. Peers start empty, so `bridge` reverts `NoPeer` and nothing
-///         can enter custody before step 3.
-///      2. Each spoke: rerun with LOCKBOX_ADDRESS set. The mirror wires its Base peer in the
+///         (Ethereum, Arbitrum, Robinhood).
+/// @dev The Base lockbox and the Ethereum/Arbitrum mirrors are already live; in practice this
+///      script now only deploys a mirror on a NEW spoke (e.g. Robinhood). Runbook for a new spoke:
+///      1. Spoke: run with LOCKBOX_ADDRESS set. The mirror wires its Base peer in the
 ///         constructor; no post-deploy call needed.
-///      3. Base: run script/05_WireLockboxPeers.s.sol with the four MIRROR_* addresses.
-///      4. Canary round-trip per lane with a team-held token before any announcement. A
+///      2. Base: the lockbox's one-shot `initializePeers` is consumed, so wire the new spoke via
+///         script/05_AddLockboxPeer.s.sol (typed SET_PEER, 7-day timelock: signal, wait, execute).
+///      3. Canary round-trip on the new lane with a team-held token before any announcement. A
 ///         mis-wired peer is not a revert but a delivery marked successful without executing
 ///         (see lockbox NatSpec); the canary is the only check that catches it.
-///      5. transferOwnership (2-step) of all five contracts to the multisig.
-///      6. Per spoke, re-point gating via the existing timelocks: LaunchFactory and BoostBurn
-///         `signalAction(ACTION_SET_NFT_COLLECTION, keccak256(abi.encode(mirror)))`, wait 7
-///         days, `executeSetNftCollection(mirror)`. Base keeps the original collection.
+///      4. transferOwnership (2-step) of the mirror to the multisig.
+///      5. On the spoke, point gating at the mirror via the existing timelocks: LaunchFactory and
+///         BoostBurn `signalAction(ACTION_SET_NFT_COLLECTION, keccak256(abi.encode(mirror)))`,
+///         wait 7 days, `executeSetNftCollection(mirror)`. Base keeps the original collection.
 ///      Peer migration: never re-point a live peer without draining the lane. `removePeer` the
 ///      outgoing side when you signal (the lane drains during the 7-day delay; execute is
 ///      permissionless after it), wait out in-flight deliveries, then execute.
@@ -32,8 +32,10 @@ contract DeployNFTBridge is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        // Deployer stays initial owner so 05_WireLockboxPeers can wire peers without a timelock;
-        // ownership moves to the multisig (2-step) after the canary round-trips.
+        // OWNER may be the multisig directly (no later transfer), or default to the deployer with
+        // a 2-step transferOwnership to the multisig after the canary round-trips. Neither path
+        // shortcuts the Base-side wiring: 05_AddLockboxPeer's SET_PEER signal is gated on the
+        // LOCKBOX owner and takes the 7-day timelock either way.
         address owner = vm.envOr("OWNER", deployer);
         require(owner != address(0), "OWNER required");
 

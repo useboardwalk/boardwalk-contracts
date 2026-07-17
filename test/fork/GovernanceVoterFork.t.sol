@@ -64,10 +64,10 @@ contract GovernanceVoterForkTest is Test {
         voter = new GovernanceVoter(
             owner,
             GovernanceVoter.DeployParams({
-                sbfBmx: BASE_SBF_BMX,
-                stakedBmxTracker: BASE_STAKED_BMX_TRACKER,
-                bnBmx: BASE_BN_BMX,
-                bmx: BASE_BMX,
+                sbfBwlk: BASE_SBF_BMX,
+                stakedBwlkTracker: BASE_STAKED_BMX_TRACKER,
+                bnBwlk: BASE_BN_BMX,
+                bwlk: BASE_BMX,
                 weth: BASE_WETH,
                 universalRouter: BASE_UNIVERSAL_ROUTER,
                 v4PositionManager: BASE_POSITION_MANAGER,
@@ -100,7 +100,7 @@ contract GovernanceVoterForkTest is Test {
         assertEq(voter.UNIVERSAL_ROUTER(), BASE_UNIVERSAL_ROUTER);
         assertEq(voter.V4_POSITION_MANAGER(), BASE_POSITION_MANAGER);
         assertEq(voter.WETH(), BASE_WETH);
-        assertEq(voter.BMX(), BASE_BMX);
+        assertEq(voter.BWLK(), BASE_BMX);
         assertTrue(voter.peersInitialized());
     }
 

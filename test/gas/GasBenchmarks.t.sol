@@ -43,9 +43,9 @@ contract GasBenchmarks is IntegrationBase {
 
     /// forge-config: default.isolate = true
     function test_gas_createLaunch_Express() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
 
@@ -56,9 +56,9 @@ contract GasBenchmarks is IntegrationBase {
 
     /// forge-config: default.isolate = true
     function test_gas_createLaunch_Advanced() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
 

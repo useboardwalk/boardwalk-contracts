@@ -20,7 +20,7 @@ import {Timelocked} from "src/base/Timelocked.sol";
 
 // ============ Mocks ============
 
-/// @dev Mock ERC20 token with mint and burn functions (for BMX and WETH)
+/// @dev Mock ERC20 token with mint and burn functions (for BWLK and WETH)
 contract MockERC20 is ERC20 {
     constructor(
         string memory name,
@@ -181,7 +181,7 @@ contract LaunchFactoryTest is Test {
     // ============ Constants ============
 
     uint256 internal constant BPS_DENOMINATOR = 10000;
-    uint256 internal constant DEFAULT_BMX_BURN = 100e18;
+    uint256 internal constant DEFAULT_BWLK_BURN = 100e18;
     uint256 internal constant EXPRESS_DURATION = 24 hours;
     uint256 internal constant ADVANCED_DURATION = 7 days;
     uint256 internal constant MIN_PRESALE_PERCENT = 2500;
@@ -199,7 +199,7 @@ contract LaunchFactoryTest is Test {
     PresaleManager internal presaleTemplate;
     VestingStream internal vestingTemplate;
     LPStaking internal lpStakingTemplate;
-    MockERC20 internal bmx;
+    MockERC20 internal bwlk;
     MockERC20 internal weth;
 
     address internal owner;
@@ -225,7 +225,7 @@ contract LaunchFactoryTest is Test {
 
     // ============ Action Keys (local constants to avoid consuming vm.prank) ============
 
-    bytes32 constant ACTION_SET_BMX_BURN = keccak256("SET_BMX_BURN");
+    bytes32 constant ACTION_SET_BWLK_BURN = keccak256("SET_BWLK_BURN");
     bytes32 constant ACTION_SET_GRADUATION_EXPRESS = keccak256("SET_GRADUATION_EXPRESS");
     bytes32 constant ACTION_SET_GRADUATION_ADVANCED = keccak256("SET_GRADUATION_ADVANCED");
     bytes32 constant ACTION_SET_EXPRESS_DURATION = keccak256("SET_EXPRESS_DURATION");
@@ -247,7 +247,7 @@ contract LaunchFactoryTest is Test {
         string[] issuerFeeLabels,
         string[] vestingLabels
     );
-    event BmxBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
+    event BwlkBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
     event ChangeSignaled(bytes32 indexed action, bytes32 dataHash, uint256 executeTime, uint256 expiresAt);
     event ChangeExecuted(bytes32 indexed action);
     event ChangeCanceled(bytes32 indexed action);
@@ -283,7 +283,7 @@ contract LaunchFactoryTest is Test {
         lpStakingTemplate = new LPStaking();
 
         // Deploy mock tokens
-        bmx = new MockERC20("BMX", "BMX");
+        bwlk = new MockERC20("BWLK", "BWLK");
         weth = new MockERC20("WETH", "WETH");
 
         // Set default fee BPS. Referrer is CARVED from boardwalk, not additive to total.
@@ -314,7 +314,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -322,7 +322,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -339,7 +339,7 @@ contract LaunchFactoryTest is Test {
 
         // Label addresses for better traces
         vm.label(address(factory), "LaunchFactory");
-        vm.label(address(bmx), "BMX");
+        vm.label(address(bwlk), "BWLK");
         vm.label(address(weth), "WETH");
         vm.label(issuer, "issuer");
     }
@@ -354,7 +354,7 @@ contract LaunchFactoryTest is Test {
         assertEq(address(factory.PRESALE_IMPL()), address(presaleTemplate), "presaleImpl mismatch");
         assertEq(address(factory.VESTING_IMPL()), address(vestingTemplate), "vestingImpl mismatch");
         assertEq(address(factory.LP_STAKING_IMPL()), address(lpStakingTemplate), "lpStakingImpl mismatch");
-        assertEq(address(factory.BMX()), address(bmx), "BMX mismatch");
+        assertEq(address(factory.BWLK()), address(bwlk), "BWLK mismatch");
         assertEq(address(factory.RAISE_TOKEN()), address(weth), "raise token mismatch");
         assertEq(address(factory.BOARDWALK_ROUTER()), boardwalkRouter, "router mismatch");
         assertEq(address(factory.BOARDWALK_DEX_FACTORY()), boardwalkDEXFactory, "dexFactory mismatch");
@@ -363,14 +363,14 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_Initialize_SetsDefaultParameters() public view {
-        assertEq(factory.bmxBurnAmount(), DEFAULT_BMX_BURN, "bmxBurnAmount mismatch");
+        assertEq(factory.bwlkBurnAmount(), DEFAULT_BWLK_BURN, "bwlkBurnAmount mismatch");
         assertEq(factory.expressDuration(), EXPRESS_DURATION, "expressDuration mismatch");
         assertEq(factory.advancedDuration(), ADVANCED_DURATION, "advancedDuration mismatch");
         assertEq(factory.minPresalePercent(), MIN_PRESALE_PERCENT, "minPresalePercent mismatch");
         assertEq(factory.maxPresalePercent(), MAX_PRESALE_PERCENT, "maxPresalePercent mismatch");
         assertEq(factory.graduationExpress(), GRADUATION_EXPRESS, "graduationExpress mismatch");
         assertEq(factory.graduationAdvanced(), GRADUATION_ADVANCED, "graduationAdvanced mismatch");
-        assertFalse(factory.isActionBurned(factory.ACTION_SET_BMX_BURN()), "ACTION_SET_BMX_BURN should not be burned");
+        assertFalse(factory.isActionBurned(factory.ACTION_SET_BWLK_BURN()), "ACTION_SET_BWLK_BURN should not be burned");
     }
 
     function test_Initialize_SetsFeeDefaults() public view {
@@ -399,10 +399,10 @@ contract LaunchFactoryTest is Test {
     // ============ CreateLaunch - Express Path ============
 
     function test_CreateLaunch_ExpressPath_Success() public {
-        // Setup BMX balance and approval
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        // Setup BWLK balance and approval
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         // Build Express config
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
@@ -411,9 +411,9 @@ contract LaunchFactoryTest is Test {
         vm.prank(issuer);
         address tokenAddr = factory.createLaunch(config);
 
-        // Verify BMX was burned
-        assertEq(bmx.balanceOf(issuer), 0, "BMX should be burned from issuer");
-        assertEq(bmx.balanceOf(factory.DEAD_ADDRESS()), DEFAULT_BMX_BURN, "BMX should be in dead address");
+        // Verify BWLK was burned
+        assertEq(bwlk.balanceOf(issuer), 0, "BWLK should be burned from issuer");
+        assertEq(bwlk.balanceOf(factory.DEAD_ADDRESS()), DEFAULT_BWLK_BURN, "BWLK should be in dead address");
 
         // Verify launch info
         LaunchFactory.LaunchInfo memory info = _getLaunchInfo(tokenAddr);
@@ -448,9 +448,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_ExpressPath_NoVestingClone() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
 
@@ -462,9 +462,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_ExpressPath_PresalePercentForcedTo5000() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.presalePercent = 3000; // Should be ignored, forced to 5000
@@ -480,9 +480,9 @@ contract LaunchFactoryTest is Test {
     // ============ CreateLaunch - Advanced Path ============
 
     function test_CreateLaunch_AdvancedPath_Success() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
 
@@ -499,9 +499,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_AdvancedPath_WithReferrer() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.referrer = referrer;
@@ -517,9 +517,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_AdvancedPath_WithVesting() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         // pp < 5000 to satisfy the vesting-allowed branch.
@@ -541,16 +541,16 @@ contract LaunchFactoryTest is Test {
         assertTrue(info.vestingStream != address(0), "vestingStream should be set");
     }
 
-    // ============ CreateLaunch - BMX Burn ============
+    // ============ CreateLaunch - BWLK Burn ============
 
-    function test_CreateLaunch_BmxBurnZero_SkipsBurn() public {
-        // Set BMX burn to zero
+    function test_CreateLaunch_BwlkBurnZero_SkipsBurn() public {
+        // Set BWLK burn to zero
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(0)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(0)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetBmxBurn(0);
+        factory.executeSetBwlkBurn(0);
 
-        // Create launch without BMX balance
+        // Create launch without BWLK balance
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
 
         vm.prank(issuer);
@@ -561,33 +561,33 @@ contract LaunchFactoryTest is Test {
         assertTrue(lInfo.token != address(0), "Launch should succeed");
     }
 
-    function test_CreateLaunch_BmxBurn_TransfersToDeadAddress() public {
+    function test_CreateLaunch_BwlkBurn_TransfersToDeadAddress() public {
         uint256 burnAmount = 50e18;
-        bmx.mint(issuer, burnAmount);
+        bwlk.mint(issuer, burnAmount);
         vm.prank(issuer);
-        bmx.approve(address(factory), burnAmount);
+        bwlk.approve(address(factory), burnAmount);
 
         // Set custom burn amount
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(burnAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(burnAmount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetBmxBurn(burnAmount);
+        factory.executeSetBwlkBurn(burnAmount);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
 
         vm.prank(issuer);
         factory.createLaunch(config);
 
-        assertEq(bmx.balanceOf(issuer), 0, "Issuer BMX should be burned");
+        assertEq(bwlk.balanceOf(issuer), 0, "Issuer BWLK should be burned");
         assertEq(
-            bmx.balanceOf(address(0x000000000000000000000000000000000000dEaD)),
+            bwlk.balanceOf(address(0x000000000000000000000000000000000000dEaD)),
             burnAmount,
-            "BMX should be in dead address"
+            "BWLK should be in dead address"
         );
     }
 
-    function test_RevertWhen_CreateLaunch_BmxNotApproved() public {
-        // Don't approve BMX - OZ ERC20 reverts with InsufficientAllowance
+    function test_RevertWhen_CreateLaunch_BwlkNotApproved() public {
+        // Don't approve BWLK - OZ ERC20 reverts with InsufficientAllowance
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
 
         vm.prank(issuer);
@@ -595,11 +595,11 @@ contract LaunchFactoryTest is Test {
         factory.createLaunch(config);
     }
 
-    function test_RevertWhen_CreateLaunch_InsufficientBmxBalance() public {
+    function test_RevertWhen_CreateLaunch_InsufficientBwlkBalance() public {
         // Mint less than required
-        bmx.mint(issuer, DEFAULT_BMX_BURN - 1);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN - 1);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
 
@@ -611,9 +611,9 @@ contract LaunchFactoryTest is Test {
     // ============ Validation - Express Path ============
 
     function test_RevertWhen_CreateLaunch_ExpressPath_WithReferrer() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.referrer = referrer;
@@ -624,9 +624,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_ExpressPath_WithVesting() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.vestingRecipients = new address[](1);
@@ -641,9 +641,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_ExpressPath_NotOneFeeRecipient() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.issuerFeeRecipients = new address[](2);
@@ -662,9 +662,9 @@ contract LaunchFactoryTest is Test {
     // ============ Validation - Advanced Path ============
 
     function test_RevertWhen_CreateLaunch_AdvancedPath_PresalePercentTooLow() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = MIN_PRESALE_PERCENT - 1;
@@ -675,9 +675,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_AdvancedPath_PresalePercentTooHigh() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = MAX_PRESALE_PERCENT + 1;
@@ -688,9 +688,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_AdvancedPath_PresalePercentNotDivisibleBy500() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = 3001; // Not divisible by 500
@@ -701,9 +701,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_AdvancedPath_PresaleBelow5000WithoutVestingRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = 4500;
@@ -718,9 +718,9 @@ contract LaunchFactoryTest is Test {
     /// @notice Advanced launches at `pp == 5000` have a zero issuer-vesting bucket; vesting
     ///         recipients must be rejected to avoid deploying an uninitializable VestingStream.
     function test_RevertWhen_CreateLaunch_AdvancedPath_FullPresaleWithVestingRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = 5000;
@@ -738,9 +738,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_AdvancedPath_PresalePercentDivisibleBy500() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = 3500; // Divisible by 500
@@ -761,9 +761,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_AdvancedPath_TooManyVestingRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         // pp < 5000 to satisfy the vesting-allowed branch.
@@ -788,9 +788,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_AdvancedPath_TooManyFeeRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         uint256 count = 5;
@@ -808,9 +808,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_AdvancedPath_FourFeeRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.issuerFeeRecipients = new address[](4);
@@ -831,9 +831,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_AdvancedPath_FourVestingRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = 3000;
@@ -855,9 +855,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CreateLaunch_AdvancedPath_FiveVestingRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = 3000;
@@ -881,9 +881,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_AdvancedPath_ZeroFeeRecipients() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.issuerFeeRecipients = new address[](0);
@@ -898,9 +898,9 @@ contract LaunchFactoryTest is Test {
     // ============ Validation - Array Lengths ============
 
     function test_RevertWhen_CreateLaunch_FeeRecipientsSplitsLengthMismatch() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.issuerFeeRecipients = new address[](1);
@@ -915,9 +915,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_VestingRecipientsPercentsLengthMismatch() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.vestingRecipients = new address[](2);
@@ -933,9 +933,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_FeeRecipientsLabelsLengthMismatch() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.issuerFeeLabels = new string[](2); // 2 labels but 1 recipient
@@ -946,9 +946,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_VestingRecipientsLabelsLengthMismatch() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.vestingRecipients = new address[](2);
@@ -967,9 +967,9 @@ contract LaunchFactoryTest is Test {
     // ============ Validation - Fee Splits ============
 
     function test_RevertWhen_CreateLaunch_FeeSplitsNotSumTo10000() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.issuerFeeSplits[0] = 5000; // Should be 10000
@@ -980,9 +980,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_FeeSplitsSumExceeds10000() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.issuerFeeSplits[0] = 6000;
@@ -994,9 +994,9 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_CreateLaunch_FeeRecipientZeroAddress() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         config.issuerFeeRecipients[0] = address(0);
@@ -1009,9 +1009,9 @@ contract LaunchFactoryTest is Test {
     // ============ Validation - Vesting Percents ============
 
     function test_RevertWhen_CreateLaunch_VestingPercentsNotSumTo10000() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         // pp < 5000 to satisfy the vesting-allowed branch.
@@ -1032,9 +1032,9 @@ contract LaunchFactoryTest is Test {
     // ============ Multiple Launches ============
 
     function test_CreateLaunch_MultipleLaunches_DifferentAddresses() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN * 2);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN * 2);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN * 2);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN * 2);
 
         LaunchFactory.LaunchConfig memory config1 = _buildExpressConfig();
         config1.name = "Token1";
@@ -1063,52 +1063,52 @@ contract LaunchFactoryTest is Test {
 
     // ============ Timelocked Admin Functions ============
 
-    function test_SignalSetBmxBurn_Success() public {
+    function test_SignalSetBwlkBurn_Success() public {
         uint256 newAmount = 200e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
 
         (bool isPending, uint256 executeTime, uint256 expiresAt) =
-            factory.getPendingChange(factory.ACTION_SET_BMX_BURN());
+            factory.getPendingChange(factory.ACTION_SET_BWLK_BURN());
 
         assertTrue(isPending, "Change should be pending");
         assertEq(executeTime, block.timestamp + TIMELOCK_DELAY, "executeTime mismatch");
         assertEq(expiresAt, executeTime + TIMELOCK_EXPIRY, "expiresAt mismatch");
     }
 
-    function test_ExecuteSetBmxBurn_Success() public {
+    function test_ExecuteSetBwlkBurn_Success() public {
         uint256 newAmount = 200e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
 
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
         vm.expectEmit(true, false, false, true);
-        emit BmxBurnAmountChanged(DEFAULT_BMX_BURN, newAmount);
+        emit BwlkBurnAmountChanged(DEFAULT_BWLK_BURN, newAmount);
 
-        factory.executeSetBmxBurn(newAmount);
+        factory.executeSetBwlkBurn(newAmount);
 
-        assertEq(factory.bmxBurnAmount(), newAmount, "bmxBurnAmount should be updated");
+        assertEq(factory.bwlkBurnAmount(), newAmount, "bwlkBurnAmount should be updated");
     }
 
-    function test_RevertWhen_ExecuteSetBmxBurn_BeforeDelay() public {
+    function test_RevertWhen_ExecuteSetBwlkBurn_BeforeDelay() public {
         uint256 newAmount = 200e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
 
         // Try to execute immediately
         vm.expectRevert(abi.encodeWithSelector(Timelocked.TimelockTooEarly.selector, block.timestamp + TIMELOCK_DELAY));
-        factory.executeSetBmxBurn(newAmount);
+        factory.executeSetBwlkBurn(newAmount);
     }
 
-    function test_RevertWhen_ExecuteSetBmxBurn_AfterExpiry() public {
+    function test_RevertWhen_ExecuteSetBwlkBurn_AfterExpiry() public {
         uint256 newAmount = 200e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
 
         // Warp past delay + expiry
         vm.warp(block.timestamp + TIMELOCK_DELAY + TIMELOCK_EXPIRY + 1);
@@ -1119,31 +1119,31 @@ contract LaunchFactoryTest is Test {
                 block.timestamp - 1 // expiredAt
             )
         );
-        factory.executeSetBmxBurn(newAmount);
+        factory.executeSetBwlkBurn(newAmount);
     }
 
-    function test_RevertWhen_ExecuteSetBmxBurn_WrongDataHash() public {
+    function test_RevertWhen_ExecuteSetBwlkBurn_WrongDataHash() public {
         uint256 newAmount = 200e18;
         uint256 wrongAmount = 300e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
 
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
         vm.expectRevert(Timelocked.TimelockDataMismatch.selector);
-        factory.executeSetBmxBurn(wrongAmount);
+        factory.executeSetBwlkBurn(wrongAmount);
     }
 
-    function test_RevertWhen_ExecuteSetBmxBurn_NotSignaled() public {
+    function test_RevertWhen_ExecuteSetBwlkBurn_NotSignaled() public {
         vm.expectRevert(Timelocked.TimelockNotSignaled.selector);
-        factory.executeSetBmxBurn(200e18);
+        factory.executeSetBwlkBurn(200e18);
     }
 
     // ============ Per-Action Burn (Generic Renounce) ============
 
     function test_SignalBurnAction_Success() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
         factory.signalBurnAction(action);
 
@@ -1152,20 +1152,20 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_ExecuteBurnAction_Success() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
         factory.signalBurnAction(action);
 
         vm.warp(block.timestamp + TIMELOCK_DELAY);
         factory.executeBurnAction(action);
 
-        assertTrue(factory.isActionBurned(action), "ACTION_SET_BMX_BURN should be burned");
+        assertTrue(factory.isActionBurned(action), "ACTION_SET_BWLK_BURN should be burned");
     }
 
     function test_ExecuteBurnAction_CancelsPendingChange() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(50e18)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(50e18)));
 
         vm.prank(owner);
         factory.signalBurnAction(action);
@@ -1178,7 +1178,7 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_SignalBurnedAction() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
         factory.signalBurnAction(action);
         vm.warp(block.timestamp + TIMELOCK_DELAY);
@@ -1186,13 +1186,13 @@ contract LaunchFactoryTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(Timelocked.ActionIsBurned.selector, action));
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(100e18)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(100e18)));
     }
 
     function test_RevertWhen_ExecuteBurnedAction() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(100e18)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(100e18)));
 
         vm.prank(owner);
         factory.signalBurnAction(action);
@@ -1201,11 +1201,11 @@ contract LaunchFactoryTest is Test {
         factory.executeBurnAction(action);
 
         vm.expectRevert(abi.encodeWithSelector(Timelocked.ActionIsBurned.selector, action));
-        factory.executeSetBmxBurn(100e18);
+        factory.executeSetBwlkBurn(100e18);
     }
 
     function test_RevertWhen_BurnAlreadyBurned() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
         factory.signalBurnAction(action);
         vm.warp(block.timestamp + TIMELOCK_DELAY);
@@ -1217,7 +1217,7 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_CancelBurnAction() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
         factory.signalBurnAction(action);
 
@@ -1230,13 +1230,13 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_SignalBurnAction_NotOwner() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.expectRevert();
         factory.signalBurnAction(action);
     }
 
     function test_RevertWhen_ExecuteBurnAction_TooEarly() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
         factory.signalBurnAction(action);
 
@@ -1245,7 +1245,7 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_ExecuteBurnAction_Expired() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         vm.prank(owner);
         factory.signalBurnAction(action);
 
@@ -1267,7 +1267,7 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_RevertWhen_SignalAction_CannotBypassBurnDelay() public {
-        bytes32 action = factory.ACTION_SET_BMX_BURN();
+        bytes32 action = factory.ACTION_SET_BWLK_BURN();
         bytes32 oldBurnKey = keccak256(abi.encode("BURN", action));
         bytes32 dataHash = keccak256(abi.encode(action));
 
@@ -1332,9 +1332,9 @@ contract LaunchFactoryTest is Test {
 
     // ============ Access Control ============
 
-    function test_RevertWhen_SignalSetBmxBurn_NotOwner() public {
+    function test_RevertWhen_SignalSetBwlkBurn_NotOwner() public {
         vm.expectRevert();
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(200e18)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(200e18)));
     }
 
     function test_RevertWhen_SignalSetGraduationExpress_NotOwner() public {
@@ -1358,20 +1358,20 @@ contract LaunchFactoryTest is Test {
     // ============ Fuzz Tests ============
 
     function testFuzz_CreateLaunch_ExpressPath(
-        uint256 bmxAmount
+        uint256 bwlkAmount
     ) public {
-        bmxAmount = bound(bmxAmount, 0, 200e18);
+        bwlkAmount = bound(bwlkAmount, 0, 200e18);
 
-        // Set BMX burn amount
+        // Set BWLK burn amount
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(bmxAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(bwlkAmount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetBmxBurn(bmxAmount);
+        factory.executeSetBwlkBurn(bwlkAmount);
 
-        if (bmxAmount > 0) {
-            bmx.mint(issuer, bmxAmount);
+        if (bwlkAmount > 0) {
+            bwlk.mint(issuer, bwlkAmount);
             vm.prank(issuer);
-            bmx.approve(address(factory), bmxAmount);
+            bwlk.approve(address(factory), bwlkAmount);
         }
 
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
@@ -1383,12 +1383,12 @@ contract LaunchFactoryTest is Test {
         LaunchFactory.LaunchInfo memory fInfo = _getLaunchInfo(tokenAddr);
         assertEq(fInfo.issuer, issuer, "Issuer mismatch");
 
-        if (bmxAmount > 0) {
-            assertEq(bmx.balanceOf(issuer), 0, "BMX should be burned");
+        if (bwlkAmount > 0) {
+            assertEq(bwlk.balanceOf(issuer), 0, "BWLK should be burned");
             assertEq(
-                bmx.balanceOf(address(0x000000000000000000000000000000000000dEaD)),
-                bmxAmount,
-                "BMX should be in dead address"
+                bwlk.balanceOf(address(0x000000000000000000000000000000000000dEaD)),
+                bwlkAmount,
+                "BWLK should be in dead address"
             );
         }
     }
@@ -1401,9 +1401,9 @@ contract LaunchFactoryTest is Test {
         presalePercent = (presalePercent / 500) * 500;
         if (presalePercent < MIN_PRESALE_PERCENT) presalePercent = MIN_PRESALE_PERCENT;
 
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.presalePercent = presalePercent;
@@ -1434,9 +1434,9 @@ contract LaunchFactoryTest is Test {
         split1 = bound(split1, 1, BPS_DENOMINATOR - 1);
         split2 = BPS_DENOMINATOR - split1;
 
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         LaunchFactory.LaunchConfig memory config = _buildAdvancedConfig();
         config.issuerFeeRecipients = new address[](2);
@@ -1540,7 +1540,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -1548,7 +1548,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(0),
                 integratorBps: 0,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -1574,7 +1574,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -1582,7 +1582,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(0),
                 integratorBps: 0,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -1677,24 +1677,24 @@ contract LaunchFactoryTest is Test {
     }
 
     // ================================================================
-    //  COVERAGE GAP TESTS — BMX Burn Skip + Fee Validation
+    //  COVERAGE GAP TESTS — BWLK Burn Skip + Fee Validation
     // ================================================================
 
-    function test_CreateLaunch_BmxBurnZero_SkipsBurnPath() public {
-        // Set BMX burn to 0 via timelock
+    function test_CreateLaunch_BwlkBurnZero_SkipsBurnPath() public {
+        // Set BWLK burn to 0 via timelock
         uint256 t = block.timestamp;
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(0)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(0)));
         t += TIMELOCK_DELAY;
         vm.warp(t);
-        factory.executeSetBmxBurn(0);
+        factory.executeSetBwlkBurn(0);
 
-        // Create launch without needing any BMX
+        // Create launch without needing any BWLK
         LaunchFactory.LaunchConfig memory config = _buildExpressConfig();
         vm.prank(issuer);
         address tokenAddr = factory.createLaunch(config);
 
-        assertTrue(tokenAddr != address(0), "Launch should succeed without BMX burn");
+        assertTrue(tokenAddr != address(0), "Launch should succeed without BWLK burn");
     }
 
     function test_RevertWhen_FeeDefaults_SumMismatch() public {
@@ -1821,10 +1821,10 @@ contract LaunchFactoryTest is Test {
         _deployFactoryWith(bad);
     }
 
-    function test_RevertWhen_Constructor_BmxBurnAboveMax() public {
+    function test_RevertWhen_Constructor_BwlkBurnAboveMax() public {
         uint256 invalidBurnAmount = 200e18 + 1;
 
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BmxBurnOutOfRange.selector, invalidBurnAmount));
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BwlkBurnOutOfRange.selector, invalidBurnAmount));
         new LaunchFactory(
             owner,
             LaunchFactory.DeployParams({
@@ -1833,7 +1833,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -1841,7 +1841,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: invalidBurnAmount,
+                bwlkBurnAmount: invalidBurnAmount,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -1965,52 +1965,52 @@ contract LaunchFactoryTest is Test {
     }
 
     // ================================================================
-    //  PHASE 2 — Fix 1: BMX Burn Amount Range
+    //  PHASE 2 — Fix 1: BWLK Burn Amount Range
     // ================================================================
 
-    function test_ExecuteSetBmxBurn_AtMaxBound() public {
+    function test_ExecuteSetBwlkBurn_AtMaxBound() public {
         uint256 newAmount = 200e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
-        factory.executeSetBmxBurn(newAmount);
+        factory.executeSetBwlkBurn(newAmount);
 
-        assertEq(factory.bmxBurnAmount(), newAmount, "200e18 should be accepted (at bound)");
+        assertEq(factory.bwlkBurnAmount(), newAmount, "200e18 should be accepted (at bound)");
     }
 
-    function test_RevertWhen_ExecuteSetBmxBurn_AboveMaxBound() public {
+    function test_RevertWhen_ExecuteSetBwlkBurn_AboveMaxBound() public {
         uint256 newAmount = 200e18 + 1;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BmxBurnOutOfRange.selector, newAmount));
-        factory.executeSetBmxBurn(newAmount);
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BwlkBurnOutOfRange.selector, newAmount));
+        factory.executeSetBwlkBurn(newAmount);
     }
 
-    function test_RevertWhen_ExecuteSetBmxBurn_WayAboveMaxBound() public {
+    function test_RevertWhen_ExecuteSetBwlkBurn_WayAboveMaxBound() public {
         uint256 newAmount = 1000e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BmxBurnOutOfRange.selector, newAmount));
-        factory.executeSetBmxBurn(newAmount);
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BwlkBurnOutOfRange.selector, newAmount));
+        factory.executeSetBwlkBurn(newAmount);
     }
 
-    function test_RevertWhen_ExecuteSetBmxBurn_AboveMaxBound_NotBurned() public {
+    function test_RevertWhen_ExecuteSetBwlkBurn_AboveMaxBound_NotBurned() public {
         uint256 newAmount = 201e18;
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(newAmount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(newAmount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BmxBurnOutOfRange.selector, newAmount));
-        factory.executeSetBmxBurn(newAmount);
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BwlkBurnOutOfRange.selector, newAmount));
+        factory.executeSetBwlkBurn(newAmount);
     }
 
     // ================================================================
@@ -2336,30 +2336,30 @@ contract LaunchFactoryTest is Test {
         assertEq(factory.maxPresalePercent(), newMax, "max fuzz mismatch");
     }
 
-    function testFuzz_SetBmxBurn_ValidAmounts(
+    function testFuzz_SetBwlkBurn_ValidAmounts(
         uint256 amount
     ) public {
         amount = bound(amount, 0, 200e18);
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(amount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(amount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
-        factory.executeSetBmxBurn(amount);
+        factory.executeSetBwlkBurn(amount);
 
-        assertEq(factory.bmxBurnAmount(), amount, "bmxBurn fuzz mismatch");
+        assertEq(factory.bwlkBurnAmount(), amount, "bwlkBurn fuzz mismatch");
     }
 
-    function testFuzz_SetBmxBurn_RejectsAboveMax(
+    function testFuzz_SetBwlkBurn_RejectsAboveMax(
         uint256 amount
     ) public {
         amount = bound(amount, 200e18 + 1, type(uint128).max);
 
         vm.prank(owner);
-        factory.signalAction(ACTION_SET_BMX_BURN, keccak256(abi.encode(amount)));
+        factory.signalAction(ACTION_SET_BWLK_BURN, keccak256(abi.encode(amount)));
         vm.warp(block.timestamp + TIMELOCK_DELAY);
 
-        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BmxBurnOutOfRange.selector, amount));
-        factory.executeSetBmxBurn(amount);
+        vm.expectRevert(abi.encodeWithSelector(LaunchFactory.BwlkBurnOutOfRange.selector, amount));
+        factory.executeSetBwlkBurn(amount);
     }
 
     // ================================================================
@@ -2530,7 +2530,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2538,7 +2538,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2562,7 +2562,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2570,7 +2570,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2588,9 +2588,9 @@ contract LaunchFactoryTest is Test {
         assertEq(factory.launchCount(), 0, "Initial launch count should be 0");
 
         // Create a launch
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
         vm.prank(issuer);
         factory.createLaunch(_buildExpressConfig());
 
@@ -2598,19 +2598,19 @@ contract LaunchFactoryTest is Test {
     }
 
     function test_IsLaunchToken_ReturnsTrueForLaunchToken() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
         vm.prank(issuer);
         address tokenAddr = factory.createLaunch(_buildExpressConfig());
 
         assertTrue(factory.isLaunchToken(tokenAddr), "Should return true for launch token");
-        assertFalse(factory.isLaunchToken(address(bmx)), "Should return false for non-launch token");
+        assertFalse(factory.isLaunchToken(address(bwlk)), "Should return false for non-launch token");
     }
 
     // ============ NFT Membership Discount ============
 
-    function test_MemberLaunch_DiscountedBmxBurn() public {
+    function test_MemberLaunch_DiscountedBwlkBurn() public {
         MockNFT nft = new MockNFT();
         LaunchFactory memberFactory = new LaunchFactory(
             owner,
@@ -2620,7 +2620,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2628,7 +2628,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2643,18 +2643,18 @@ contract LaunchFactoryTest is Test {
 
         nft.mint(issuer, 1);
 
-        uint256 expectedBurn = DEFAULT_BMX_BURN - (DEFAULT_BMX_BURN * 2500 / 10000); // 75e18
-        bmx.mint(issuer, expectedBurn);
+        uint256 expectedBurn = DEFAULT_BWLK_BURN - (DEFAULT_BWLK_BURN * 2500 / 10000); // 75e18
+        bwlk.mint(issuer, expectedBurn);
         vm.prank(issuer);
-        bmx.approve(address(memberFactory), expectedBurn);
+        bwlk.approve(address(memberFactory), expectedBurn);
 
-        uint256 balBefore = bmx.balanceOf(issuer);
+        uint256 balBefore = bwlk.balanceOf(issuer);
         vm.prank(issuer);
         memberFactory.createLaunch(_buildExpressConfig());
-        assertEq(bmx.balanceOf(issuer), balBefore - expectedBurn, "Member should burn 75% of BMX");
+        assertEq(bwlk.balanceOf(issuer), balBefore - expectedBurn, "Member should burn 75% of BWLK");
     }
 
-    function test_NonMemberLaunch_FullBmxBurn() public {
+    function test_NonMemberLaunch_FullBwlkBurn() public {
         MockNFT nft = new MockNFT();
         LaunchFactory memberFactory = new LaunchFactory(
             owner,
@@ -2664,7 +2664,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2672,7 +2672,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2685,14 +2685,14 @@ contract LaunchFactoryTest is Test {
             })
         );
 
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(memberFactory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(memberFactory), DEFAULT_BWLK_BURN);
 
-        uint256 balBefore = bmx.balanceOf(issuer);
+        uint256 balBefore = bwlk.balanceOf(issuer);
         vm.prank(issuer);
         memberFactory.createLaunch(_buildExpressConfig());
-        assertEq(bmx.balanceOf(issuer), balBefore - DEFAULT_BMX_BURN, "Non-member should burn full BMX");
+        assertEq(bwlk.balanceOf(issuer), balBefore - DEFAULT_BWLK_BURN, "Non-member should burn full BWLK");
     }
 
     function test_MemberLaunch_100PercentDiscount() public {
@@ -2705,7 +2705,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2713,7 +2713,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2728,10 +2728,10 @@ contract LaunchFactoryTest is Test {
 
         nft.mint(issuer, 1);
 
-        uint256 balBefore = bmx.balanceOf(issuer);
+        uint256 balBefore = bwlk.balanceOf(issuer);
         vm.prank(issuer);
         memberFactory.createLaunch(_buildExpressConfig());
-        assertEq(bmx.balanceOf(issuer), balBefore, "Member with 100% discount should burn zero BMX");
+        assertEq(bwlk.balanceOf(issuer), balBefore, "Member with 100% discount should burn zero BWLK");
     }
 
     function test_RevertWhen_Constructor_MemberDiscountAboveMax() public {
@@ -2744,7 +2744,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2752,7 +2752,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2821,7 +2821,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2829,7 +2829,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2842,16 +2842,16 @@ contract LaunchFactoryTest is Test {
             })
         );
 
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(memberFactory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(memberFactory), DEFAULT_BWLK_BURN);
 
         vm.expectRevert();
         vm.prank(issuer);
         memberFactory.createLaunch(_buildExpressConfig());
     }
 
-    function test_ZeroBmxBurn_WithDiscount_NoExternalCall() public {
+    function test_ZeroBwlkBurn_WithDiscount_NoExternalCall() public {
         MockNFT nft = new MockNFT();
         LaunchFactory zeroFactory = new LaunchFactory(
             owner,
@@ -2861,7 +2861,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2869,7 +2869,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(integratorCollector),
                 integratorBps: 2,
-                bmxBurnAmount: 0,
+                bwlkBurnAmount: 0,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2883,10 +2883,10 @@ contract LaunchFactoryTest is Test {
         );
 
         nft.mint(issuer, 1);
-        uint256 balBefore = bmx.balanceOf(issuer);
+        uint256 balBefore = bwlk.balanceOf(issuer);
         vm.prank(issuer);
         zeroFactory.createLaunch(_buildExpressConfig());
-        assertEq(bmx.balanceOf(issuer), balBefore, "Zero burn with discount should transfer nothing");
+        assertEq(bwlk.balanceOf(issuer), balBefore, "Zero burn with discount should transfer nothing");
     }
 
     // ============ New INTEGRATOR_COLLECTOR tests ============
@@ -2910,7 +2910,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2918,7 +2918,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(0),
                 integratorBps: 2,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2948,7 +2948,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2956,7 +2956,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: makeAddr("strayCollector"),
                 integratorBps: 0,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -2983,7 +2983,7 @@ contract LaunchFactoryTest is Test {
                 presaleImpl: address(presaleTemplate),
                 vestingImpl: address(vestingTemplate),
                 lpStakingImpl: address(lpStakingTemplate),
-                bmx: address(bmx),
+                bwlk: address(bwlk),
                 raiseToken: address(weth),
                 boardwalkRouter: boardwalkRouter,
                 boardwalkDexFactory: boardwalkDEXFactory,
@@ -2991,7 +2991,7 @@ contract LaunchFactoryTest is Test {
                 boardwalkFeeCollector: boardwalkFeeCollector,
                 integratorCollector: address(0),
                 integratorBps: 0,
-                bmxBurnAmount: DEFAULT_BMX_BURN,
+                bwlkBurnAmount: DEFAULT_BWLK_BURN,
                 graduationExpress: GRADUATION_EXPRESS,
                 graduationAdvanced: GRADUATION_ADVANCED,
                 expressDuration: EXPRESS_DURATION,
@@ -3033,9 +3033,9 @@ contract LaunchFactoryTest is Test {
 
     /// @notice A launched token's exempt list includes the integratorCollector when it is non-zero.
     function test_BuildExemptList_IncludesIntegratorCollector_WhenNonZero() public {
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(factory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(factory), DEFAULT_BWLK_BURN);
 
         vm.prank(issuer);
         address tokenAddr = factory.createLaunch(_buildExpressConfig());
@@ -3048,9 +3048,9 @@ contract LaunchFactoryTest is Test {
     function test_BuildExemptList_OmitsIntegratorCollector_WhenZero() public {
         LaunchFactory zeroCollectorFactory = _deployFactoryWithoutIntegrator();
 
-        bmx.mint(issuer, DEFAULT_BMX_BURN);
+        bwlk.mint(issuer, DEFAULT_BWLK_BURN);
         vm.prank(issuer);
-        bmx.approve(address(zeroCollectorFactory), DEFAULT_BMX_BURN);
+        bwlk.approve(address(zeroCollectorFactory), DEFAULT_BWLK_BURN);
 
         vm.prank(issuer);
         address tokenAddr = zeroCollectorFactory.createLaunch(_buildExpressConfig());

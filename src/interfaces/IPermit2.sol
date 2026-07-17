@@ -2,7 +2,7 @@
 pragma solidity =0.8.28;
 
 /// @title IPermit2
-/// @notice The one Permit2 (AllowanceTransfer) call the BWS CCA launch script makes: granting the
+/// @notice The one Permit2 (AllowanceTransfer) call the BWLK CCA launch script makes: granting the
 ///         LiquidityLauncher a Permit2 allowance so its `depositToken` can pull the launch bucket.
 ///         The owner must also hold a plain ERC20 approval to Permit2 itself.
 interface IPermit2 {

@@ -51,10 +51,8 @@ abstract contract BaseTestScript is Script {
     ) internal pure returns (string memory) {
         if (chainId == 1) return "etherscan.io";
         if (chainId == 8453) return "basescan.org";
-        if (chainId == 252) return "fraxscan.com";
-        if (chainId == 747474) return "katanascan.com";
-        if (chainId == 57073) return "explorer.inkonchain.com";
         if (chainId == 42161) return "arbiscan.io";
+        if (chainId == 4663) return "robinhoodchain.blockscout.com";
         return "block explorer";
     }
 

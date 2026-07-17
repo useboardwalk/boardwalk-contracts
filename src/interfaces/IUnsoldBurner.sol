@@ -13,5 +13,5 @@ interface IUnsoldBurner {
     function burn() external;
 
     function DEAD() external view returns (address);
-    function BWS() external view returns (address);
+    function BWLK() external view returns (address);
 }

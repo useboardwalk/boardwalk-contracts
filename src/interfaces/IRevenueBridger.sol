@@ -25,13 +25,13 @@ interface IRevenueBridger {
     error NativeRefundFailed();
     error RescueFailed();
 
-    event BridgedToBase(bytes4 indexed selector, uint256 amount, uint256 balanceDelta, uint256 nativeFee);
+    event BridgedToEthereum(bytes4 indexed selector, uint256 amount, uint256 balanceDelta, uint256 nativeFee);
     event KeeperRevoked(address indexed previousKeeper);
     event KeeperUpdated(address indexed newKeeper);
     event SelectorSet(bytes4 indexed selector, bool allowed);
     event AssetRescued(address indexed token, address indexed to, uint256 amount);
 
-    function bridgeToBase(
+    function bridgeToEthereum(
         uint256 amount,
         bytes calldata lifiCalldata
     ) external payable;
@@ -78,11 +78,11 @@ interface IRevenueBridger {
 
     function DIAMOND() external view returns (address);
     function RAISE_TOKEN() external view returns (address);
-    function BASE_DESTINATION() external view returns (address);
-    function BASE_WETH() external view returns (address);
+    function ETHEREUM_DESTINATION() external view returns (address);
+    function ETHEREUM_WETH() external view returns (address);
     function HAS_SOURCE_SWAPS() external view returns (bool);
     function MAX_FEE_BPS() external view returns (uint256);
-    function BASE_CHAIN_ID() external view returns (uint256);
+    function ETHEREUM_CHAIN_ID() external view returns (uint256);
     function BPS_DENOMINATOR() external view returns (uint256);
 
     function ACTION_SET_KEEPER() external view returns (bytes32);

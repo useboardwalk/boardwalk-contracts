@@ -16,7 +16,7 @@ import {IVestingStream} from "../interfaces/IVestingStream.sol";
 import {ILPStaking} from "../interfaces/ILPStaking.sol";
 
 /// @title LaunchFactory
-/// @notice Singleton that deploys per-launch clones, burns BMX from issuers, and owns global config.
+/// @notice Singleton that deploys per-launch clones, burns BWLK from issuers, and owns global config.
 contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     using SafeERC20 for IERC20;
 
@@ -60,7 +60,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         uint256 total;
     }
 
-    uint256 private constant MAX_BMX_BURN = 200e18;
+    uint256 private constant MAX_BWLK_BURN = 200e18;
     uint256 private constant MAX_FEE_RECIPIENTS = 4;
     uint256 private constant MAX_VESTING_RECIPIENTS = 5;
     uint256 private constant MIN_ADVANCED_DURATION = 2 days;
@@ -85,7 +85,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
 
     address public constant DEAD_ADDRESS = address(0x000000000000000000000000000000000000dEaD);
 
-    bytes32 public constant ACTION_SET_BMX_BURN = keccak256("SET_BMX_BURN");
+    bytes32 public constant ACTION_SET_BWLK_BURN = keccak256("SET_BWLK_BURN");
     bytes32 public constant ACTION_SET_GRADUATION_EXPRESS = keccak256("SET_GRADUATION_EXPRESS");
     bytes32 public constant ACTION_SET_GRADUATION_ADVANCED = keccak256("SET_GRADUATION_ADVANCED");
     bytes32 public constant ACTION_SET_EXPRESS_DURATION = keccak256("SET_EXPRESS_DURATION");
@@ -101,7 +101,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     address public immutable PRESALE_IMPL;
     address public immutable VESTING_IMPL;
     address public immutable LP_STAKING_IMPL;
-    address public immutable BMX;
+    address public immutable BWLK;
     address public immutable RAISE_TOKEN;
     address public immutable BOARDWALK_ROUTER;
     address public immutable BOARDWALK_DEX_FACTORY;
@@ -111,7 +111,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
 
     address public boardwalkFeeCollector;
 
-    uint256 public bmxBurnAmount;
+    uint256 public bwlkBurnAmount;
 
     uint256 public expressDuration;
     uint256 public advancedDuration;
@@ -143,7 +143,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
     error ZeroAddress();
     error InvalidFeeDefaults();
     error InvalidAntiWhaleConfig();
-    error BmxBurnOutOfRange(uint256 amount);
+    error BwlkBurnOutOfRange(uint256 amount);
     error InvalidDuration();
     error InvalidPresaleRange(uint256 min, uint256 max);
     error ZeroGraduation();
@@ -164,7 +164,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         string[] issuerFeeLabels,
         string[] vestingLabels
     );
-    event BmxBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
+    event BwlkBurnAmountChanged(uint256 oldAmount, uint256 newAmount);
     event GraduationThresholdChanged(LaunchPath path, uint256 oldThreshold, uint256 newThreshold);
     event PresaleDurationChanged(LaunchPath path, uint256 oldDuration, uint256 newDuration);
     event FeeDefaultsChanged(uint256 issuer, uint256 boardwalk, uint256 incentive, uint256 referrer);
@@ -179,7 +179,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         address presaleImpl;
         address vestingImpl;
         address lpStakingImpl;
-        address bmx;
+        address bwlk;
         address raiseToken;
         address boardwalkRouter;
         address boardwalkDexFactory;
@@ -187,7 +187,7 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         address boardwalkFeeCollector;
         address integratorCollector;
         uint256 integratorBps;
-        uint256 bmxBurnAmount;
+        uint256 bwlkBurnAmount;
         uint256 graduationExpress;
         uint256 graduationAdvanced;
         uint256 expressDuration;
@@ -208,14 +208,14 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         PRESALE_IMPL = p.presaleImpl;
         VESTING_IMPL = p.vestingImpl;
         LP_STAKING_IMPL = p.lpStakingImpl;
-        BMX = p.bmx;
+        BWLK = p.bwlk;
         RAISE_TOKEN = p.raiseToken;
         BOARDWALK_ROUTER = p.boardwalkRouter;
         BOARDWALK_DEX_FACTORY = p.boardwalkDexFactory;
         BOARDWALK_LP_MANAGER = p.boardwalkLpManager;
         boardwalkFeeCollector = p.boardwalkFeeCollector;
-        if (p.bmxBurnAmount > MAX_BMX_BURN) revert BmxBurnOutOfRange(p.bmxBurnAmount);
-        bmxBurnAmount = p.bmxBurnAmount;
+        if (p.bwlkBurnAmount > MAX_BWLK_BURN) revert BwlkBurnOutOfRange(p.bwlkBurnAmount);
+        bwlkBurnAmount = p.bwlkBurnAmount;
         if (p.graduationExpress == 0 || p.graduationAdvanced == 0) revert ZeroGraduation();
         graduationExpress = p.graduationExpress;
         graduationAdvanced = p.graduationAdvanced;
@@ -272,15 +272,15 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         return launches[token].token != address(0);
     }
 
-    /// @notice Deploys and initializes a new launch. Burns BMX from the caller (minus any NFT discount).
+    /// @notice Deploys and initializes a new launch. Burns BWLK from the caller (minus any NFT discount).
     function createLaunch(
         LaunchConfig calldata config
     ) external returns (address tokenAddr) {
         _validateConfig(config);
 
-        uint256 effectiveBurn = _effectiveCost(bmxBurnAmount, memberLaunchDiscountBps, msg.sender);
+        uint256 effectiveBurn = _effectiveCost(bwlkBurnAmount, memberLaunchDiscountBps, msg.sender);
         if (effectiveBurn > 0) {
-            IERC20(BMX).safeTransferFrom(msg.sender, DEAD_ADDRESS, effectiveBurn);
+            IERC20(BWLK).safeTransferFrom(msg.sender, DEAD_ADDRESS, effectiveBurn);
         }
 
         tokenAddr = Clones.clone(TOKEN_IMPL);
@@ -502,13 +502,13 @@ contract LaunchFactory is Ownable2Step, Timelocked, MembershipDiscount {
         _checkOwner();
     }
 
-    function executeSetBmxBurn(
+    function executeSetBwlkBurn(
         uint256 _amount
     ) external {
-        _execute(ACTION_SET_BMX_BURN, keccak256(abi.encode(_amount)));
-        if (_amount > MAX_BMX_BURN) revert BmxBurnOutOfRange(_amount);
-        emit BmxBurnAmountChanged(bmxBurnAmount, _amount);
-        bmxBurnAmount = _amount;
+        _execute(ACTION_SET_BWLK_BURN, keccak256(abi.encode(_amount)));
+        if (_amount > MAX_BWLK_BURN) revert BwlkBurnOutOfRange(_amount);
+        emit BwlkBurnAmountChanged(bwlkBurnAmount, _amount);
+        bwlkBurnAmount = _amount;
     }
 
     function executeSetGraduation(
