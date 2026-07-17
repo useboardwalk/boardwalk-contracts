@@ -2,7 +2,11 @@
 
 ## Architecture Reference
 
-The canonical technical spec is at `SPEC.md`. Reference it for design decisions and invariants.
+The canonical technical spec is at `SPEC.md` (start with its quick-facts table). Reference it for design decisions and invariants.
+
+Per-chain deploy facts (chain ids, DEX/CCIP/LiFi addresses, fee schedule, integrator slots, BWLK supply split) are pinned in `script/{DexConfig,FeeSchedules,CCIPConfig,CrossChainConfig}.sol` and `script/bwlk/EthereumConfig.sol` — all live-verified; deploy scripts read them as `vm.envOr` defaults. Check these before asserting or hardcoding any chain fact. Live production addresses are recorded in `docs/prod-deployment.txt`.
+
+**Live-deployment warning**: BWLK, `BwlkMigration`, `UnsoldBurner`, `GovernanceVoter`, `LPLocker`, and `ParticipationDistributor` are deployed and verified on Ethereum mainnet. Do not casually edit `src/token/`, `src/governance/`, or `script/bwlk/` — source changes there can desync the repo from verified on-chain code.
 
 ## Critical Design Invariants
 
@@ -10,7 +14,7 @@ These MUST be maintained across all code changes:
 
 ### Tax System
 - Universal tax on ALL non-exempt transfers (no `isPair` mapping)
-- Tax exemption list at init includes: [PresaleManager, VestingStream, LPStaking, FeeDistributor, BoardwalkLPManager, BoardwalkFeeCollector, IntegratorFeeCollector*] (* conditional on chain having a non-zero `integratorBps`)
+- Tax exemption list at init includes: [PresaleManager, VestingStream*, LPStaking, FeeDistributor, BoardwalkLPManager, BoardwalkFeeCollector, IntegratorFeeCollector**] (* only when the launch has vesting recipients; ** conditional on chain having a non-zero `integratorBps`)
 - Post-init mutations are `feeDistributor`-only and limited to a **single** self-sovereign rotation flow: `setFeeCollector` (boardwalk migration). Rotates the exempt flag atomically with the role address; `IBoardwalkToken.isExempt(newAddress) == false` is enforced to prevent exempt-list aliasing. `IntegratorFeeCollector` is **immutable** — its exempt status cannot be re-pointed by anyone.
 - Anti-whale: configurable per-launch via `LaunchFactory.executeSetAntiWhale(taxBps, duration)`. Bounds: `taxBps ∈ [500, 4000]` (5%–40%), `duration ∈ [5 min, 90 min]`. Frozen per-clone at `BoardwalkToken.initialize`. `baseTaxBps <= antiWhaleTaxBps` enforced
 - `liquiditySeedTime == 0` means no tax (pre-seed)
@@ -39,17 +43,17 @@ These MUST be maintained across all code changes:
 - 1e30 PRECISION for reward accumulator
 
 ### Presale
-- O(1) per-user `weightedWeth` tracking with `totalWeightedWeth` normalization
+- O(1) per-user `weightedContributed` tracking with `totalWeightedRaise` normalization
 - 10% early bird bonus at t=0, linearly to 0% at deadline
 - Mint capped at TOTAL_SUPPLY (10 billion)
 - Only PresaleManager can call `token.mint()` and `token.setLiquiditySeedTime()`
 - Seed delay: 1 hour after presale ends
 - 7-day cliff for presale claims from seed time
-- Liquidity is seeded by direct `pair.mint(DEAD_ADDRESS)` against the canonical Uniswap V2 pair
+- Liquidity is seeded by direct token transfers to the canonical Uniswap V2 pair + `pair.mint(address(this))` (no router); the resulting LP is then transferred to `DEAD_ADDRESS`
 
 ### Paths
 - EXPRESS: 24h, 50% presale/50% liquidity, no vesting, no referrer, 1 fee recipient, starts immediately
-- ADVANCED: 7d default (2d-14d admin range), 25-50% presale (divisible by 5), up to 5 vesting recipients (referrer can be included), optional referrer, up to 4 fee recipients, 24hr delay before sale starts
+- ADVANCED: 7d default (2d-14d admin range), 25-50% presale default (divisible by 5; window admin-tunable within 5%-50%), up to 4 fee recipients, optional referrer, 24hr delay before sale starts. Vesting is REQUIRED when presale < 50% — the issuer vesting bucket needs recipients (`IssuerVestingRecipientsRequired`); up to 5, and the referrer can be one of them — and FORBIDDEN at exactly 50% (`VestingNotAllowedAtFullPresale`)
 
 ### Admin / Timelock
 - All admin functions use `Timelocked` base (signal/execute/cancel)
@@ -80,7 +84,7 @@ These MUST be maintained across all code changes:
 ## Build Order
 
 1. Interfaces (all)
-2. Timelocked.sol
+2. Base: Timelocked.sol, AllocationLib.sol, MembershipDiscount.sol
 3. BoardwalkToken.sol
 4. FeeDistributor.sol
 5. LPStaking.sol
@@ -90,12 +94,15 @@ These MUST be maintained across all code changes:
 9. BoardwalkLPManager.sol
 10. BoardwalkFeeCollector.sol
 11. IntegratorFeeCollector.sol (per-chain protocol singleton)
-12. NFT bridge: BoardwalkClubBridgeBase.sol → BoardwalkClubLockbox.sol (Base) / BoardwalkClubMirror.sol (spokes)
-13. Cross-chain revenue bridging: RevenueBridger.sol (every source lane: Base/Arbitrum/Robinhood) / EthereumRevenueSwapper.sol (Ethereum)
+12. BoostBurn.sol
+13. NFT bridge: BoardwalkClubBridgeBase.sol → BoardwalkClubLockbox.sol (Base) / BoardwalkClubMirror.sol (spokes)
+14. Cross-chain revenue bridging: RevenueBridger.sol (every source lane: Base/Arbitrum/Robinhood) / EthereumRevenueSwapper.sol (Ethereum)
+15. BWLK token set (Ethereum only, LIVE on mainnet): BWLK.sol → UnsoldBurner.sol → BwlkMigration.sol
+16. Governance (Ethereum only, LIVE on mainnet): GovernanceVoter.sol → LPLocker.sol / ParticipationDistributor.sol (both take the voter as a constructor arg)
 
 ## Solidity Code Standards
 
-- Solidity 0.8.28, `evm_version = "cancun"`
+- Solidity 0.8.28 (every file pins `pragma solidity =0.8.28`), `evm_version = "cancun"`, compiled with `via_ir = true` (required for LaunchFactory's deep call stacks — see the via-ir testing note below)
 - ALL errors: custom errors only (no `require` with strings)
 - ALL transfers: SafeERC20 (no raw `transfer`/`transferFrom`)
 - ALL imports: named imports (`import {X} from "..."`)
@@ -118,7 +125,7 @@ This codebase does NOT require contracts to inherit their canonical interface (`
 
 Carve-outs:
 - When extending a standard interface (e.g. OZ `IERC20`), the canonical interface declares only protocol-specific additions; the standard ABI is inherited from the standard interface. Example: `IBoardwalkToken` declares `isExempt`, `feeDistributor`, `mint`, `setLiquiditySeedTime`, `updateExempt` only — not the standard ERC20 functions.
-- Minimal consumer-side interfaces for external protocols (`IDEXRouter`, `IDEXFactory`, `IUniswapV2Pair`, `IRewardTracker`, `IUniversalRouter`, `IV4PositionManager`, `IWETH`, `ILiFi`, `IOFT`) stay minimal — they declare only the calls our contracts actually make. `ILiFi`/`IOFT` are decode/call-only mirrors of LiFi and LayerZero types; their struct layouts MUST stay byte-identical to the upstream sources (the LiFi Diamond is called low-level with `abi.decode` pinning).
+- Minimal consumer-side interfaces for external protocols (`IDEXRouter`, `IDEXFactory`, `IUniswapV2Pair`, `IRewardTracker`, `IUniversalRouter`, `IV4PositionManager`, `IWETH`, `ILiFi`, `ILiquidityLauncher`, `ILBPStrategy`, `ICcaAuction`, `ICcaAuctionFactory`, `IPermit2`) stay minimal — they declare only the calls our contracts actually make. `ILiFi` is a decode/call-only mirror of LiFi types (the Diamond is called low-level with `abi.decode` pinning), and the CCA-launch mirrors (`ILiquidityLauncher`/`ILBPStrategy`/`ICcaAuctionFactory` structs) are abi-encoded into launch config and CREATE2 salt derivation — their struct layouts MUST stay byte-identical to the upstream sources (fork-proven in `test/fork/LaunchBwlkCcaFork.t.sol`).
 
 ## Foundry Conventions
 
@@ -127,8 +134,9 @@ Carve-outs:
 ```
 src/           # Contracts
 test/          # Tests (.t.sol)
-script/        # Deployment scripts (.s.sol)
+script/        # Deployment scripts (.s.sol); script/bwlk/ = the live Ethereum BWLK deployment surface
 lib/           # Dependencies (git submodules)
+snapshot/      # Off-chain merkle pipeline for the migration's voter-point snapshot (TS)
 ```
 
 ### Naming Conventions
@@ -157,6 +165,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 - Never place assertions in `setUp()` functions
 - Use `vm.assume()` to exclude invalid fuzz inputs (not early returns)
 - Use `bound()` for controlled input ranges
+- **via-ir gotchas** (the repo compiles `via_ir = true`): the IR optimizer CSE-caches `TIMESTAMP` within a function frame, so a second relative `vm.warp(block.timestamp + N)` in the same test can silently no-op — anchor multi-warp tests absolutely (e.g. `EPOCH_ZERO + N`; see `test/fork/GovernanceVoterFork.t.sol`). Inlined getter calls in an argument list can consume a preceding `vm.prank` — hoist them into locals first.
+- **Fork tests self-skip**: every file in `test/fork/` gates on an RPC env var (`BASE_RPC_URL`, `ETHEREUM_RPC_URL`/`ETH_RPC_URL`, `ARBITRUM_RPC_URL`, `ROBINHOOD_RPC_URL`; some need extra env like `BMX_ADDRESS`) and `vm.skip`s when unset. A green `forge test` does NOT mean they executed — set the env when your change touches fork-covered code.
 
 ### Security Practices
 
@@ -184,17 +194,19 @@ forge test -vvv                # Verbose trace
 forge test --match-test <pat>  # Run specific tests
 forge coverage --ir-minimum --skip "script/*" --report summary
 forge lint                     # Lint for issues
-forge script script/Deploy.s.sol --broadcast --verify
+forge script script/02_DeployFactory.s.sol --broadcast --verify   # deploy scripts are numbered per stage; see script/ and script/bwlk/
 ```
+
+CI (`.github/workflows/test.yml`) installs the latest **stable** forge (unpinned) and gates on `forge fmt --check`, `forge build --sizes`, and `forge test -vvv`. `forge fmt` output differs across forge versions — if CI fmt fails on files you did not touch, local/CI version skew is the cause; format with current stable before pushing.
 
 **DO NOT** modify `foundry.toml` without asking first.
 
 ## Review Process
 
-After writing or modifying contracts, use these project commands:
+After writing or modifying contracts, use these project commands (defined in `.claude/commands/`):
 
-1. `/project:audit <contract>` — Security review against architecture plan
-2. `/project:integration-check` — Cross-contract consistency verification
-3. `/project:write-tests <contract>` — Generate Foundry test suite
+1. `/audit <contract>` — Security review against `SPEC.md`
+2. `/integration-check` — Cross-contract consistency verification
+3. `/write-tests <contract>` — Generate Foundry test suite
 
 If the auditor finds a real issue, sweep the codebase for similar patterns using variant analysis.
