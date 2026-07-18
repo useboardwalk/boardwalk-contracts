@@ -21,11 +21,6 @@ library FeeSchedules {
     uint256 internal constant TOTAL_TAX_BPS = 95;
     uint256 internal constant SPLITS_DENOMINATOR = 10_000;
 
-    /// @notice Sentinel for an integrator whose address is not yet confirmed. The deploy script
-    ///         must replace it (env-supplied) before broadcasting; the IntegratorFeeCollector
-    ///         constructor rejects address(0) as a backstop.
-    address internal constant PENDING_INTEGRATOR = address(0);
-
     error UnsupportedChainId(uint256 chainId);
 
     /// @notice Resolve factory fee defaults for `chainId`. Reverts if unsupported.
@@ -96,22 +91,30 @@ library FeeSchedules {
             // Sherlock
             addrs[0] = 0xd35F65B1f0912bD13a07A21374615cfeC073Dc67;
             absBps[0] = 2;
-            // DefiLlama Research (address not yet confirmed; supplied via DEFILLAMA_RESEARCH_ADDRESS
-            // at deploy time)
-            addrs[1] = PENDING_INTEGRATOR;
+            // DefiLlama Research — address not yet confirmed on any chain. A temporary
+            // Boardwalk-controlled Safe (code-verified on all four chains, July 2026) holds the
+            // slot; once the real address is confirmed, the Safe signals the rotation
+            // (signalChangeAddress) and after the 14-day delay anyone executes it
+            // (executeChangeAddress(slotIdx, newAddress)).
+            addrs[1] = 0xE0DE2EF17A9D6022c67fb9AAabCB824F31254Ce8;
             absBps[1] = 2;
             // 0x
             addrs[2] = 0x3C241dAF101F697044ee076B51baEe5B0d72c0dc;
             absBps[2] = 2;
             // Security Alliance (SEAL) — public-goods donation. The confirmed address is a Gnosis
             // Safe with code on Ethereum ONLY (verified July 2026); a codeless contract wallet can
-            // neither claim nor rotate its frozen slot, so on every other chain the slot stays
-            // PENDING (filled from SEAL_ADDRESS at deploy, fail-loud) until SEAL confirms a
-            // per-chain-usable address.
-            addrs[3] = chainId == CHAIN_ETHEREUM ? 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332 : PENDING_INTEGRATOR;
+            // neither claim nor rotate its frozen slot, so on every other chain a temporary
+            // Boardwalk Safe holds the slot until SEAL confirms a per-chain-usable address.
+            addrs[3] = chainId == CHAIN_ETHEREUM
+                ? 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332
+                : 0x9bAee7731a92720DCcdd67A58CCc17Ad903d552a;
             absBps[3] = 2;
-            // DeFi Llama — public-goods donation
-            addrs[4] = 0x08a3c2A819E3de7ACa384c798269B3Ce1CD0e437;
+            // DeFi Llama — public-goods donation. Address confirmed for Ethereum only; on every
+            // other chain a temporary Boardwalk Safe holds the slot until DeFi Llama confirms a
+            // per-chain address.
+            addrs[4] = chainId == CHAIN_ETHEREUM
+                ? 0x08a3c2A819E3de7ACa384c798269B3Ce1CD0e437
+                : 0x1350e1C91ea1eD3C6227887102175A0e3E035201;
             absBps[4] = 2;
             return (addrs, absBps);
         }
