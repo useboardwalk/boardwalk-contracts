@@ -81,23 +81,6 @@ contract DeployFactory is Script {
         (address[] memory integratorAddresses, uint256[] memory integratorSplits, uint256 totalIntegratorBps) =
             FeeSchedules.integratorConfig(block.chainid);
 
-        // A PENDING_INTEGRATOR slot has no confirmed address yet; it must be supplied via env or
-        // the deploy fails loudly (both here and in the IntegratorFeeCollector constructor). Slot
-        // order is pinned by FeeSchedules._integrators and DeployConfigs.t.sol: slot 1 = DefiLlama
-        // Research (pending on every chain), slot 3 = SEAL and slot 4 = DeFi Llama (both pending
-        // off-Ethereum — their confirmed addresses are Ethereum-only). NOTE: pending slots filled
-        // with temporary Boardwalk-controlled addresses must each be DISTINCT — the collector
-        // rejects one address holding two slots (DuplicateIntegrator), and each temp address later
-        // self-rotates to the real integrator via signalChangeAddress (14-day timelock).
-        for (uint256 i = 0; i < integratorAddresses.length; ++i) {
-            if (integratorAddresses[i] != FeeSchedules.PENDING_INTEGRATOR) continue;
-            string memory envName =
-                i == 1 ? "DEFILLAMA_RESEARCH_ADDRESS" : i == 3 ? "SEAL_ADDRESS" : i == 4 ? "DEFILLAMA_ADDRESS" : "";
-            require(bytes(envName).length > 0, "unmapped pending integrator slot");
-            integratorAddresses[i] = vm.envAddress(envName);
-            require(integratorAddresses[i] != address(0), string.concat(envName, " required"));
-        }
-
         // Per-chain fee defaults + integrator bucket size. Integrator BPS is immutable on the factory
         // (not in `feeBps`) and cannot be adjusted post-deployment.
         (LaunchFactory.FeeBpsDefaults memory feeBps, uint256 integratorBps) = FeeSchedules.resolve(block.chainid);

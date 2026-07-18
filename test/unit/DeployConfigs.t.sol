@@ -57,16 +57,18 @@ contract DeployConfigsTest is Test {
             assertEq(splitSum, 10_000, "splits sum to denominator");
 
             assertEq(addrs[0], 0xd35F65B1f0912bD13a07A21374615cfeC073Dc67, "Sherlock");
-            assertEq(addrs[1], FeeSchedules.PENDING_INTEGRATOR, "DefiLlama Research pending (env-filled at deploy)");
+            // Unconfirmed recipients are pinned to temporary Boardwalk-controlled Safes
+            // (code-verified on all four chains) that self-rotate once each integrator
+            // confirms an address; every slot must stay distinct (DuplicateIntegrator).
+            assertEq(addrs[1], 0xE0DE2EF17A9D6022c67fb9AAabCB824F31254Ce8, "DefiLlama Research (temp Safe)");
             assertEq(addrs[2], 0x3C241dAF101F697044ee076B51baEe5B0d72c0dc, "0x");
             if (supportedChains[i] == FeeSchedules.CHAIN_ETHEREUM) {
-                // SEAL and DeFi Llama addresses are confirmed for Ethereum only; elsewhere the
-                // slots are pending until each confirms a per-chain address.
+                // SEAL and DeFi Llama addresses are confirmed for Ethereum only.
                 assertEq(addrs[3], 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332, "SEAL (Ethereum Safe)");
                 assertEq(addrs[4], 0x08a3c2A819E3de7ACa384c798269B3Ce1CD0e437, "DeFi Llama (Ethereum)");
             } else {
-                assertEq(addrs[3], FeeSchedules.PENDING_INTEGRATOR, "SEAL pending off-Ethereum");
-                assertEq(addrs[4], FeeSchedules.PENDING_INTEGRATOR, "DeFi Llama pending off-Ethereum");
+                assertEq(addrs[3], 0x9bAee7731a92720DCcdd67A58CCc17Ad903d552a, "SEAL (temp Safe off-Ethereum)");
+                assertEq(addrs[4], 0x1350e1C91ea1eD3C6227887102175A0e3E035201, "DeFi Llama (temp Safe off-Ethereum)");
             }
         }
     }
