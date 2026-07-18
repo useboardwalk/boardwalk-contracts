@@ -93,8 +93,9 @@ library FeeSchedules {
             absBps[0] = 2;
             // DefiLlama Research — address not yet confirmed on any chain. A temporary
             // Boardwalk-controlled Safe (code-verified on all four chains, July 2026) holds the
-            // slot and self-rotates to the real address via signalChangeAddress (14d) once
-            // confirmed.
+            // slot; once the real address is confirmed, the Safe signals the rotation
+            // (signalChangeAddress) and after the 14-day delay anyone executes it
+            // (executeChangeAddress(slotIdx, newAddress)).
             addrs[1] = 0xE0DE2EF17A9D6022c67fb9AAabCB824F31254Ce8;
             absBps[1] = 2;
             // 0x

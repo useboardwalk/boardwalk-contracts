@@ -136,7 +136,7 @@ The split is frozen per launch at `FeeDistributor.initialize`. Defaults are set 
 
 ### Integrator slots
 
-Five equal slots, frozen at `IntegratorFeeCollector` construction ([script/FeeSchedules.sol](script/FeeSchedules.sol)). Recipients not yet confirmed for a chain (DefiLlama Research everywhere; SEAL and DeFi Llama off-Ethereum) are pinned to temporary Boardwalk-controlled Safes — distinct per slot, since the collector rejects one address holding two slots — and each temp Safe self-rotates to the real integrator via `signalChangeAddress` (14-day timelock) once confirmed.
+Five equal slots, frozen at `IntegratorFeeCollector` construction ([script/FeeSchedules.sol](script/FeeSchedules.sol)). Recipients not yet confirmed for a chain (DefiLlama Research everywhere; SEAL and DeFi Llama off-Ethereum) are pinned to temporary Boardwalk-controlled Safes — distinct per slot, since the collector rejects one address holding two slots. Once each real address is confirmed, the temp Safe signals its rotation (`signalChangeAddress`); after the 14-day delay anyone executes it (`executeChangeAddress(slotIdx, newAddress)`).
 
 | Slot | Integrator | BPS |
 | ---- | ---------- | --- |
