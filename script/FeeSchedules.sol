@@ -110,8 +110,10 @@ library FeeSchedules {
             // per-chain-usable address.
             addrs[3] = chainId == CHAIN_ETHEREUM ? 0x5EA1d9A6dDC3A0329378a327746D71A2019eC332 : PENDING_INTEGRATOR;
             absBps[3] = 2;
-            // DeFi Llama — public-goods donation
-            addrs[4] = 0x08a3c2A819E3de7ACa384c798269B3Ce1CD0e437;
+            // DeFi Llama — public-goods donation. Address confirmed for Ethereum only; on every
+            // other chain the slot stays PENDING (filled from DEFILLAMA_ADDRESS at deploy,
+            // fail-loud) until DeFi Llama confirms a per-chain address.
+            addrs[4] = chainId == CHAIN_ETHEREUM ? 0x08a3c2A819E3de7ACa384c798269B3Ce1CD0e437 : PENDING_INTEGRATOR;
             absBps[4] = 2;
             return (addrs, absBps);
         }
