@@ -1,0 +1,12 @@
+{
+  "block": "48926526",
+  "rpc": "https://base-mainnet.g.alchemy.com/v2/kr8rmInRn_k-pQL4Jd7KP",
+  "stakerCount": 280,
+  "sumSnapshotBmx": "1836801799459244820978405",
+  "onChainTotalStaked": "1836801799459244820978405",
+  "sumSnapshotPoints": "2304262956333856652682556",
+  "onChainTotalPoints": "2304262956333856652682556",
+  "root": "0x277d55442de15e03601d65ae41ae73376fd12d7c3bfd4cbf73de07c9e4ccd895",
+  "stakedMatch": true,
+  "pointsMatch": true
+}

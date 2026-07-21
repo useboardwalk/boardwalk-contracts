@@ -11,7 +11,7 @@ import {IMintable} from "../interfaces/IMintable.sol";
 import {IGovernanceVoter} from "../interfaces/IGovernanceVoter.sol";
 
 /// @title BwlkMigration
-/// @notice BMX holders can swap their tokens 1:1 for staked BWLK on Arbitrum.
+/// @notice BMX holders can swap their tokens 1:1 for staked BWLK on Ethereum.
 ///         Migrating burns all your BMX and gives you BWLK staked across all reward trackers,
 ///         plus 16% of the migrated amount as voter points. Snapshot stakers carry over a
 ///         portion of past points; new users still get the 16% credit.

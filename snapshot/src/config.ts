@@ -80,11 +80,19 @@ export const ZERO_ADDRESS = getAddress(
  *  and the 2,711,068 migration pool. */
 export const BASE_OBMX = getAddress("0x3Ff7AB26F2dfD482C40bDaDfC0e88D01BFf79713");
 
+/** BMX CCIP token pools on Base (home chain, lock/release). Bridged-out BMX sits locked here while
+ *  the destination chain mints a representation — validate (c) already counts that representation in
+ *  the destination's totalSupply, so counting the locked backing too would double-count it. The
+ *  1.5.0 AndProxy pool is the active one (holds no liquidity); the 1.4.0 legacy pool holds the
+ *  locked balance. Locked BMX only releases when an equal amount of counted remote supply burns. */
+export const BASE_BMX_CCIP_POOL = getAddress("0xC64f6E56a19678190b8263f05BEeeD9fC5cbc01f");
+export const BASE_BMX_CCIP_LEGACY_POOL = getAddress("0xdeA04d42E30aD4F82c74E7e9A3f092FD2169fdb8");
+
 /** Per-chain addresses whose held BMX is locked/non-migratable. validate check (c) deducts their
  *  balances from the migratable supply alongside dead/zero. Every entry must be justified: BMX held
  *  here can never reach `migrate()`. */
 export const LOCKED_BMX_HOLDERS: Partial<Record<ChainKey, Address[]>> = {
-  base: [BASE_OBMX],
+  base: [BASE_OBMX, BASE_BMX_CCIP_POOL, BASE_BMX_CCIP_LEGACY_POOL],
 };
 
 /**
@@ -106,6 +114,8 @@ export const KNOWN_EXCLUDED: Address[] = [
   BASE_STAKING.feeBmxTracker,
   BASE_STAKING.bnBMX,
   BASE_OBMX,
+  BASE_BMX_CCIP_POOL,
+  BASE_BMX_CCIP_LEGACY_POOL,
   DEAD_ADDRESS,
   ZERO_ADDRESS,
   // TODO: append known BMX/WETH LP pair addresses and BoardwalkFeeCollector addresses per chain

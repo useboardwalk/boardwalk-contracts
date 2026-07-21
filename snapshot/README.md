@@ -50,3 +50,20 @@ Discovery scans BMX `Transfer` logs from `BMX_DEPLOY_BLOCK_<chain>` to the snaps
 - **(c)** the `2,711,068e18` pool ≥ total migratable BMX (per-chain supply minus dead/zero and the `LOCKED_BMX_HOLDERS` ~272k Base oBMX).
 
 Then by hand: pin every chain's block, use private/archive RPCs (incl. `RPC_KATANA`), byte-check the `src/config.ts` addresses and that `KNOWN_EXCLUDED` lists every LP pair + fee collector, skim the largest rows of `snapshot.csv`, and re-run from a second RPC — the root must match byte-for-byte.
+
+## Production snapshot (2026-07-21)
+
+Taken at 17:00 EEST (unix `1784642400`), pinned to the last block at or before that time on each
+chain: Ethereum 25581555, Base 48926526, Fraxtal 38915844, Katana 37899589, Ink 51143989,
+Arbitrum 486205179.
+
+Root `0x277d55442de15e03601d65ae41ae73376fd12d7c3bfd4cbf73de07c9e4ccd895`, 280 leaves. Sums match
+the trackers at the Base block exactly (staked `1836801799459244820978405`, points
+`2304262956333856652682556`), and a second run with independent discovery gave the same root.
+
+`prod-2026-07-21/` keeps the published artifacts (`out/` gets overwritten by later runs):
+root.txt, tree.json, proofs.json, community-snapshot.csv (sorted by stake, human units),
+base-staking-verification.json, and the base-stakers.json discovery cache.
+
+To check an address: search community-snapshot.csv, or copy the artifacts into `out/` and run
+`npm run eligibility <addr>`. Addresses without a leaf simply weren't staked at the snapshot block.
