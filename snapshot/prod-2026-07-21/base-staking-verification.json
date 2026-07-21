@@ -4,9 +4,10 @@
   "stakerCount": 280,
   "sumSnapshotBmx": "1836801799459244820978405",
   "onChainTotalStaked": "1836801799459244820978405",
-  "sumSnapshotPoints": "2304262956333856652682556",
+  "sumStakedPoints": "2304262956333856652682556",
   "onChainTotalPoints": "2304262956333856652682556",
-  "root": "0x277d55442de15e03601d65ae41ae73376fd12d7c3bfd4cbf73de07c9e4ccd895",
+  "sumPendingPoints": "431524410952541481671344",
+  "root": "0x6fc870a6d7ff5d2be147104da95d5da54c564c673151c150245a7547f277fa32",
   "stakedMatch": true,
   "pointsMatch": true
 }

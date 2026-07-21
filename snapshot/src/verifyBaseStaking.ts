@@ -18,14 +18,15 @@ import { LEAF_ENCODING, type LeafValue } from "./leaves.js";
  *   1. Enumerate every staker by scanning the staked tracker's mint logs (Transfer from 0x0). This is
  *      a DIFFERENT discovery path than the production pipeline (which scans BMX transfers), so a match
  *      cross-validates both.
- *   2. Read each candidate's depositBalances at one pinned block: staked BMX (snapshotBmx) on the
- *      staked tracker, and multiplier points (snapshotPoints) on sbfBMX.
- *   3. Keep stakers (staked > 0 || points > 0) minus the same protocol allowlist the pipeline
- *      excludes (exclusions.ts), and build the same StandardMerkleTree the pipeline builds.
- *   4. Assert the aggregate sums equal the trackers' on-chain totals - the ground-truth correctness +
- *      completeness proof:
- *        sum(snapshotBmx)    == stakedTracker.totalDepositSupply(BMX)
- *        sum(snapshotPoints) == sbfBMX.totalDepositSupply(bnBMX)
+ *   2. Read each candidate at one pinned block: staked BMX (snapshotBmx) on the staked tracker,
+ *      staked points on sbfBMX, and pending points (bonusBmxTracker.claimable). Leaf points =
+ *      staked + pending.
+ *   3. Keep stakers (staked > 0 || points > 0 || pending > 0) minus the same protocol allowlist the
+ *      pipeline excludes (exclusions.ts), and build the same StandardMerkleTree the pipeline builds.
+ *   4. Assert the aggregate staked sums equal the trackers' on-chain totals - the ground-truth
+ *      correctness + completeness proof (pending has no on-chain aggregate):
+ *        sum(snapshotBmx)   == stakedTracker.totalDepositSupply(BMX)
+ *        sum(stakedPoints)  == sbfBMX.totalDepositSupply(bnBMX)
  *   5. Re-read a random sample of leaves with single eth_calls (no multicall) as a second source.
  *
  * Run: RPC_BASE=<archive-or-fast-rpc> npx tsx src/verifyBaseStaking.ts
@@ -44,6 +45,13 @@ const DEPOSIT_BALANCES_ABI = [
       { name: "account", type: "address" },
       { name: "depositToken", type: "address" },
     ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "claimable",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const;
@@ -169,14 +177,15 @@ async function discoverStakers(toBlock: bigint): Promise<Address[]> {
   return stakers;
 }
 
-/** Concurrently read each staker's staked BMX + points at a pinned block via individual eth_calls,
- *  rotated across the RPC pool with retry. (Public RPCs reject the large multicall3 batch.) */
+/** Concurrently read each staker's staked BMX + staked/pending points at a pinned block via
+ *  individual eth_calls, rotated across the RPC pool with retry. (Public RPCs reject the large
+ *  multicall3 batch.) */
 async function readStakerBalances(
   accounts: Address[],
   bmx: Address,
   blockNumber: bigint,
-): Promise<Map<string, { staked: bigint; points: bigint }>> {
-  const out = new Map<string, { staked: bigint; points: bigint }>();
+): Promise<Map<string, { staked: bigint; points: bigint; pending: bigint }>> {
+  const out = new Map<string, { staked: bigint; points: bigint; pending: bigint }>();
   let next = 0;
   let done = 0;
   const CONC = 8;
@@ -186,11 +195,11 @@ async function readStakerBalances(
       const i = next++;
       if (i >= accounts.length) return;
       const a = accounts[i]!;
-      let rec: { staked: bigint; points: bigint } | undefined;
+      let rec: { staked: bigint; points: bigint; pending: bigint } | undefined;
       for (let att = 0; att < 10 && !rec; att++) {
         const c = scanClients[(w + att) % scanClients.length]!;
         try {
-          const [staked, points] = await Promise.all([
+          const [staked, points, pending] = await Promise.all([
             c.readContract({
               address: BASE_STAKING.stakedBmxTracker,
               abi: DEPOSIT_BALANCES_ABI,
@@ -205,8 +214,15 @@ async function readStakerBalances(
               args: [a, BASE_STAKING.bnBMX],
               blockNumber,
             }) as Promise<bigint>,
+            c.readContract({
+              address: BASE_STAKING.bonusBmxTracker,
+              abi: DEPOSIT_BALANCES_ABI,
+              functionName: "claimable",
+              args: [a],
+              blockNumber,
+            }) as Promise<bigint>,
           ]);
-          rec = { staked, points };
+          rec = { staked, points, pending };
         } catch {
           await sleep(150 * (att + 1));
         }
@@ -254,33 +270,40 @@ async function main(): Promise<void> {
   console.log(`[verify] reading depositBalances for ${candidates.length} candidates at block ${block}...`);
   const balances = await readStakerBalances(candidates, bmx, block);
 
-  // 3. build entries (stakers only) + the tree.
+  // 3. build entries (stakers only) + the tree. Leaf points = staked + pending.
   const values: LeafValue[] = [];
   let sumStaked = 0n;
-  let sumPoints = 0n;
-  const csv: string[] = ["address,snapshotBmx,snapshotPoints"];
+  let sumStakedPoints = 0n;
+  let sumPendingPoints = 0n;
+  const csv: string[] = ["address,snapshotBmx,stakedPoints,pendingPoints,snapshotPoints"];
   for (const a of candidates) {
     const lower = a.toLowerCase();
     if (isExcluded(a)) continue;
-    const rec = balances.get(lower) ?? { staked: 0n, points: 0n };
+    const rec = balances.get(lower) ?? { staked: 0n, points: 0n, pending: 0n };
     const staked = rec.staked;
     const pts = rec.points;
-    if (staked === 0n && pts === 0n) continue;
-    values.push([a, staked.toString(), pts.toString()]);
+    const pending = rec.pending;
+    if (staked === 0n && pts === 0n && pending === 0n) continue;
+    const leafPts = pts + pending;
+    values.push([a, staked.toString(), leafPts.toString()]);
     sumStaked += staked;
-    sumPoints += pts;
-    csv.push(`${a},${staked},${pts}`);
+    sumStakedPoints += pts;
+    sumPendingPoints += pending;
+    csv.push(`${a},${staked},${pts},${pending},${leafPts}`);
   }
   values.sort((x, y) => (x[0].toLowerCase() < y[0].toLowerCase() ? -1 : 1));
   const tree = StandardMerkleTree.of(values, [...LEAF_ENCODING]);
 
-  // 4. the correctness + completeness proof.
+  // 4. the correctness + completeness proof. Staked sums must match the trackers exactly; pending
+  //    has no on-chain aggregate (covered by the per-account sample below and the pipeline's own
+  //    independent read).
   const stakedOk = sumStaked === totalStaked;
-  const pointsOk = sumPoints === totalPoints;
+  const pointsOk = sumStakedPoints === totalPoints;
   console.log("");
   console.log(`[verify] stakers with a leaf: ${values.length}`);
   console.log(`[verify] sum(snapshotBmx)    = ${sumStaked} (${fmt(sumStaked)})  vs on-chain ${fmt(totalStaked)}  -> ${stakedOk ? "MATCH" : "MISMATCH"}`);
-  console.log(`[verify] sum(snapshotPoints) = ${sumPoints} (${fmt(sumPoints)})  vs on-chain ${fmt(totalPoints)}  -> ${pointsOk ? "MATCH" : "MISMATCH"}`);
+  console.log(`[verify] sum(stakedPoints)   = ${sumStakedPoints} (${fmt(sumStakedPoints)})  vs on-chain ${fmt(totalPoints)}  -> ${pointsOk ? "MATCH" : "MISMATCH"}`);
+  console.log(`[verify] sum(pendingPoints)  = ${sumPendingPoints} (${fmt(sumPendingPoints)})  (no on-chain aggregate)`);
   console.log(`[verify] merkle root = ${tree.root}`);
 
   // Write the artifact first so it always lands, regardless of the (secondary) sample re-read.
@@ -291,8 +314,9 @@ async function main(): Promise<void> {
     stakerCount: values.length,
     sumSnapshotBmx: sumStaked.toString(),
     onChainTotalStaked: totalStaked.toString(),
-    sumSnapshotPoints: sumPoints.toString(),
+    sumStakedPoints: sumStakedPoints.toString(),
     onChainTotalPoints: totalPoints.toString(),
+    sumPendingPoints: sumPendingPoints.toString(),
     root: tree.root,
     stakedMatch: stakedOk,
     pointsMatch: pointsOk,
@@ -307,14 +331,15 @@ async function main(): Promise<void> {
   for (let k = 0; k < sampleN; k++) {
     const idx = (k * 7919) % values.length; // deterministic spread
     const [acct, sBmx, sPts] = values[idx]!;
-    let live: [bigint, bigint] | undefined;
+    let live: [bigint, bigint, bigint] | undefined;
     for (let att = 0; att < 8 && !live; att++) {
       const c = scanClients[(k + att) % scanClients.length]!;
       try {
         live = (await Promise.all([
           c.readContract({ address: BASE_STAKING.stakedBmxTracker, abi: DEPOSIT_BALANCES_ABI, functionName: "depositBalances", args: [acct as Address, bmx], blockNumber: block }),
           c.readContract({ address: BASE_STAKING.feeBmxTracker, abi: DEPOSIT_BALANCES_ABI, functionName: "depositBalances", args: [acct as Address, BASE_STAKING.bnBMX], blockNumber: block }),
-        ])) as [bigint, bigint];
+          c.readContract({ address: BASE_STAKING.bonusBmxTracker, abi: DEPOSIT_BALANCES_ABI, functionName: "claimable", args: [acct as Address], blockNumber: block }),
+        ])) as [bigint, bigint, bigint];
       } catch {
         await sleep(150 * (att + 1));
       }
@@ -323,8 +348,8 @@ async function main(): Promise<void> {
       sampleErr++;
       continue;
     }
-    if (live[0].toString() === sBmx && live[1].toString() === sPts) sampleOk++;
-    else console.error(`  SAMPLE MISMATCH ${acct}: tree (${sBmx},${sPts}) != live (${live[0]},${live[1]})`);
+    if (live[0].toString() === sBmx && (live[1] + live[2]).toString() === sPts) sampleOk++;
+    else console.error(`  SAMPLE MISMATCH ${acct}: tree (${sBmx},${sPts}) != live (${live[0]},${live[1]}+${live[2]})`);
   }
   console.log(`[verify] sample re-read: ${sampleOk}/${sampleN - sampleErr} checked leaves match live single-call reads (${sampleErr} skipped on RPC error)`);
 

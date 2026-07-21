@@ -11,8 +11,10 @@ import {
 export interface StakedRead {
   /** stakedBmxTracker.depositBalances(user, BMX) — staked BMX component of snapshotBmx (wei). */
   stakedBmx: bigint;
-  /** feeBmxTracker(sbfBMX).depositBalances(user, bnBMX) — snapshotPoints (wei). */
-  points: bigint;
+  /** feeBmxTracker(sbfBMX).depositBalances(user, bnBMX) — staked (compounded) points (wei). */
+  stakedPoints: bigint;
+  /** bonusBmxTracker.claimable(user) — accrued but not-yet-compounded points (wei). */
+  pendingPoints: bigint;
 }
 
 export type StakedMap = Map<string, StakedRead>;
@@ -20,14 +22,17 @@ export type StakedMap = Map<string, StakedRead>;
 /**
  * Read Base staking data for a set of users via Multicall3 at the Base snapshot block.
  *
- *   stakedBmx = STAKED_BMX_TRACKER.depositBalances(user, BMX)
- *   points    = feeBmxTracker (sbfBMX).depositBalances(user, BN_BMX)
+ *   stakedBmx     = STAKED_BMX_TRACKER.depositBalances(user, BMX)
+ *   stakedPoints  = feeBmxTracker (sbfBMX).depositBalances(user, BN_BMX)
+ *   pendingPoints = bonusBmxTracker.claimable(user)
  *
- * stakedBmx feeds the points-ratio denominator (added to wallet BMX). points becomes snapshotPoints.
+ * stakedBmx feeds the points-ratio denominator. snapshotPoints = stakedPoints + pendingPoints:
+ * pending points would have compounded into the fee tracker eventually, so the snapshot carries
+ * them rather than punishing stakers who never pressed compound.
  *
  * @param users Addresses to read (checksummed).
- * @returns Map keyed by LOWERCASED address -> {stakedBmx, points}. Only entries with a non-zero
- *          stakedBmx OR points are included.
+ * @returns Map keyed by LOWERCASED address -> StakedRead. Only entries with a non-zero
+ *          stakedBmx, stakedPoints, or pendingPoints are included.
  */
 export async function readStakedPoints(users: Address[]): Promise<StakedMap> {
   const client = clientFor("base");
@@ -37,7 +42,7 @@ export async function readStakedPoints(users: Address[]): Promise<StakedMap> {
   const batchSize = multicallBatchSize();
 
   const bmx = BMX_ADDRESS.base;
-  const { stakedBmxTracker, feeBmxTracker, bnBMX } = BASE_STAKING;
+  const { stakedBmxTracker, bonusBmxTracker, feeBmxTracker, bnBMX } = BASE_STAKING;
 
   const out: StakedMap = new Map();
   for (let i = 0; i < users.length; i += batchSize) {
@@ -55,12 +60,19 @@ export async function readStakedPoints(users: Address[]): Promise<StakedMap> {
       slice.map((u) => [u, bnBMX] as const),
       blockNumber,
     );
+    const pendingResults = await multicallClaimable(
+      client,
+      bonusBmxTracker,
+      slice,
+      blockNumber,
+    );
 
     for (let j = 0; j < slice.length; j++) {
       const stakedBmx = stakedResults[j]!;
-      const points = pointsResults[j]!;
-      if (stakedBmx > 0n || points > 0n) {
-        out.set(slice[j]!.toLowerCase(), { stakedBmx, points });
+      const stakedPoints = pointsResults[j]!;
+      const pendingPoints = pendingResults[j]!;
+      if (stakedBmx > 0n || stakedPoints > 0n || pendingPoints > 0n) {
+        out.set(slice[j]!.toLowerCase(), { stakedBmx, stakedPoints, pendingPoints });
       }
     }
     console.log(
@@ -68,7 +80,7 @@ export async function readStakedPoints(users: Address[]): Promise<StakedMap> {
     );
   }
   console.log(
-    `[base] staked BMX + points @ block ${blockNumber}: ${out.size} staking users`,
+    `[base] staked BMX + points (incl. pending) @ block ${blockNumber}: ${out.size} staking users`,
   );
   return out;
 }
@@ -92,6 +104,27 @@ async function multicallDepositBalances(
       abi: REWARD_TRACKER_ABI,
       functionName: "depositBalances" as const,
       args: [account, depositToken] as const,
+    })),
+  });
+  return results as bigint[];
+}
+
+async function multicallClaimable(
+  client: PublicClient,
+  tracker: Address,
+  accounts: ReadonlyArray<Address>,
+  blockNumber: bigint,
+): Promise<bigint[]> {
+  // allowFailure: false — same rationale as multicallDepositBalances.
+  const results = await client.multicall({
+    blockNumber,
+    allowFailure: false,
+    multicallAddress: MULTICALL3_ADDRESS,
+    contracts: accounts.map((account) => ({
+      address: tracker,
+      abi: REWARD_TRACKER_ABI,
+      functionName: "claimable" as const,
+      args: [account] as const,
     })),
   });
   return results as bigint[];

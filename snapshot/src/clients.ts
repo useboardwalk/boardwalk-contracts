@@ -34,7 +34,7 @@ export const ERC20_ABI = [
   },
 ] as const satisfies Abi;
 
-/** Minimal RewardTracker ABI: only `depositBalances`. */
+/** Minimal RewardTracker ABI: `depositBalances` + `claimable`. */
 export const REWARD_TRACKER_ABI = [
   {
     type: "function",
@@ -44,6 +44,13 @@ export const REWARD_TRACKER_ABI = [
       { name: "account", type: "address" },
       { name: "depositToken", type: "address" },
     ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "claimable",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
   },
 ] as const satisfies Abi;

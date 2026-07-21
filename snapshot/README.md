@@ -12,9 +12,10 @@ It's **stakers-only**. BWS is always 1:1 with surrendered BMX, and every migrato
 
 Per staker, at the snapshot block:
 - `snapshotBmx` — Base staked BMX (`stakedBmxTracker.depositBalances(user, BMX)`); the carry-ratio denominator.
-- `snapshotPoints` — staked points (`sbfBMX.depositBalances(user, bnBMX)`).
+- `snapshotPoints` — staked points (`sbfBMX.depositBalances(user, bnBMX)`) plus pending un-compounded
+  points (`bonusBmxTracker.claimable(user)`). Pending would have compounded eventually, so it carries.
 
-Only stakers (staked BMX or points > 0) get a leaf. **Exclusions are allowlist-only** — dead/zero plus `KNOWN_EXCLUDED` (trackers, bnBMX, LP pairs, fee collectors). There is deliberately **no bytecode check**: `migrate` has no EOA gate, so Safe- and EIP-7702-held stakes keep their leaves (dropping them would forfeit real points and break the validate (b) sums).
+Only stakers (staked BMX, points, or pending > 0) get a leaf. **Exclusions are allowlist-only** — dead/zero plus `KNOWN_EXCLUDED` (trackers, bnBMX, LP pairs, fee collectors). There is deliberately **no bytecode check**: `migrate` has no EOA gate, so Safe- and EIP-7702-held stakes keep their leaves (dropping them would forfeit real points and break the validate (b) sums).
 
 ## Blocks
 
@@ -46,7 +47,7 @@ Discovery scans BMX `Transfer` logs from `BMX_DEPLOY_BLOCK_<chain>` to the snaps
 
 `npm run validate` checks:
 - **(a)** a random sample of leaves re-reads identically against live chains;
-- **(b)** aggregate `snapshotBmx`/`snapshotPoints` equal the trackers' `totalDepositSupply` (nothing dropped, and no `KNOWN_EXCLUDED` address is itself staked);
+- **(b)** aggregate `snapshotBmx` and the staked-points component equal the trackers' `totalDepositSupply` (nothing dropped, and no `KNOWN_EXCLUDED` address is itself staked); pending points have no on-chain aggregate and are checked per-account in (a) and by `verifyBaseStaking`;
 - **(c)** the `2,711,068e18` pool ≥ total migratable BMX (per-chain supply minus dead/zero and the `LOCKED_BMX_HOLDERS` ~272k Base oBMX).
 
 Then by hand: pin every chain's block, use private/archive RPCs (incl. `RPC_KATANA`), byte-check the `src/config.ts` addresses and that `KNOWN_EXCLUDED` lists every LP pair + fee collector, skim the largest rows of `snapshot.csv`, and re-run from a second RPC — the root must match byte-for-byte.
@@ -57,9 +58,11 @@ Taken at 17:00 EEST (unix `1784642400`), pinned to the last block at or before t
 chain: Ethereum 25581555, Base 48926526, Fraxtal 38915844, Katana 37899589, Ink 51143989,
 Arbitrum 486205179.
 
-Root `0x277d55442de15e03601d65ae41ae73376fd12d7c3bfd4cbf73de07c9e4ccd895`, 280 leaves. Sums match
-the trackers at the Base block exactly (staked `1836801799459244820978405`, points
-`2304262956333856652682556`), and a second run with independent discovery gave the same root.
+Root `0x6fc870a6d7ff5d2be147104da95d5da54c564c673151c150245a7547f277fa32`, 280 leaves. Leaf points
+include pending un-compounded points. The staked components match the trackers at the Base block
+exactly (staked BMX `1836801799459244820978405`, staked points `2304262956333856652682556`);
+pending adds `431524410952541481671344` on top. A second run with independent discovery gave the
+same root.
 
 `prod-2026-07-21/` keeps the published artifacts (`out/` gets overwritten by later runs):
 root.txt, tree.json, proofs.json, community-snapshot.csv (sorted by stake, human units),
