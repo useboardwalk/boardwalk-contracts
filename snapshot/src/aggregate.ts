@@ -10,10 +10,14 @@ export interface AggregatedEntry {
   account: Address;
   perChain: Record<ChainKey, string>;
   baseStakedBmx: string;
+  /** Staked (compounded) points: sbfBMX.depositBalances(user, bnBMX) (wei, decimal string). */
+  baseStakedPoints: string;
+  /** Pending points: bonusBmxTracker.claimable(user) (wei, decimal string). */
+  basePendingPoints: string;
   /** snapshotBmx = baseStakedBmx (the carry-ratio denominator; wei, decimal string). Only stakers
    *  get an entry - non-stakers earn the 16% base credit on-chain without a leaf. */
   snapshotBmx: string;
-  /** snapshotPoints = sbfBMX.depositBalances(user, bnBMX) on Base (wei, decimal string). */
+  /** snapshotPoints = baseStakedPoints + basePendingPoints (wei, decimal string). */
   snapshotPoints: string;
 }
 
@@ -31,7 +35,8 @@ const ZERO_PER_CHAIN: Record<ChainKey, string> = {
  * informational CSV), drop protocol addresses (allowlist), dedup, and produce the per-account leaves.
  *
  * The snapshot is STAKERS ONLY: snapshotBmx = Base staked BMX (depositBalances(user, BMX)),
- * snapshotPoints = Base sbfBMX.depositBalances(user, bnBMX). Non-stakers are excluded entirely - the
+ * snapshotPoints = staked points (sbfBMX.depositBalances(user, bnBMX)) + pending points
+ * (bonusBmxTracker.claimable(user)). Non-stakers are excluded entirely - the
  * migration contract grants every migrator the 16% base credit on their migrated BMX without a leaf.
  * Contract-account stakers (Safes, 7702-delegated EOAs) keep their leaves: migrate has no EOA gate,
  * and dropping them would forfeit their points and break the validate (b) sum reconciliation.
@@ -75,20 +80,23 @@ export async function aggregate(): Promise<AggregatedEntry[]> {
 
     const stakeRead = staked.get(lower);
     const baseStakedBmx = stakeRead?.stakedBmx ?? 0n;
-    const points = stakeRead?.points ?? 0n;
+    const stakedPoints = stakeRead?.stakedPoints ?? 0n;
+    const pendingPoints = stakeRead?.pendingPoints ?? 0n;
 
     // snapshotBmx = the staker's Base staked BMX (the carry-ratio denominator). Per-chain wallet BMX
     // is informational only (CSV): every migrator earns the 16% base credit on-chain on whatever they
     // migrate, so non-stakers need no leaf - they are dropped by the filter below.
     const snapshotBmx = baseStakedBmx;
-    if (snapshotBmx === 0n && points === 0n) continue;
+    if (snapshotBmx === 0n && stakedPoints === 0n && pendingPoints === 0n) continue;
 
     entries.push({
       account: addr,
       perChain,
       baseStakedBmx: baseStakedBmx.toString(),
+      baseStakedPoints: stakedPoints.toString(),
+      basePendingPoints: pendingPoints.toString(),
       snapshotBmx: snapshotBmx.toString(),
-      snapshotPoints: points.toString(),
+      snapshotPoints: (stakedPoints + pendingPoints).toString(),
     });
   }
 
@@ -102,7 +110,7 @@ export async function aggregate(): Promise<AggregatedEntry[]> {
 
 function writeCsv(entries: AggregatedEntry[]): void {
   const header =
-    "address,eth_bmx,base_bmx,fraxtal_bmx,katana_bmx,ink_bmx,arbitrum_bmx,base_staked_bmx,snapshotBmx,snapshotPoints";
+    "address,eth_bmx,base_bmx,fraxtal_bmx,katana_bmx,ink_bmx,arbitrum_bmx,base_staked_bmx,base_staked_points,base_pending_points,snapshotBmx,snapshotPoints";
   const rows = entries.map((e) =>
     [
       e.account,
@@ -113,6 +121,8 @@ function writeCsv(entries: AggregatedEntry[]): void {
       e.perChain.ink,
       e.perChain.arbitrum,
       e.baseStakedBmx,
+      e.baseStakedPoints,
+      e.basePendingPoints,
       e.snapshotBmx,
       e.snapshotPoints,
     ].join(","),

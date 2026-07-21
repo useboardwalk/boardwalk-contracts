@@ -29,6 +29,8 @@ interface AggEntry {
   account: Address;
   perChain: Record<ChainKey, string>;
   baseStakedBmx: string;
+  baseStakedPoints: string;
+  basePendingPoints: string;
   snapshotBmx: string;
   snapshotPoints: string;
 }
@@ -41,9 +43,10 @@ const SAMPLE_SIZE = 20;
  *  (a) Re-read a random sample of staker leaves: snapshotBmx must equal live Base staked BMX and
  *      snapshotPoints the live multiplier points (the informational per-chain wallet columns too).
  *  (b) Completeness: the aggregate of all snapshotBmx must equal the staked tracker's on-chain
- *      totalDepositSupply(BMX), and the aggregate of all snapshotPoints must equal sbfBMX's
+ *      totalDepositSupply(BMX), and the aggregate STAKED points component must equal sbfBMX's
  *      totalDepositSupply(bnBMX) - i.e. the snapshot captured every staker's stake AND points
- *      (a shortfall = missed staker or a zeroed read).
+ *      (a shortfall = missed staker or a zeroed read). Pending points have no on-chain aggregate;
+ *      they are verified per-account in (a) and by the independent verifier.
  *  (c) Pool coverage (feeds on-chain D-1): every holder migrates 1:1, so the pool must cover ALL
  *      migratable BMX = sum of per-chain totalSupply minus the dead/zero-held BMX and the enumerated
  *      LOCKED_BMX_HOLDERS (e.g. Base oBMX - protocol BMX that can never reach migrate()). Staked BMX
@@ -91,7 +94,7 @@ async function main(): Promise<void> {
       }
     }
 
-    // The leaf: snapshotBmx = Base staked BMX, snapshotPoints = Base multiplier points.
+    // The leaf: snapshotBmx = Base staked BMX, snapshotPoints = staked + pending points.
     const stakedBmx = (await baseClient.readContract({
       address: BASE_STAKING.stakedBmxTracker,
       abi: REWARD_TRACKER_ABI,
@@ -99,11 +102,18 @@ async function main(): Promise<void> {
       args: [account, BMX_ADDRESS.base],
       blockNumber: baseBlock,
     })) as bigint;
-    const points = (await baseClient.readContract({
+    const stakedPoints = (await baseClient.readContract({
       address: BASE_STAKING.feeBmxTracker,
       abi: REWARD_TRACKER_ABI,
       functionName: "depositBalances",
       args: [account, BASE_STAKING.bnBMX],
+      blockNumber: baseBlock,
+    })) as bigint;
+    const pendingPoints = (await baseClient.readContract({
+      address: BASE_STAKING.bonusBmxTracker,
+      abi: REWARD_TRACKER_ABI,
+      functionName: "claimable",
+      args: [account],
       blockNumber: baseBlock,
     })) as bigint;
 
@@ -111,8 +121,18 @@ async function main(): Promise<void> {
       console.error(`  MISMATCH ${account} snapshotBmx (staked): live ${stakedBmx} != aggregate ${e.snapshotBmx}`);
       failures++;
     }
-    if (points !== BigInt(e.snapshotPoints)) {
-      console.error(`  MISMATCH ${account} snapshotPoints: live ${points} != aggregate ${e.snapshotPoints}`);
+    if (stakedPoints !== BigInt(e.baseStakedPoints)) {
+      console.error(`  MISMATCH ${account} staked points: live ${stakedPoints} != aggregate ${e.baseStakedPoints}`);
+      failures++;
+    }
+    if (pendingPoints !== BigInt(e.basePendingPoints)) {
+      console.error(`  MISMATCH ${account} pending points: live ${pendingPoints} != aggregate ${e.basePendingPoints}`);
+      failures++;
+    }
+    if (stakedPoints + pendingPoints !== BigInt(e.snapshotPoints)) {
+      console.error(
+        `  MISMATCH ${account} snapshotPoints: live staked+pending ${stakedPoints + pendingPoints} != aggregate ${e.snapshotPoints}`,
+      );
       failures++;
     }
   }
@@ -125,7 +145,7 @@ async function main(): Promise<void> {
   // position (an excluded staker gets no leaf, so the sums would fail with a misleading
   // "discovery missed a staker" message). Assert it explicitly.
   for (const excluded of KNOWN_EXCLUDED) {
-    const [exStaked, exPoints] = await Promise.all([
+    const [exStaked, exPoints, exPending] = await Promise.all([
       baseClient.readContract({
         address: BASE_STAKING.stakedBmxTracker,
         abi: REWARD_TRACKER_ABI,
@@ -140,10 +160,17 @@ async function main(): Promise<void> {
         args: [excluded, BASE_STAKING.bnBMX],
         blockNumber: baseBlock,
       }) as Promise<bigint>,
+      baseClient.readContract({
+        address: BASE_STAKING.bonusBmxTracker,
+        abi: REWARD_TRACKER_ABI,
+        functionName: "claimable",
+        args: [excluded],
+        blockNumber: baseBlock,
+      }) as Promise<bigint>,
     ]);
-    if (exStaked !== 0n || exPoints !== 0n) {
+    if (exStaked !== 0n || exPoints !== 0n || exPending !== 0n) {
       console.error(
-        `  FAIL: KNOWN_EXCLUDED address ${excluded} has a staked position (staked ${exStaked}, points ${exPoints}) - ` +
+        `  FAIL: KNOWN_EXCLUDED address ${excluded} has a staked position (staked ${exStaked}, points ${exPoints}, pending ${exPending}) - ` +
           `it gets no leaf, so the (b) sums below cannot match. Remove it from the exclusion list or resolve its stake.`,
       );
       failures++;
@@ -168,8 +195,11 @@ async function main(): Promise<void> {
     console.log(`  OK: snapshot captures every staker's staked BMX`);
   }
 
-  // Points side of the same reconciliation: catches a zeroed/missed points read even when the
-  // staked sum matches.
+  // Points side of the same reconciliation. Only the STAKED component has an on-chain aggregate
+  // (totalDepositSupply); pending points (bonusBmxTracker.claimable) have no total getter, so they
+  // are covered per-account by check (a) and by the independent verifier's second full read.
+  const aggStakedPoints = entries.reduce((acc, e) => acc + BigInt(e.baseStakedPoints), 0n);
+  const aggPendingPoints = entries.reduce((acc, e) => acc + BigInt(e.basePendingPoints), 0n);
   const aggTotalPoints = entries.reduce((acc, e) => acc + BigInt(e.snapshotPoints), 0n);
   const totalPointsOnChain = (await baseClient.readContract({
     address: BASE_STAKING.feeBmxTracker,
@@ -178,15 +208,22 @@ async function main(): Promise<void> {
     args: [BASE_STAKING.bnBMX],
     blockNumber: baseBlock,
   })) as bigint;
-  console.log(`  aggregate snapshotPoints: ${aggTotalPoints}`);
+  console.log(`  aggregate staked points: ${aggStakedPoints}`);
   console.log(`  feeBmxTracker.totalDepositSupply(bnBMX): ${totalPointsOnChain}`);
-  if (aggTotalPoints !== totalPointsOnChain) {
+  console.log(`  aggregate pending points: ${aggPendingPoints} (no on-chain aggregate; per-account checks only)`);
+  if (aggStakedPoints !== totalPointsOnChain) {
     console.error(
-      `  FAIL: captured points (${aggTotalPoints}) != on-chain total points (${totalPointsOnChain}) - missed or zeroed points read.`,
+      `  FAIL: captured staked points (${aggStakedPoints}) != on-chain total points (${totalPointsOnChain}) - missed or zeroed points read.`,
     );
     failures++;
   } else {
-    console.log(`  OK: snapshot captures every staker's points`);
+    console.log(`  OK: snapshot captures every staker's staked points`);
+  }
+  if (aggTotalPoints !== aggStakedPoints + aggPendingPoints) {
+    console.error(
+      `  FAIL: snapshotPoints sum (${aggTotalPoints}) != staked (${aggStakedPoints}) + pending (${aggPendingPoints}).`,
+    );
+    failures++;
   }
 
   // ---- (c) migration pool coverage (feeds on-chain D-1) -----------------------------------
