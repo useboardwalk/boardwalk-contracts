@@ -1,8 +1,8 @@
-# BMX → BWS snapshot pipeline
+# BMX → BWLK snapshot pipeline
 
 Builds the one-shot merkle root + per-account proofs that `src/token/BwsMigration.sol` consumes.
 
-It's **stakers-only**. BWS is always 1:1 with surrendered BMX, and every migrator earns a 16% base credit on-chain automatically (`_pointsFor`, no leaf required) — so non-stakers need no entry. A leaf exists only to carry a prior staker's *existing* points across the migration.
+It's **stakers-only**. BWLK is always 1:1 with surrendered BMX, and every migrator earns a 16% base credit on-chain automatically (`_pointsFor`, no leaf required) — so non-stakers need no entry. A leaf exists only to carry a prior staker's *existing* points across the migration.
 
 > The on-chain root is set **once** and can't be changed. Pin the blocks, run `npm run validate`, and eyeball `out/snapshot.csv` before publishing.
 
