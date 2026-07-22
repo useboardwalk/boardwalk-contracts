@@ -1,6 +1,6 @@
 {
   "block": "48926526",
-  "rpc": "https://base-mainnet.g.alchemy.com/v2/kr8rmInRn_k-pQL4Jd7KP",
+  "rpc": "https://mainnet.base.org",
   "stakerCount": 280,
   "sumSnapshotBmx": "1836801799459244820978405",
   "onChainTotalStaked": "1836801799459244820978405",
