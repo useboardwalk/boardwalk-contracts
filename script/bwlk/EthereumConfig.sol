@@ -70,6 +70,11 @@ library EthereumConfig {
     ///         `BwlkMigration.CREDIT_BPS`; here for deploy-script cross-checks only.
     uint256 internal constant VOTER_CREDIT_BPS = 1_600;
 
+    /// @notice Default migration claim window end: January 20 2027, 11:00 PST (19:00:00 UTC).
+    ///         `migrate` is possible at or before this timestamp, `sweepUnclaimed` only after.
+    ///         Script 03 reads it as the CLAIM_DEADLINE env default.
+    uint256 internal constant MIGRATION_CLAIM_DEADLINE = 1_800_471_600;
+
     // --- v4 pool config for the BWLK/ETH pool ---
     uint24 internal constant POOL_FEE = 10_000;
     int24 internal constant POOL_TICK_SPACING = 200;
