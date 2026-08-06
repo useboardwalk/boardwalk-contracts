@@ -31,7 +31,7 @@ These MUST be maintained across all code changes:
 - Issuer claims as raise token (per-recipient 10% daily rate limit, slippage protection)
 - Referrer claims directly via `claimReferrerFees()` (no rate limit; paid in the launch token)
 - FeeDistributor, BoardwalkFeeCollector, and IntegratorFeeCollector all use regular `swapExactTokensForTokens` (all three ARE tax-exempt)
-- Graduation thresholds default to 5 WETH for both Express and Advanced on every chain (deploy env, timelock-tunable per path)
+- Graduation thresholds default to 2.5 WETH for both Express and Advanced on every chain (deploy env, timelock-tunable per path — the two can diverge between executions)
 
 ### LP Staking
 - ZERO admin functions (fully immutable after init)

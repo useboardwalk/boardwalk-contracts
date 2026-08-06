@@ -10,7 +10,7 @@ A permissionless token launch protocol. Each launch deploys 4–5 EIP-1167 clone
 | Raise token | The chain's canonical WETH |
 | Swap cost | 0.95% token tax + 0.30% V2 pair fee = **1.25%** |
 | Revenue split | 10% treasury / 90% `GovernanceVoter` (Ethereum) |
-| Graduation | 5 WETH default, both launch paths |
+| Graduation | 2.5 WETH default per launch path (tunable independently) |
 | Governance | Weekly revenue votes on Ethereum, sbfBWLK-weighted |
 
 ---
@@ -55,7 +55,7 @@ The LP, boardwalk, and integrator forwards are wrapped in `try/catch` so a downs
 | Presale duration      | 24h (configurable, > 0)         | 7d default (admin range 2–14d)                              |
 | Presale allocation    | Fixed 50%                       | 25–50%, divisible by 5%                                     |
 | Start delay           | None                            | 24h                                                         |
-| Graduation threshold  | 5 WETH default (admin-tunable)  | 5 WETH default (admin-tunable)                              |
+| Graduation threshold  | 2.5 WETH default (admin-tunable) | 2.5 WETH default (admin-tunable)                           |
 | Vesting               | Disallowed                      | Up to 5 recipients; required if `presalePercent < 50%`      |
 | Referrer              | Disallowed                      | Optional; can be one of the vesting recipients              |
 | Issuer fee recipients | 1                               | 1–4                                                         |
@@ -196,7 +196,7 @@ flowchart LR
 3. After `seedTime + 7d`, `claimTokens()` pays `user.weightedContributed * presaleTokens / totalWeightedRaise`.
 4. Below threshold, `refund()` returns each user's `totalContributed`.
 
-`setVestingConfig` is called by `LaunchFactory` exactly once for Advanced launches. Only `PresaleManager` can call `token.mint(...)`, bounded by `TOTAL_SUPPLY`. Graduation thresholds default to 5 WETH per path (deploy env, tunable via timelocked `executeSetGraduation` for future launches).
+`setVestingConfig` is called by `LaunchFactory` exactly once for Advanced launches. Only `PresaleManager` can call `token.mint(...)`, bounded by `TOTAL_SUPPLY`. Graduation thresholds default to 2.5 WETH per path (deploy env, tunable via timelocked `executeSetGraduation` for future launches). The two paths are separate values and can hold different thresholds.
 
 ---
 
