@@ -47,8 +47,8 @@ contract DeployFactory is Script {
         address treasury = vm.envOr("TREASURY", owner);
         address keeper = vm.envAddress("KEEPER");
         uint256 bwlkBurnAmount = vm.envOr("BWLK_BURN_AMOUNT", uint256(100e18));
-        uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(5 ether));
-        uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(5 ether));
+        uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(2.5 ether));
+        uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(2.5 ether));
         uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(24 hours));
         uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(7 days));
         // Required (fail-loud): SeaDrop collection on Base, the chain's mirror on spokes; an
