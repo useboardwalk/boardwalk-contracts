@@ -201,6 +201,16 @@ CI (`.github/workflows/test.yml`) installs the latest **stable** forge (unpinned
 
 **DO NOT** modify `foundry.toml` without asking first.
 
+## Prose & Writing Style
+
+Write every piece of prose — PR titles and bodies, review comments, commit messages, NatSpec, inline comments, and `SPEC.md` edits — in plain, unambiguous English. The rules are adapted from ASD-STE100 Simplified Technical English, the controlled language the aerospace industry uses so a safety-critical instruction cannot be misread. The same reason applies here.
+
+- One idea per sentence. 20 words or fewer for instructions, 25 for descriptions. Use a list for 3 or more steps, conditions, or invariants.
+- Active voice and simple tenses. "The timelock blocks the call", not "the call is blocked"; "we fixed it", not "we have fixed it".
+- One term per concept, reused — don't rotate check / verify / confirm / validate for the same action. Stack at most 3 nouns. Plainest exact word: "use" not "utilize", "about" not "regarding". Cut filler ("essentially", "in order to", "leverage", "robust").
+- Keep identifiers, function and event names, custom error names, addresses, numbers, and domain terms (bps, wei, quorum, cliff, timelock, reentrancy) exactly as they are. This is a rule about language, not rigor.
+- Precision beats brevity, and here it is not close. Never drop a bound, a unit, a rounding direction, a caller restriction, or an invariant to shorten a sentence. A `@dev` note that is longer but exact beats a short one that is ambiguous.
+
 ## Review Process
 
 After writing or modifying contracts, use these project commands (defined in `.claude/commands/`):
