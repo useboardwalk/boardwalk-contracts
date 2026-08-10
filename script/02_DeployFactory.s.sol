@@ -50,7 +50,7 @@ contract DeployFactory is Script {
         uint256 graduationExpress = vm.envOr("GRADUATION_EXPRESS", uint256(2.5 ether));
         uint256 graduationAdvanced = vm.envOr("GRADUATION_ADVANCED", uint256(2.5 ether));
         uint256 expressDuration = vm.envOr("EXPRESS_DURATION", uint256(24 hours));
-        uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(7 days));
+        uint256 advancedDuration = vm.envOr("ADVANCED_DURATION", uint256(2 days));
         // Required (fail-loud): SeaDrop collection on Base, the chain's mirror on spokes; an
         // explicit zero disables discounts.
         address nftCollection = vm.envAddress("NFT_COLLECTION");
