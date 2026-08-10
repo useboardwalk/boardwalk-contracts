@@ -52,7 +52,7 @@ The LP, boardwalk, and integrator forwards are wrapped in `try/catch` so a downs
 
 |                       | EXPRESS                         | ADVANCED                                                    |
 | --------------------- | ------------------------------- | ----------------------------------------------------------- |
-| Presale duration      | 24h (configurable, > 0)         | 7d default (admin range 2–14d)                              |
+| Presale duration      | 24h (configurable, > 0)         | 2d default (admin range 2–14d)                              |
 | Presale allocation    | Fixed 50%                       | 25–50%, divisible by 5%                                     |
 | Start delay           | None                            | 24h                                                         |
 | Graduation threshold  | 2.5 WETH default (admin-tunable) | 2.5 WETH default (admin-tunable)                           |
@@ -183,7 +183,7 @@ Delays in the admin table; claims keep flowing to the OLD address until execute 
 
 ```mermaid
 flowchart LR
-    A[createLaunch] -->|EXPRESS: none<br/>ADVANCED: +24h| B["contribution window<br/>(24h / 7d)"]
+    A[createLaunch] -->|EXPRESS: none<br/>ADVANCED: +24h| B["contribution window<br/>(24h / 2d)"]
     B -->|"+1h SEED_DELAY"| C{"totalRaised >=<br/>graduationThreshold?"}
     C -->|yes| D["seedLiquidity()<br/>mint buckets, LP to dead,<br/>tax armed"]
     C -->|no| E["refund()"]

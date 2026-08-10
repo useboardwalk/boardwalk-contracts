@@ -53,7 +53,7 @@ These MUST be maintained across all code changes:
 
 ### Paths
 - EXPRESS: 24h, 50% presale/50% liquidity, no vesting, no referrer, 1 fee recipient, starts immediately
-- ADVANCED: 7d default (2d-14d admin range), 25-50% presale default (divisible by 5; window admin-tunable within 5%-50%), up to 4 fee recipients, optional referrer, 24hr delay before sale starts. Vesting is REQUIRED when presale < 50% — the issuer vesting bucket needs recipients (`IssuerVestingRecipientsRequired`); up to 5, and the referrer can be one of them — and FORBIDDEN at exactly 50% (`VestingNotAllowedAtFullPresale`)
+- ADVANCED: 2d default (2d-14d admin range), 25-50% presale default (divisible by 5; window admin-tunable within 5%-50%), up to 4 fee recipients, optional referrer, 24hr delay before sale starts. Vesting is REQUIRED when presale < 50% — the issuer vesting bucket needs recipients (`IssuerVestingRecipientsRequired`); up to 5, and the referrer can be one of them — and FORBIDDEN at exactly 50% (`VestingNotAllowedAtFullPresale`)
 
 ### Admin / Timelock
 - All admin functions use `Timelocked` base (signal/execute/cancel)
